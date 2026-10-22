@@ -16,7 +16,7 @@ Tracks what is ported and what is outstanding. Update when finishing a module.
 |---|---:|---|
 | workspace skeleton | ✅ |  |
 | pi-ai | ✅ | Core types, utils, models, providers (OpenAI/Azure/Codex/Google/Mistral/Bedrock/etc), OAuth flows, fidelity audit completed |
-| pi-tui | ✅ | All `packages/tui/src` ported; fullscreen layout parity checks done |
+| pi-tui | ⚠️ | Core TUI port and fullscreen layout parity checks done; Windows `ProcessTerminal` (VT input and console mode) remains unported |
 | pi-telemetry | ✅ | Contracts/recorders/metrics/schemas/render + conformance suite ported |
 | pi-mcp | ✅ | JSON-RPC/types/content/client/stdio + OAuth/runtime behavior aligned |
 | pi-agent | ✅ | types, loop, agent, proxy, stream-fn; TS tests ported |
