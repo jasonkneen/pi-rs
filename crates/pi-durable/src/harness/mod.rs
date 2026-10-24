@@ -3,6 +3,7 @@ pub mod agent;
 pub mod catalog;
 pub mod context;
 pub mod ownership;
+pub mod reader;
 pub mod registry;
 pub mod runtime;
 pub mod scheduler;

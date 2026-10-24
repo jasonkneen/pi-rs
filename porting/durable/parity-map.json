@@ -481,12 +481,14 @@
       "rust": [
         "crates/pi-durable/src/harness/registry.rs",
         "crates/pi-durable/src/harness/catalog.rs",
-        "crates/pi-durable/tests/registry.rs"
+        "crates/pi-durable/tests/registry.rs",
+        "crates/pi-durable/src/harness/reader.rs"
       ],
       "evidence": [
         "Native atomic extension publication, immutable snapshots, validation, task lookup, subscriptions and replacement ordering",
         "scripts/run-stock-durable-registry.mjs: all 10 unmodified cases in both retention modes",
-        "Actual builtin definitions supplied by the host; native builtins and live scheduler RegistryReader integration pending"
+        "Actual builtin definitions supplied by the host; native builtins and embedded bindings pending",
+        "Live RegistryReader integration, fallible snapshots/subscriptions, retained typed phase snapshots and close disposal are native"
       ]
     },
     {
@@ -499,13 +501,16 @@
         "crates/pi-durable/src/harness/runtime.rs",
         "crates/pi-durable/tests/task_scheduler.rs",
         "crates/pi-durable/tests/task_ownership.rs",
-        "crates/pi-durable/tests/context_runtime.rs"
+        "crates/pi-durable/tests/context_runtime.rs",
+        "crates/pi-durable/src/harness/reader.rs",
+        "crates/pi-durable/tests/registry.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
-        "scripts/run-stock-durable-tasks.mjs: 16 selected unmodified cases in both retention modes",
+        "scripts/run-stock-durable-tasks.mjs: 24 selected unmodified cases in both retention modes",
         "porting/durable/STATUS.md",
-        "Native context cache retention, expiry and late-read guards; dropped-waiter coverage"
+        "Native context cache retention, expiry and late-read guards; dropped-waiter coverage",
+        "Native phase registry identity/refresh, idle wake without snapshot reads, conservative wake on registry failure, failure cleanup and subscription disposal"
       ]
     },
     {
@@ -535,8 +540,12 @@
     {
       "reference": "packages/durable/src/harness/types.ts",
       "status": "pending",
-      "rust": [],
-      "evidence": []
+      "rust": [
+        "crates/pi-durable/src/harness/reader.rs"
+      ],
+      "evidence": [
+        "RegistryReader and typed-retaining RegistryView capabilities; full runtime agent/model/environment and hook contracts still pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/usage.ts",
@@ -1362,7 +1371,9 @@
         "crates/pi-durable/examples/support/registry_bridge.rs",
         "scripts/run-stock-durable-registry.mjs",
         "scripts/stock/durable-registry-adapter.mjs",
-        "scripts/stock/durable-sync-worker.mjs"
+        "scripts/stock/durable-sync-worker.mjs",
+        "scripts/stock/durable-native-transport.mjs",
+        "scripts/stock/durable-native-handles.mjs"
       ],
       "evidence": [
         "10/10 stock cases in each retention mode, unchanged source bytes/assertions/timeouts",
@@ -1443,12 +1454,15 @@
         "crates/pi-durable/tests/task_scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
-        "scripts/stock/durable-task-adapter.mjs"
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-native-transport.mjs",
+        "scripts/stock/durable-native-handles.mjs"
       ],
       "evidence": [
-        "16 of 36 unmodified stock cases selected; remaining 20 explicitly unselected",
-        "Native Session/scheduler execution counters verified; stock test owns its backend and callbacks",
-        "Both document retention modes; stock assertions and 5 second timeout unchanged"
+        "24 of 36 unmodified stock cases selected; remaining 12 explicitly unselected",
+        "Native Session/scheduler/registry execution counters verified; stock test owns its backend and callbacks",
+        "Both document retention modes; stock assertions and 5 second timeout unchanged",
+        "Original phase snapshot, idleness, pagination, cancellation and queued commit/close assertions run over native services"
       ]
     },
     {

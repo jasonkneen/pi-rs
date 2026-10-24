@@ -16,6 +16,9 @@ assert.deepEqual(before,execFileSync("git",["show",`${pin}:packages/durable/test
 const selected=["continues one invocation through checkpoint progress and completes with a typed result","faults a phase without durable progress and a throwing phase","keeps a committed terminal outcome when the handler throws afterwards","compares checkpoints by value, including arrays"];
 selected.push("resumes a waiting task once every task in `on` is terminal, whatever the outcome","rejects the run's commits and memo writes after the mark, and settles through a fresh abort invocation","starts no further phase after a mark that lands during a phase with progress","signals and joins the run before returning, then runs the abort handler","aborts waiting work before its wait ends and faults abort handlers that throw or settle nothing","does not signal a running abort handler when aborted again, and a cancelled caller leaves the mark durable","keeps a terminal outcome committed by an abort handler that throws afterwards","never starts phase one when the abort lands while the reservation settles","lets an abort mark win over a fault that races it","stops without outcomes and starts no fresh phase or abort invocation while closing");
 selected.push("starts no abort handler whose reservation settles while closing","joins a reservation that settles while closing without starting its handler");
+selected.push("keeps one registry snapshot per phase and refreshes it at the phase boundary");
+selected.push("waits for Harness and conversation idleness, counting blocked work and ignoring background tasks","pages the newest tasks first without scanning older ones","rejects unknown tasks and reports terminal tasks","rejects task waits cancelled or closed while queued on the line, and pending waits on close");
+selected.push("orders runtime commits against the step: one queued before it lands, one after it rejects","writes no fault when close seals while the step after a failed phase is queued","rejects a runtime commit that was queued on the line when close sealed it");
 execFileSync("cargo",["build","--locked","-q","-p","pi-durable","--example","task_stock_bridge"],{cwd:root,stdio:"inherit"});
 const target=process.env.CARGO_TARGET_DIR??JSON.parse(execFileSync("cargo",["metadata","--no-deps","--format-version","1"],{cwd:root,encoding:"utf8"})).target_directory;
 const temporary=await mkdtemp(join(tmpdir(),"pi-durable-stock-tasks-"));
@@ -26,7 +29,7 @@ const hook=join(temporary,"setup.mjs");
 await writeFile(hook,`import {afterAll} from ${JSON.stringify(join(reference,"node_modules/vitest/dist/index.js"))};import {shutdown} from ${JSON.stringify(adapter)};afterAll(shutdown,60000);`);
 const index=join(reference,"packages/durable/src/index.ts");const config=join(temporary,"vitest.config.mjs");
 const barrel=join(temporary,"native-index.mjs");
-await writeFile(barrel,`export * from ${JSON.stringify(index)};export {Harness} from ${JSON.stringify(adapter)};`);
+await writeFile(barrel,`export * from ${JSON.stringify(index)};export {Harness} from ${JSON.stringify(adapter)};export {createRegistry} from ${JSON.stringify(fileURLToPath(new URL("stock/durable-registry-adapter.mjs",import.meta.url)))};`);
 await writeFile(config,`import original from ${JSON.stringify(join(reference,"packages/durable/vitest.config.ts"))};import {existsSync} from "node:fs";
 export default {...original,resolve:{...original.resolve,alias:original.resolve.alias.map(alias=>alias.find.test("@earendil-works/pi-durable")?{...alias,replacement:${JSON.stringify(barrel)}}:alias)},plugins:[{name:"rust-task-service-under-stock-tests",enforce:"pre",resolveId(source){
 const match=/^@earendil-works\\/(pi-ai|pi-telemetry|pi-codemode|chord)(?:\\/(.*))?$/.exec(source);
@@ -40,10 +43,10 @@ try{
   const result=JSON.parse(await readFile(report,"utf8"));
   if(code!==0||!result.success){for(const suite of result.testResults??[]){if(suite.message)console.error(suite.message);for(const test of suite.assertionResults??[])if(test.status==="failed")console.error(JSON.stringify(test,null,2));}throw new Error("Stock task tests failed against Rust");}
   assert.equal(result.numPassedTests,selected.length);const native=JSON.parse(await readFile(stats,"utf8"));
-  assert.ok(native.phases>0&&native.commits>0&&native.storageCalls>0);
+  assert.ok(native.phases>0&&native.commits>0&&native.storageCalls>0&&native.registryReads>0);
   console.log(`Stock harness-tasks.test.ts retention=${retention}: ${result.numPassedTests} selected cases passed, ${result.numPendingTests} remaining cases not selected; native=${JSON.stringify(native)}`);
   summaries.push({retention,passed:result.numPassedTests,notSelected:result.numPendingTests,native,tests:result.testResults.flatMap(suite=>suite.assertionResults.filter(test=>test.status!=="pending").map(test=>({name:test.fullName,status:test.status,durationMs:test.duration})))});
  }
  assert.deepEqual(await readFile(test),before,"Stock task test file was modified");
- const report=process.argv.find(arg=>arg.startsWith("--report="))?.slice(9);if(report)await writeFile(resolve(report),JSON.stringify({reference:pin,test:"packages/durable/test/harness-tasks.test.ts",sha256:createHash("sha256").update(before).digest("hex"),selected,modes:summaries},null,2)+"\n");passed=true;
+ const report=process.argv.find(arg=>arg.startsWith("--report="))?.slice(9);if(report)await writeFile(resolve(report),JSON.stringify({reference:pin,test:"packages/durable/test/harness-tasks.test.ts",sha256:createHash("sha256").update(before).digest("hex"),nativeScope:"native Session, scheduler and registry; original JS task code and backend callbacks",selected,modes:summaries},null,2)+"\n");passed=true;
 }finally{if(passed)await rm(temporary,{recursive:true,force:true});else console.error(`Failure artifacts retained: ${temporary}`);}

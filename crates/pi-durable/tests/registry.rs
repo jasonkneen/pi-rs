@@ -1,10 +1,11 @@
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use pi_durable::{
-    harness::{agent::*, registry::*, settings::*},
+    harness::{agent::*, catalog::TaskCatalog, reader::*, registry::*, scheduler::*, settings::*},
     *,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[derive(Default)]
 struct Tool {
@@ -479,4 +480,358 @@ async fn an_owned_conversation_copies_its_owners_stored_agent_independently() {
     );
     assert!(!child.0.contains_key(&JsonString::from("cwd")));
     session.close(&context).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_runtime_keeps_its_full_registry_until_the_next_durable_phase() {
+    let registry = Registry::<Tool, Section>::new([]).unwrap();
+    let entered = Arc::new(tokio::sync::Semaphore::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let held = Arc::new(Mutex::new(None));
+    let first = Arc::new(Mutex::new(None::<RegistryView>));
+    let handler: PhaseHandler<JsonValue, JsonValue, JsonValue> = {
+        let (entered, gate, seen, held, first) = (
+            entered.clone(),
+            gate.clone(),
+            seen.clone(),
+            held.clone(),
+            first.clone(),
+        );
+        Arc::new(move |task, runtime, context| {
+            let (entered, gate, seen, held, first) = (
+                entered.clone(),
+                gate.clone(),
+                seen.clone(),
+                held.clone(),
+                first.clone(),
+            );
+            Box::pin(async move {
+                let phase = task.checkpoint()["phase"].to_utf8().unwrap();
+                let before = runtime.registry();
+                if phase == "a" {
+                    *first.lock() = Some(before.clone());
+                    *held.lock() = Some(runtime.clone());
+                    entered.add_permits(1);
+                    gate.acquire().await.unwrap().forget();
+                }
+                let view = runtime.registry();
+                let full = view.typed::<Tool, Section>()?;
+                seen.lock().push((
+                    phase.clone(),
+                    full.tools()
+                        .iter()
+                        .map(|(_, t)| t.name.to_string())
+                        .collect::<Vec<_>>(),
+                    view.same_snapshot(&before),
+                ));
+                if phase == "a" {
+                    runtime
+                        .commit(
+                            |_, _| async {
+                                Ok(Some(NextTaskState::Running {
+                                    checkpoint: json(r#"{"phase":"b"}"#),
+                                }))
+                            },
+                            &context,
+                        )
+                        .await
+                } else {
+                    assert!(!view.same_snapshot(first.lock().as_ref().unwrap()));
+                    runtime
+                        .commit(
+                            |_, _| async {
+                                Ok(Some(NextTaskState::Terminal {
+                                    outcome: TaskOutcome::Completed {
+                                        result: JsonValue::Null,
+                                    },
+                                }))
+                            },
+                            &context,
+                        )
+                        .await
+                }
+            })
+        })
+    };
+    let definition = define_task(TaskDefinition {
+        name: "test.snapshots".into(),
+        version: 1,
+        initial: Arc::new(|_| Ok(json(r#"{"phase":"a"}"#))),
+        phases: IndexMap::from([("a".into(), handler.clone()), ("b".into(), handler.clone())]),
+        abort: handler,
+        migrate: None,
+        hooks: None,
+    });
+    let mut tasks = Ext::new("tasks");
+    tasks.tasks.push(definition.erased());
+    registry.install(Arc::new(tasks)).unwrap();
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::new()),
+        registry.clone(),
+        SchedulerOptions::default(),
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    let id = scheduler
+        .session()
+        .commit(
+            move |tx| async move {
+                let root = tx.create_root_conversation().await?;
+                tx.create_task(
+                    &definition,
+                    JsonValue::Null,
+                    TaskOptions {
+                        conversation_id: Some(root.id),
+                        ..TaskOptions::new(TaskOwnership::Conversation)
+                    },
+                )
+                .await
+            },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    scheduler.resume().unwrap();
+    entered.acquire().await.unwrap().forget();
+    let mut late = Ext::new("late");
+    late.tools.push(tool("late"));
+    registry.install(Arc::new(late)).unwrap();
+    assert!(
+        held.lock()
+            .as_ref()
+            .unwrap()
+            .registry()
+            .same_snapshot(first.lock().as_ref().unwrap())
+    );
+    gate.add_permits(1);
+    scheduler
+        .wait_for_task(id.untyped(), &Context::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        *seen.lock(),
+        [
+            ("a".into(), vec![], true),
+            ("b".into(), vec!["late".into()], true)
+        ]
+    );
+    assert_eq!(
+        held.lock()
+            .as_ref()
+            .unwrap()
+            .registry()
+            .typed::<Tool, Section>()
+            .unwrap()
+            .tools()[0]
+            .1
+            .name,
+        JsonString::from("late")
+    );
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+}
+
+#[derive(Clone, Default)]
+struct HostReader {
+    catalog: TaskCatalog,
+    reads: Arc<AtomicUsize>,
+    fail: Arc<AtomicBool>,
+    unsubscribed: Arc<AtomicUsize>,
+    fail_subscribe: bool,
+    fail_unsubscribe: bool,
+}
+impl RegistryReader for HostReader {
+    fn snapshot(&self) -> Result<RegistryView> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        if self.fail.load(Ordering::Relaxed) {
+            Err(Error::message("registry failed"))
+        } else {
+            RegistryReader::snapshot(&self.catalog)
+        }
+    }
+    fn subscribe(&self, listener: Arc<dyn Fn() + Send + Sync>) -> Result<ReaderSubscription> {
+        if self.fail_subscribe {
+            return Err(Error::message("subscription failed"));
+        }
+        let subscription = RegistryReader::subscribe(&self.catalog, listener)?;
+        let count = self.unsubscribed.clone();
+        let fail = self.fail_unsubscribe;
+        Ok(ReaderSubscription::new(move || {
+            subscription.close()?;
+            count.fetch_add(1, Ordering::Relaxed);
+            if fail {
+                Err(Error::message("unsubscribe failed"))
+            } else {
+                Ok(())
+            }
+        }))
+    }
+}
+
+#[tokio::test]
+async fn an_idle_scheduler_reads_no_snapshot_and_blocked_lookup_reports_a_failure_once() {
+    let reader = HostReader::default();
+    reader.fail.store(true, Ordering::Relaxed);
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let out = reports.clone();
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::new()),
+        reader.clone(),
+        SchedulerOptions {
+            on_report: Arc::new(move |error, info| {
+                out.lock().push((error.to_string(), info.callback))
+            }),
+            ..Default::default()
+        },
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    // Open schedules a recovery cascade even for an empty session. Its work
+    // counts until the pass settles, just as in the reference.
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while scheduler.wake().active {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!scheduler.wake().active);
+    assert_eq!(reader.reads.load(Ordering::Relaxed), 0);
+    let record:TaskRecord=serde_json::from_str(r#"{"id":99,"conversationId":1,"kind":"unknown","version":1,"input":null,"background":false,"abortRequested":false,"state":{"status":"pending","checkpoint":{"phase":"run"}}}"#).unwrap();
+    assert!(scheduler.blocked_reason(&record).is_none());
+    assert!(scheduler.blocked_reason(&record).is_none());
+    assert_eq!(
+        *reports.lock(),
+        [("registry failed".into(), Some("registry"))]
+    );
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+    assert_eq!(reader.unsubscribed.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn a_failed_registry_subscription_closes_the_opened_storage() {
+    let storage = Arc::new(MemoryStorage::new());
+    let reader = HostReader {
+        fail_subscribe: true,
+        ..Default::default()
+    };
+    let error = TaskScheduler::open(
+        storage.clone(),
+        reader,
+        SchedulerOptions::default(),
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .err()
+    .unwrap();
+    assert_eq!(error.to_string(), "subscription failed");
+    assert!(storage.mint_id().await.is_err());
+}
+
+#[tokio::test]
+async fn an_unsubscribe_failure_is_reported_and_does_not_interrupt_close() {
+    let reader = HostReader {
+        fail_unsubscribe: true,
+        ..Default::default()
+    };
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let out = reports.clone();
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::new()),
+        reader.clone(),
+        SchedulerOptions {
+            on_report: Arc::new(move |error, info| {
+                out.lock().push((error.to_string(), info.callback))
+            }),
+            ..Default::default()
+        },
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        *reports.lock(),
+        [("unsubscribe failed".into(), Some("registry"))]
+    );
+    assert_eq!(reader.unsubscribed.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn wake_is_conservative_on_snapshot_failure_and_a_failed_reservation_fails_the_session() {
+    let reader = HostReader::default();
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::new()),
+        reader.clone(),
+        SchedulerOptions::default(),
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    let id = scheduler
+        .session()
+        .commit(
+            |tx| async move {
+                let root = tx.create_root_conversation().await?;
+                tx.create_task_record(
+                    "missing".into(),
+                    1,
+                    JsonValue::Null,
+                    |_| Ok(json(r#"{"phase":"run"}"#)),
+                    TaskOptions {
+                        conversation_id: Some(root.id),
+                        ..TaskOptions::new(TaskOwnership::Conversation)
+                    },
+                )
+                .await
+            },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while scheduler.wake().active {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    reader.fail.store(true, Ordering::Relaxed);
+    assert!(scheduler.wake().active);
+    scheduler.resume().unwrap();
+    assert!(
+        scheduler
+            .wait_for_task(id, &Context::default())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        scheduler.session().failure().unwrap().to_string(),
+        "registry failed"
+    );
+    let _ = scheduler.session().close(&Context::default()).await;
 }

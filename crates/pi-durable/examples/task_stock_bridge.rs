@@ -9,7 +9,7 @@ use pi_chord::{
     context::{AbortError, AbortReason as SignalReason, with_abort_signal},
 };
 use pi_durable::{
-    harness::{catalog::*, runtime::TaskRuntime, scheduler::*, state::NextTaskState},
+    harness::{runtime::TaskRuntime, scheduler::*, state::NextTaskState},
     storage::{Adopt, StorageFuture},
     *,
 };
@@ -58,7 +58,6 @@ struct Hub {
     pending: Mutex<HashMap<u64, Pending>>,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
-    catalogs: Mutex<HashMap<u64, TaskCatalog>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
     runtimes: Mutex<HashMap<u64, TaskRuntime>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
@@ -66,6 +65,7 @@ struct Hub {
     phases: AtomicU64,
     commits: AtomicU64,
     context_reads: AtomicU64,
+    registry_reads: AtomicU64,
     registry: registry_bridge::RegistryBridge,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
@@ -252,6 +252,13 @@ impl Hub {
             .cloned()
             .ok_or_else(|| Error::message("Unknown test harness"))
     }
+    fn transaction(&self, request: &JsonValue) -> Result<Transaction> {
+        self.transactions
+            .lock()
+            .get(&field::<u64>(request, "tx")?)
+            .cloned()
+            .ok_or_else(|| Error::message("Unknown transaction"))
+    }
     fn runtime(&self, request: &JsonValue) -> Result<TaskRuntime> {
         self.runtimes
             .lock()
@@ -290,25 +297,13 @@ impl Hub {
             "open" => Box::pin(async move {
                 let harness: u64 = field(&request, "id")?;
                 let handle: u64 = field(&request, "storage")?;
-                let catalog = TaskCatalog::default();
-                let descriptions: Vec<JsonValue> = field(&request, "tasks")?;
-                let tasks = descriptions
-                    .iter()
-                    .map(|description| {
-                        Ok(InstalledTask {
-                            task: self.definition(description)?.erased(),
-                            extension: None,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                catalog.replace(tasks)?;
+                let registry = self.registry_by_id(field(&request, "registry")?)?;
                 let report = self.clone();
                 let clock = self.clone();
-                let scheduler=TaskScheduler::open(Arc::new(remote_storage::RemoteStorage{hub:self.clone(),handle}),catalog.clone(),SchedulerOptions{
-                    on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason}})))),..Default::default()
+                let scheduler=TaskScheduler::open(Arc::new(remote_storage::RemoteStorage{hub:self.clone(),handle}),registry,SchedulerOptions{
+                    on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback}})))),..Default::default()
                 },SessionOptions{now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
                 self.schedulers.lock().insert(harness, scheduler);
-                self.catalogs.lock().insert(harness, catalog);
                 Ok(Some(encode(&harness)))
             }),
             "root" => {
@@ -325,6 +320,57 @@ impl Hub {
                     },
                     &context,
                 ))
+            }
+            "createConversation" => {
+                let scheduler = self.scheduler(&request)?;
+                let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
+                    Some("ownerless") => ConversationOwnership::Ownerless,
+                    Some("task") => ConversationOwnership::Task(field(
+                        &request["options"]["ownership"],
+                        "taskId",
+                    )?),
+                    _ => return Err(Error::message("Unknown conversation ownership")),
+                };
+                mapped(scheduler.session().commit(
+                    move |tx| async move { Ok(tx.create_conversation(ownership).await?.id) },
+                    &context,
+                ))
+            }
+            "waitForIdle" => mapped(
+                self.scheduler(&request)?
+                    .wait_for_idle(field(&request, "conversation")?, &context),
+            ),
+            "appendEntry" => {
+                let tx = self.transaction(&request)?;
+                let draft = &request["entry"];
+                let mut entry = EntryDraft::new(field::<JsonString>(draft, "kind")?);
+                entry.model = field(draft, "model")?;
+                entry.head = if draft["head"].is_null() {
+                    None
+                } else if draft["head"].string_equals("self") {
+                    Some(EntryHead::ThisEntry)
+                } else {
+                    Some(EntryHead::Entry(field(draft, "head")?))
+                };
+                entry.edits = field(draft, "edits")?;
+                entry.data = draft
+                    .as_object()
+                    .and_then(|draft| draft.get(&JsonString::from("data")))
+                    .cloned();
+                mapped(tx.append_entry(field(&request, "conversation")?, entry))
+            }
+            "scanTasks" => mapped(self.transaction(&request)?.scan_tasks(
+                field(&request, "query")?,
+                field(&request, "limit")?,
+                field(&request, "cursor")?,
+            )),
+            "entry" => {
+                let operation = self.transaction(&request)?.entry(field(&request, "entry")?);
+                Box::pin(async move { Ok(operation.await?.map(|entry| encode(&entry))) })
+            }
+            "runtimeRegistry" => {
+                let snapshot = self.runtime_registry(&request)?;
+                Box::pin(async move { Ok(Some(encode(&snapshot))) })
             }
             "resume" => {
                 self.scheduler(&request)?.resume()?;
@@ -439,7 +485,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -489,7 +535,6 @@ async fn main() {
         pending: Mutex::new(HashMap::new()),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
-        catalogs: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
         runtimes: Mutex::new(HashMap::new()),
         transactions: Mutex::new(HashMap::new()),
@@ -497,6 +542,7 @@ async fn main() {
         phases: AtomicU64::new(0),
         commits: AtomicU64::new(0),
         context_reads: AtomicU64::new(0),
+        registry_reads: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
         registry: registry_bridge::RegistryBridge::default(),
     });

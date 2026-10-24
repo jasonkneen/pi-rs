@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ToolHandle {
+pub(super) struct ToolHandle {
     id: u64,
     name: JsonString,
     callers: Option<Vec<ToolCaller>>,
@@ -25,7 +25,7 @@ impl RegisteredTool for ToolHandle {
     }
 }
 #[derive(Serialize, Deserialize)]
-struct SectionHandle {
+pub(super) struct SectionHandle {
     id: u64,
     key: JsonString,
 }
@@ -50,6 +50,22 @@ pub(super) struct RegistryBridge {
     wrappers: AtomicU64,
 }
 impl Hub {
+    pub(super) fn registry_by_id(&self, id: u64) -> Result<Registry<ToolHandle, SectionHandle>> {
+        self.registry
+            .registries
+            .lock()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| Error::message("Unknown test registry"))
+    }
+    pub(super) fn runtime_registry(&self, request: &JsonValue) -> Result<u64> {
+        self.registry_reads.fetch_add(1, Ordering::Relaxed);
+        let snapshot = self
+            .runtime(request)?
+            .registry()
+            .typed::<ToolHandle, SectionHandle>()?;
+        Ok(self.snapshot_handle(snapshot))
+    }
     fn extension_id(&self, extension: &Arc<Ext>) -> u64 {
         *self
             .registry

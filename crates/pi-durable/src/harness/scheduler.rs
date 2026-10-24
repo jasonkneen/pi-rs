@@ -1,8 +1,8 @@
 //! Durable task scheduling. Reservations, state changes and decisions share the
 //! Session's mutation line. Handlers and joins always run outside it.
 use super::{
-    catalog::*,
     ownership::*,
+    reader::*,
     runtime::{Change, TaskDriver},
     state::*,
     util::*,
@@ -53,6 +53,7 @@ pub struct TaskReport {
     pub kind: &'static str,
     pub task: Option<TaskId>,
     pub reason: Option<&'static str>,
+    pub callback: Option<&'static str>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Wake {
@@ -91,12 +92,15 @@ impl Default for SchedulerOptions {
 }
 #[derive(Default)]
 struct State {
+    snapshot_reported: bool,
     enabled: bool,
     closing: bool,
     dirty: bool,
     draining: bool,
     reconciling: bool,
     reconcile_dirty: bool,
+    reconciling_work: bool,
+    finalize_pending: bool,
     cascade: bool,
     sweep_pending: bool,
     runnable: IndexSet<TaskId>,
@@ -125,6 +129,7 @@ struct Invocation {
     mode: InvocationMode,
     controller: AbortController,
     context: Context,
+    registry: Mutex<RegistryView>,
     ended: AtomicBool,
     done: tokio::sync::watch::Sender<bool>,
     watches: Mutex<IndexMap<u64, Watch>>,
@@ -148,7 +153,7 @@ impl Invocation {
 struct Inner {
     session: Session,
     storage: Arc<dyn Storage>,
-    catalog: TaskCatalog,
+    registry: Arc<dyn RegistryReader>,
     options: SchedulerOptions,
     context: Context,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
@@ -156,7 +161,7 @@ struct Inner {
     timers: Timers,
     tree: TaskTree,
     state: Mutex<State>,
-    subscriptions: Mutex<Option<(Subscription, Subscription, Option<CatalogSubscription>)>>,
+    subscriptions: Mutex<Option<(Subscription, Subscription, Option<ReaderSubscription>)>>,
     task_waiters: Waiters<TaskId, TaskRecord>,
     idle_waiters: Waiters<Option<ConversationId>, ()>,
 }
@@ -174,11 +179,12 @@ impl TaskScheduler {
     /// interrupted reservations and durable cancellation/finalization intents.
     pub async fn open(
         storage: Arc<dyn Storage>,
-        catalog: TaskCatalog,
+        registry: impl RegistryReader,
         options: SchedulerOptions,
         mut session_options: SessionOptions,
         context: &Context,
     ) -> Result<Self> {
+        let registry: Arc<dyn RegistryReader> = Arc::new(registry);
         let owner = Arc::new(Mutex::new(Weak::<Inner>::new()));
         let close_owner = owner.clone();
         let previous_close = session_options.before_close.take();
@@ -204,7 +210,7 @@ impl TaskScheduler {
             inner: Arc::new(Inner {
                 storage: session.guarded_storage(),
                 session,
-                catalog: catalog.clone(),
+                registry: registry.clone(),
                 options,
                 context: without_abort_signal(context),
                 now,
@@ -235,12 +241,23 @@ impl TaskScheduler {
             }
         })?;
         let weak = Arc::downgrade(&scheduler.inner);
-        let registry = catalog.subscribe(move || {
-            if let Some(inner) = weak.upgrade() {
-                let scheduler = TaskScheduler { inner };
-                scheduler.kick();
+        let subscription = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            registry.subscribe(Arc::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    TaskScheduler { inner }.kick();
+                }
+            }))
+        }))
+        .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)));
+        let registry = match subscription {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                drop(publication);
+                drop(close);
+                let _ = scheduler.inner.session.close(context).await;
+                return Err(error);
             }
-        });
+        };
         *scheduler.inner.subscriptions.lock() = Some((publication, close, Some(registry)));
         let initialize = scheduler.clone();
         let result = scheduler
@@ -333,7 +350,28 @@ impl TaskScheduler {
         reason: Option<&'static str>,
     ) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (self.inner.options.on_report)(error, TaskReport { kind, task, reason })
+            (self.inner.options.on_report)(
+                error,
+                TaskReport {
+                    kind,
+                    task,
+                    reason,
+                    callback: None,
+                },
+            )
+        }));
+    }
+    fn report_host(&self, error: Error, callback: &'static str) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (self.inner.options.on_report)(
+                error,
+                TaskReport {
+                    kind: "host_error",
+                    task: None,
+                    reason: None,
+                    callback: Some(callback),
+                },
+            )
         }));
     }
     fn fail(&self, error: Error) {
@@ -410,6 +448,7 @@ impl TaskScheduler {
         if record.state.status() == TaskStatus::Completing {
             state.runnable.shift_remove(&id);
             state.held.insert(id);
+            state.finalize_pending = true;
         } else {
             state.runnable.insert(id);
         }
@@ -444,6 +483,10 @@ impl TaskScheduler {
             self.track((**record).clone());
             if record.state.status() == TaskStatus::Terminal {
                 reconcile = true;
+                {
+                    let mut state = self.inner.state.lock();
+                    state.finalize_pending |= !state.held.is_empty();
+                }
                 self.inner
                     .task_waiters
                     .resolve(&record.id(), (**record).clone());
@@ -560,6 +603,9 @@ impl TaskScheduler {
         }
     }
     pub fn resume(&self) -> Result<()> {
+        if self.inner.state.lock().closing {
+            return Err(closed_error(&self.inner.session));
+        }
         if self.inner.read_only {
             return Err(Error::read_only("running tasks"));
         }
@@ -811,7 +857,7 @@ impl TaskScheduler {
     fn resolve(
         &self,
         record: &TaskRecord,
-        snapshot: &TaskCatalogSnapshot,
+        snapshot: &RegistryView,
     ) -> std::result::Result<(AnyTask, TaskRecord), BlockedReason> {
         let installed = snapshot.task(&record.info.kind);
         let migrates = self.fit(record, installed.map(|installed| &installed.task))?;
@@ -883,7 +929,21 @@ impl TaskScheduler {
         if self.parked(record) {
             return Some(BlockedReason::RestartLimit);
         }
-        let snapshot = self.inner.catalog.snapshot();
+        let snapshot = match read_registry(self.inner.registry.as_ref()) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let reported = {
+                    let mut state = self.inner.state.lock();
+                    let reported = state.snapshot_reported;
+                    state.snapshot_reported = true;
+                    reported
+                };
+                if !reported {
+                    self.report_host(error, "registry");
+                }
+                return None;
+            }
+        };
         let installed = snapshot.task(&record.info.kind);
         match self.fit(record, installed.map(|i| &i.task)) {
             Err(reason) => Some(reason),
@@ -927,7 +987,8 @@ impl TaskScheduler {
                     scheduler.terminate(&tx, &record, TaskOutcome::Faulted { error: TaskOutcomeError { message: message.into(), detail: Some(crate::wire::encode(&serde_json::json!({"reason":"restart_limit"}))) } }).await?;
                     continue;
                 }
-                let snapshot = snapshot.get_or_insert_with(|| scheduler.inner.catalog.snapshot());
+                if snapshot.is_none() { snapshot = Some(read_registry(scheduler.inner.registry.as_ref())?); }
+                let snapshot = snapshot.as_ref().unwrap();
                 let (task, resolved) = match scheduler.resolve(&record, snapshot) {
                     Ok(ready) => ready,
                     Err(reason) => { if mode == InvocationMode::Abort && record.info.abort_reason.is_none() { scheduler.terminate(&tx, &record, TaskOutcome::Orphaned { reason: reason.text().into() }).await?; } continue; }
@@ -936,7 +997,7 @@ impl TaskScheduler {
                 if resolved != *record || record.state.status() != TaskStatus::Running { tx.set_task(with_state(resolved, TaskState::Running { checkpoint, memos: None }))?; }
                 let controller = AbortController::new();
                 let (done, _) = tokio::sync::watch::channel(false);
-                let invocation = Arc::new(Invocation { task: id, conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
+                let invocation = Arc::new(Invocation { task: id, conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
                 { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.invocations.insert(id, invocation.clone()); }
                 capture.lock().push(Reservation { invocation, task });
             }
@@ -1085,7 +1146,8 @@ impl TaskScheduler {
                                 current.info.kind
                             )))
                         } else {
-                            let snapshot = scheduler.inner.catalog.snapshot();
+                            let snapshot = read_registry(scheduler.inner.registry.as_ref())?;
+                            *invocation.registry.lock() = snapshot.clone();
                             let next = snapshot
                                 .task(&current.info.kind)
                                 .map(|installed| installed.task.clone());
@@ -1328,6 +1390,9 @@ impl TaskScheduler {
                     let mut state = scheduler.inner.state.lock();
                     if state.reconcile_dirty && !state.closing {
                         state.reconcile_dirty = false;
+                        state.reconciling_work =
+                            state.cascade || state.finalize_pending || !state.fail_fast.is_empty();
+                        state.finalize_pending = false;
                         true
                     } else {
                         state.reconciling = false;
@@ -1350,6 +1415,7 @@ impl TaskScheduler {
                 if let Err(error) = operation.await {
                     scheduler.fail(error);
                 }
+                scheduler.inner.state.lock().reconciling_work = false;
                 scheduler.schedule_wake();
                 scheduler.settle_idle();
             }
@@ -1589,8 +1655,8 @@ impl TaskScheduler {
                         .tree
                         .owned_live(id, None, true, None)
                         .is_empty()
-                        && let Err(reason) =
-                            scheduler.resolve(&current, &scheduler.inner.catalog.snapshot())
+                        && let Err(reason) = scheduler
+                            .resolve(&current, &read_registry(scheduler.inner.registry.as_ref())?)
                     {
                         scheduler
                             .terminate(
@@ -1695,11 +1761,16 @@ impl TaskScheduler {
         let mut wake = {
             let state = self.inner.state.lock();
             Wake {
-                active: !state.invocations.is_empty() || state.reconcile_dirty || state.reconciling,
+                active: !state.invocations.is_empty()
+                    || state.reconciling_work
+                    || state.cascade
+                    || state.finalize_pending
+                    || !state.fail_fast.is_empty(),
                 at: None,
             }
         };
-        let snapshot = self.inner.catalog.snapshot();
+        let mut snapshot = None;
+        let mut snapshot_failed = false;
         for record in self.inner.tree.live_records() {
             if record.state.status() == TaskStatus::Completing
                 || self
@@ -1722,15 +1793,25 @@ impl TaskScheduler {
                 }
                 continue;
             }
-            if self.parked(&record) {
+            if wake.active || self.parked(&record) {
                 continue;
             }
-            if (!record.info.abort_requested || record.info.abort_reason.is_some())
-                && self
-                    .fit(&record, snapshot.task(&record.info.kind).map(|i| &i.task))
-                    .is_err()
-            {
-                continue;
+            if !record.info.abort_requested || record.info.abort_reason.is_some() {
+                if snapshot.is_none() && !snapshot_failed {
+                    match read_registry(self.inner.registry.as_ref()) {
+                        Ok(view) => snapshot = Some(view),
+                        Err(error) => {
+                            snapshot_failed = true;
+                            self.report_host(error, "registry");
+                        }
+                    }
+                }
+                if snapshot.as_ref().is_some_and(|snapshot| {
+                    self.fit(&record, snapshot.task(&record.info.kind).map(|i| &i.task))
+                        .is_err()
+                }) {
+                    continue;
+                }
             }
             wake.active = true;
         }
@@ -1817,8 +1898,16 @@ impl TaskScheduler {
         if let Some((_, disarm)) = expiry {
             disarm();
         }
-        if let Some((_, _, registry)) = self.inner.subscriptions.lock().as_mut() {
-            registry.take();
+        let registry = self
+            .inner
+            .subscriptions
+            .lock()
+            .as_mut()
+            .and_then(|(_, _, registry)| registry.take());
+        if let Some(registry) = registry
+            && let Err(error) = registry.close()
+        {
+            self.report_host(error, "registry");
         }
         let timer = {
             let mut state = self.inner.state.lock();
@@ -1910,6 +1999,10 @@ impl TaskDriver for Driver {
     fn session(&self) -> Session {
         self.scheduler.inner.session.clone()
     }
+    fn registry(&self) -> RegistryView {
+        self.invocation.registry.lock().clone()
+    }
+
     fn current(&self) -> Option<Arc<TaskRecord>> {
         self.scheduler.inner.tree.live(self.invocation.task)
     }

@@ -15,6 +15,9 @@ pub struct TaskCatalogSnapshot {
     tasks: Arc<IndexMap<JsonString, InstalledTask>>,
 }
 impl TaskCatalogSnapshot {
+    pub fn same_snapshot(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.tasks, &other.tasks)
+    }
     pub(crate) fn build(tasks: impl IntoIterator<Item = InstalledTask>) -> Result<Self> {
         let mut next = IndexMap::new();
         for installed in tasks {

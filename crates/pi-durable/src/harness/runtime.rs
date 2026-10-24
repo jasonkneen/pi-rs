@@ -19,6 +19,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn signal(&self) -> AbortSignal;
     fn mode(&self) -> super::state::InvocationMode;
     fn session(&self) -> Session;
+    fn registry(&self) -> super::reader::RegistryView;
     fn current(&self) -> Option<Arc<TaskRecord>>;
     fn commit(&self, change: Change, context: &Context) -> StorageFuture<()>;
     fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord>;
@@ -66,6 +67,11 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     }
     pub fn signal(&self) -> AbortSignal {
         self.driver.signal()
+    }
+    /// The phase snapshot remains available through retained runtime handles.
+    /// It changes only at a durable phase boundary, never on a registry install.
+    pub fn registry(&self) -> super::reader::RegistryView {
+        self.driver.registry()
     }
     pub fn now(&self) -> Result<f64> {
         self.driver.check()?;
