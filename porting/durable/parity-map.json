@@ -384,9 +384,17 @@
     },
     {
       "reference": "packages/durable/src/harness/agent.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/agent.rs",
+        "crates/pi-durable/src/harness/settings.rs",
+        "crates/pi-durable/tests/registry.rs"
+      ],
+      "evidence": [
+        "Native agent document, configuration, owner copies, fork history, tool edits, resolution, hook and code-owner ordering",
+        "scripts/run-stock-durable-registry.mjs: all 10 unmodified cases in both retention modes",
+        "Full native tool/section types, phase integration, embedded undefined policy values and JS bindings pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/compaction.ts",
@@ -410,9 +418,14 @@
     },
     {
       "reference": "packages/durable/src/harness/define.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/registry.rs"
+      ],
+      "evidence": [
+        "Native Extension and HookRegistration constructors and typed Wrap callbacks",
+        "Concrete tool/prompt registration helpers and embedded bindings pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/events.ts",
@@ -466,11 +479,14 @@
       "reference": "packages/durable/src/harness/registry.ts",
       "status": "partial",
       "rust": [
-        "crates/pi-durable/src/harness/catalog.rs"
+        "crates/pi-durable/src/harness/registry.rs",
+        "crates/pi-durable/src/harness/catalog.rs",
+        "crates/pi-durable/tests/registry.rs"
       ],
       "evidence": [
-        "Task snapshot catalog only; full extension registry and built-ins pending",
-        "porting/durable/STATUS.md"
+        "Native atomic extension publication, immutable snapshots, validation, task lookup, subscriptions and replacement ordering",
+        "scripts/run-stock-durable-registry.mjs: all 10 unmodified cases in both retention modes",
+        "Actual builtin definitions supplied by the host; native builtins and live scheduler RegistryReader integration pending"
       ]
     },
     {
@@ -1340,9 +1356,19 @@
     },
     {
       "reference": "packages/durable/test/harness-registry.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/tests/registry.rs",
+        "crates/pi-durable/examples/support/registry_bridge.rs",
+        "scripts/run-stock-durable-registry.mjs",
+        "scripts/stock/durable-registry-adapter.mjs",
+        "scripts/stock/durable-sync-worker.mjs"
+      ],
+      "evidence": [
+        "10/10 stock cases in each retention mode, unchanged source bytes/assertions/timeouts",
+        "131 native operations, 17 native resolutions and 10 wrapper callbacks per mode",
+        "Scope: native registry, settings, agent composition and hook ordering; original JS registrations, builtin task definitions and render callbacks"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-reports.test.ts",

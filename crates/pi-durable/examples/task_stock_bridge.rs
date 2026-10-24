@@ -24,6 +24,8 @@ use std::{
 };
 #[path = "support/context_bridge.rs"]
 mod context_bridge;
+#[path = "support/registry_bridge.rs"]
+mod registry_bridge;
 #[path = "support/task_remote_storage.rs"]
 mod remote_storage;
 static CALL_CONTEXT: LazyLock<ContextKey<u64>> =
@@ -64,6 +66,7 @@ struct Hub {
     phases: AtomicU64,
     commits: AtomicU64,
     context_reads: AtomicU64,
+    registry: registry_bridge::RegistryBridge,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
 impl Hub {
@@ -110,6 +113,7 @@ impl Hub {
             ("id", encode(&id)),
             ("method", encode(&method)),
             ("args", args),
+            ("sync", encode(&true)),
         ]));
         receive
             .recv()
@@ -274,6 +278,13 @@ impl Hub {
         let method: String = field(&request, "method")?;
         if method.starts_with("context.") {
             return self.context_request(&method, request, context);
+        }
+        if method.starts_with("registry.") {
+            return Ok(Box::pin(async move {
+                tokio::task::spawn_blocking(move || self.registry_request(&method, request))
+                    .await
+                    .map_err(|error| Error::message(error.to_string()))?
+            }));
         }
         Ok(match method.as_str() {
             "open" => Box::pin(async move {
@@ -487,6 +498,7 @@ async fn main() {
         commits: AtomicU64::new(0),
         context_reads: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
+        registry: registry_bridge::RegistryBridge::default(),
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move||{

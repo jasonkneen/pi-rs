@@ -15,6 +15,26 @@ pub struct TaskCatalogSnapshot {
     tasks: Arc<IndexMap<JsonString, InstalledTask>>,
 }
 impl TaskCatalogSnapshot {
+    pub(crate) fn build(tasks: impl IntoIterator<Item = InstalledTask>) -> Result<Self> {
+        let mut next = IndexMap::new();
+        for installed in tasks {
+            let name = installed.task.name().clone();
+            if next.contains_key(&name) {
+                let extension = installed
+                    .extension
+                    .as_ref()
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
+                return Err(Error::message(format!(
+                    "Task {name} of extension {extension} is already installed"
+                )));
+            }
+            next.insert(name, installed);
+        }
+        Ok(Self {
+            tasks: Arc::new(next),
+        })
+    }
     pub fn task(&self, name: &JsonString) -> Option<&InstalledTask> {
         self.tasks.get(name)
     }
@@ -61,26 +81,10 @@ impl TaskCatalog {
     /// Validate the whole candidate before publishing. Existing phases retain
     /// the previous snapshot until their next durable phase boundary.
     pub fn replace(&self, tasks: impl IntoIterator<Item = InstalledTask>) -> Result<()> {
-        let mut next = IndexMap::new();
-        for installed in tasks {
-            let name = installed.task.name().clone();
-            if next.contains_key(&name) {
-                let extension = installed
-                    .extension
-                    .as_ref()
-                    .map(|name| name.to_string())
-                    .unwrap_or_default();
-                return Err(Error::message(format!(
-                    "Task {name} of extension {extension} is already installed"
-                )));
-            }
-            next.insert(name, installed);
-        }
+        let next = TaskCatalogSnapshot::build(tasks)?;
         let listeners = {
             let mut state = self.state.lock();
-            state.snapshot = TaskCatalogSnapshot {
-                tasks: Arc::new(next),
-            };
+            state.snapshot = next;
             state.listeners.values().cloned().collect::<Vec<_>>()
         };
         for listener in listeners {

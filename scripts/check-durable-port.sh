@@ -19,3 +19,4 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-s
 node scripts/run-stock-durable-jsonl.mjs "$reference" --report=/tmp/pi-durable-stock-jsonl-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
 node scripts/run-stock-durable-context.mjs "$reference" --report=/tmp/pi-durable-stock-context-report.json
+node scripts/run-stock-durable-registry.mjs "$reference" --report=/tmp/pi-durable-stock-registry-report.json
