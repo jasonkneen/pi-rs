@@ -1,7 +1,7 @@
 use crate::{Context, Result, types::*};
 use std::{future::Future, pin::Pin};
 pub mod jsonl;
-mod line;
+pub(crate) mod line;
 pub mod memory;
 pub mod scan;
 pub use jsonl::{JsonlStorage, JsonlStorageOptions};

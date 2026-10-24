@@ -83,3 +83,53 @@ fn nested_storage_errors_keep_their_reference_names_and_first_cause() {
     assert_eq!(Error::read_after_write("entry").name(), "ReadAfterWrite");
     assert_eq!(Error::request("bad cursor").name(), "StorageRequestError");
 }
+
+#[test]
+fn typed_task_payloads_preserve_utf16_and_the_top_level_memo_format() {
+    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+    struct Input {
+        text: JsonString,
+    }
+    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+    struct Checkpoint {
+        phase: String,
+        text: JsonString,
+    }
+    round_trip::<TaskRecord<Input, Checkpoint, JsonString>>(
+        r#"{"id":2,"conversationId":1,"kind":"task","version":1,"input":{"text":"\ud800"},"state":{"status":"running","checkpoint":{"phase":"run","text":"\udfff"}},"memos":{"choice":null},"background":false,"abortRequested":false}"#,
+    );
+    round_trip::<TaskRecord<Input, Checkpoint, JsonString>>(
+        r#"{"id":2,"conversationId":1,"kind":"task","version":1,"input":{"text":"\ud800"},"state":{"status":"terminal","outcome":{"status":"completed","result":"\udfff"}},"background":false,"abortRequested":false}"#,
+    );
+}
+
+#[test]
+fn custom_task_serializers_return_errors_without_panicking_record_encoding() {
+    struct Rejected;
+    impl serde::Serialize for Rejected {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> std::result::Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("invalid task payload"))
+        }
+    }
+    let state: TaskState<Rejected> = TaskState::Running {
+        checkpoint: Rejected,
+        memos: None,
+    };
+    assert!(
+        serde_json::to_string(&state)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid task payload")
+    );
+    let source: TaskRecord = serde_json::from_str(r#"{"id":2,"conversationId":1,"kind":"task","version":1,"input":null,"state":{"status":"pending","checkpoint":null},"background":false,"abortRequested":false}"#).unwrap();
+    let record = TaskRecord {
+        info: source.info,
+        state,
+    };
+    assert!(
+        serde_json::to_string(&record)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid task payload")
+    );
+}

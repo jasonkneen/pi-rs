@@ -197,6 +197,20 @@ impl Session {
     pub fn fail(&self, error: Error) {
         self.inner.guard.fail(error);
     }
+    pub(crate) fn guarded_storage(&self) -> Arc<dyn Storage> {
+        self.inner.storage.clone()
+    }
+    pub(crate) fn read_on_line<T, F, Fut>(&self, read: F) -> StorageFuture<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T>> + Send + 'static,
+    {
+        self.admit(move |session| async move {
+            session.healthy()?;
+            read().await
+        })
+    }
     fn usable(&self) -> Result<()> {
         self.healthy()?;
         if self.inner.state.lock().closing {

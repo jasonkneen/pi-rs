@@ -1,6 +1,9 @@
 use crate::wire::{self, raw_serde};
 use pi_chord::{JsonString, JsonValue, delta::Op};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{DeserializeOwned, Visitor},
+};
 use std::{
     fmt,
     ops::{Deref, DerefMut},
@@ -187,20 +190,20 @@ pub struct TaskOutcomeError {
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
-pub enum TaskOutcome {
+pub enum TaskOutcome<R = JsonValue> {
     Completed {
-        result: JsonValue,
+        result: R,
     },
     Failed {
         error: TaskOutcomeError,
         #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<JsonValue>,
+        result: Option<R>,
     },
     Aborted {
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<JsonString>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        result: Option<JsonValue>,
+        result: Option<R>,
     },
     Orphaned {
         reason: JsonString,
@@ -209,7 +212,7 @@ pub enum TaskOutcome {
         error: TaskOutcomeError,
     },
 }
-impl<'de> Deserialize<'de> for TaskOutcome {
+impl<'de, R: DeserializeOwned> Deserialize<'de> for TaskOutcome<R> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let v = JsonValue::deserialize(d)?;
         let decode = || -> std::result::Result<Self, String> {
@@ -248,35 +251,35 @@ pub enum TaskStatus {
     Terminal,
 }
 #[derive(Clone, Debug, PartialEq)]
-pub enum TaskState {
+pub enum TaskState<S = JsonValue, R = JsonValue> {
     Pending {
-        checkpoint: JsonValue,
+        checkpoint: S,
         memos: Option<JsonObject>,
     },
     Running {
-        checkpoint: JsonValue,
+        checkpoint: S,
         memos: Option<JsonObject>,
     },
     Waiting {
-        checkpoint: JsonValue,
+        checkpoint: S,
         on: Vec<TaskId>,
         policy: JoinPolicy,
         memos: Option<JsonObject>,
     },
     Sleeping {
-        checkpoint: JsonValue,
+        checkpoint: S,
         until: f64,
         memos: Option<JsonObject>,
     },
     Completing {
-        outcome: TaskOutcome,
+        outcome: TaskOutcome<R>,
     },
     Terminal {
-        outcome: TaskOutcome,
+        outcome: TaskOutcome<R>,
     },
 }
-impl TaskState {
-    pub fn pending(checkpoint: JsonValue) -> Self {
+impl<S, R> TaskState<S, R> {
+    pub fn pending(checkpoint: S) -> Self {
         Self::Pending {
             checkpoint,
             memos: None,
@@ -301,7 +304,7 @@ impl TaskState {
             _ => None,
         }
     }
-    pub fn checkpoint(&self) -> Option<&JsonValue> {
+    pub fn checkpoint(&self) -> Option<&S> {
         match self {
             Self::Pending { checkpoint, .. }
             | Self::Running { checkpoint, .. }
@@ -310,11 +313,15 @@ impl TaskState {
             _ => None,
         }
     }
-    fn to_json(&self) -> JsonValue {
+}
+impl<S: Serialize, R: Serialize> TaskState<S, R> {
+    fn to_json(&self) -> std::result::Result<JsonValue, String> {
         let mut v = wire::object();
         wire::put(&mut v, "status", &self.status());
         if let Some(checkpoint) = self.checkpoint() {
-            wire::put(&mut v, "checkpoint", checkpoint);
+            v.as_object_mut()
+                .unwrap()
+                .insert("checkpoint".into(), pi_chord::json::to_value(checkpoint)?);
         }
         match self {
             Self::Waiting { on, policy, .. } => {
@@ -323,12 +330,16 @@ impl TaskState {
             }
             Self::Sleeping { until, .. } => wire::put(&mut v, "until", until),
             Self::Completing { outcome } | Self::Terminal { outcome } => {
-                wire::put(&mut v, "outcome", outcome)
+                v.as_object_mut()
+                    .unwrap()
+                    .insert("outcome".into(), pi_chord::json::to_value(outcome)?);
             }
             _ => {}
         }
-        v
+        Ok(v)
     }
+}
+impl<S: DeserializeOwned, R: DeserializeOwned> TaskState<S, R> {
     fn from_json(v: &JsonValue) -> std::result::Result<Self, String> {
         Self::with_memos(v, None)
     }
@@ -366,11 +377,22 @@ impl TaskState {
         })
     }
 }
-raw_serde!(TaskState);
+impl<S: Serialize, R: Serialize> Serialize for TaskState<S, R> {
+    fn serialize<T: Serializer>(&self, serializer: T) -> std::result::Result<T::Ok, T::Error> {
+        self.to_json()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de, S: DeserializeOwned, R: DeserializeOwned> Deserialize<'de> for TaskState<S, R> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Self::from_json(&JsonValue::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TaskRecordInfo {
+pub struct TaskRecordInfo<I = JsonValue> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<JsonObject>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -379,7 +401,7 @@ pub struct TaskRecordInfo {
     pub conversation_id: ConversationId,
     pub kind: JsonString,
     pub version: u64,
-    pub input: JsonValue,
+    pub input: I,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<TaskId>,
     pub background: bool,
@@ -417,22 +439,28 @@ impl<'de> Deserialize<'de> for True {
     }
 }
 #[derive(Clone, Debug, PartialEq)]
-pub struct TaskRecord {
-    pub info: TaskRecordInfo,
-    pub state: TaskState,
+pub struct TaskRecord<I = JsonValue, S = JsonValue, R = JsonValue> {
+    pub info: TaskRecordInfo<I>,
+    pub state: TaskState<S, R>,
 }
-impl TaskRecord {
+impl<I, S, R> TaskRecord<I, S, R> {
     pub fn id(&self) -> TaskId {
         self.info.id
     }
-    fn to_json(&self) -> JsonValue {
-        let mut v = wire::encode(&self.info);
-        wire::put(&mut v, "state", &self.state);
+}
+impl<I: Serialize, S: Serialize, R: Serialize> TaskRecord<I, S, R> {
+    fn to_json(&self) -> std::result::Result<JsonValue, String> {
+        let mut v = pi_chord::json::to_value(&self.info)?;
+        v.as_object_mut()
+            .unwrap()
+            .insert("state".into(), pi_chord::json::to_value(&self.state)?);
         if let Some(memos) = self.state.memos() {
             wire::put(&mut v, "memos", memos);
         }
-        v
+        Ok(v)
     }
+}
+impl<I: DeserializeOwned, S: DeserializeOwned, R: DeserializeOwned> TaskRecord<I, S, R> {
     fn from_json(v: &JsonValue) -> std::result::Result<Self, String> {
         Ok(Self {
             info: wire::decode(v)?,
@@ -443,7 +471,20 @@ impl TaskRecord {
         })
     }
 }
-raw_serde!(TaskRecord);
+impl<I: Serialize, S: Serialize, R: Serialize> Serialize for TaskRecord<I, S, R> {
+    fn serialize<T: Serializer>(&self, serializer: T) -> std::result::Result<T::Ok, T::Error> {
+        self.to_json()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de, I: DeserializeOwned, S: DeserializeOwned, R: DeserializeOwned> Deserialize<'de>
+    for TaskRecord<I, S, R>
+{
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Self::from_json(&JsonValue::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

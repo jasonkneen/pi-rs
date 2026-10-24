@@ -1,0 +1,1957 @@
+//! Durable task scheduling. Reservations, state changes and decisions share the
+//! Session's mutation line. Handlers and joins always run outside it.
+use super::{
+    catalog::*,
+    ownership::*,
+    runtime::{Change, TaskDriver},
+    state::*,
+    util::*,
+};
+use crate::{
+    storage::{StorageFuture, line::eager, ready},
+    timers::Timers,
+    *,
+};
+use futures::FutureExt;
+use indexmap::{IndexMap, IndexSet};
+use parking_lot::Mutex;
+use pi_chord::{
+    AbortController, Watch,
+    context::{
+        AbortError, AbortReason as SignalReason, await_with_context, with_abort_signal,
+        without_abort_signal,
+    },
+};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockedReason {
+    MissingTask,
+    TaskTooOld,
+    MigrationFailed,
+    RestartLimit,
+}
+impl BlockedReason {
+    fn text(self) -> &'static str {
+        match self {
+            Self::MissingTask => "missing_task",
+            Self::TaskTooOld => "task_too_old",
+            Self::MigrationFailed => "migration_failed",
+            Self::RestartLimit => "restart_limit",
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct TaskReport {
+    pub kind: &'static str,
+    pub task: Option<TaskId>,
+    pub reason: Option<&'static str>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Wake {
+    pub active: bool,
+    pub at: Option<f64>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AbortResult {
+    Marked,
+    Terminal,
+}
+type SettleOutcome =
+    Arc<dyn Fn(Transaction, TaskRecord, TaskOutcome) -> StorageFuture<()> + Send + Sync>;
+type WithdrawInputs = Arc<dyn Fn(Transaction, ConversationId) -> StorageFuture<()> + Send + Sync>;
+#[derive(Clone)]
+pub struct SchedulerOptions {
+    pub restart_limit: Arc<dyn Fn() -> f64 + Send + Sync>,
+    pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
+    pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
+    pub settle_outcome: SettleOutcome,
+    pub withdraw_inputs: WithdrawInputs,
+}
+impl Default for SchedulerOptions {
+    fn default() -> Self {
+        Self {
+            restart_limit: Arc::new(|| 5.0),
+            on_report: Arc::new(|_, _| {}),
+            on_wake: None,
+            settle_outcome: Arc::new(|_, _, _| ready(Ok(()))),
+            withdraw_inputs: Arc::new(|_, _| ready(Ok(()))),
+        }
+    }
+}
+#[derive(Default)]
+struct State {
+    enabled: bool,
+    closing: bool,
+    dirty: bool,
+    draining: bool,
+    reconciling: bool,
+    reconcile_dirty: bool,
+    cascade: bool,
+    sweep_pending: bool,
+    runnable: IndexSet<TaskId>,
+    held: IndexSet<TaskId>,
+    sleeping: IndexSet<TaskId>,
+    parked: IndexSet<TaskId>,
+    abandoned: IndexSet<TaskId>,
+    fail_fast: IndexSet<TaskId>,
+    waiting: HashMap<TaskId, IndexSet<TaskId>>,
+    invocations: IndexMap<TaskId, Arc<Invocation>>,
+    failed_migrations: HashMap<TaskId, AnyTask>,
+    timer: Option<(f64, DisarmTimer)>,
+    last_wake: Option<Wake>,
+    wake_pending: bool,
+}
+struct Invocation {
+    task: TaskId,
+    conversation: ConversationId,
+    mode: InvocationMode,
+    controller: AbortController,
+    context: Context,
+    ended: AtomicBool,
+    done: tokio::sync::watch::Sender<bool>,
+    watches: Mutex<IndexMap<u64, Watch>>,
+    next_watch: AtomicU64,
+    timers: Mutex<IndexMap<u64, DisarmTimer>>,
+    next_timer: AtomicU64,
+}
+impl Invocation {
+    fn ended_error(&self) -> Error {
+        Error::message(format!("Task {} invocation has ended", self.task))
+    }
+    async fn finished(&self) {
+        let mut done = self.done.subscribe();
+        while !*done.borrow_and_update() {
+            if done.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
+struct Inner {
+    session: Session,
+    storage: Arc<dyn Storage>,
+    catalog: TaskCatalog,
+    options: SchedulerOptions,
+    context: Context,
+    now: Arc<dyn Fn() -> f64 + Send + Sync>,
+    read_only: bool,
+    timers: Timers,
+    tree: TaskTree,
+    state: Mutex<State>,
+    subscriptions: Mutex<Option<(Subscription, Subscription, Option<CatalogSubscription>)>>,
+    task_waiters: Waiters<TaskId, TaskRecord>,
+    idle_waiters: Waiters<Option<ConversationId>, ()>,
+}
+#[derive(Clone)]
+pub struct TaskScheduler {
+    inner: Arc<Inner>,
+}
+struct Reservation {
+    invocation: Arc<Invocation>,
+    task: AnyTask,
+}
+
+impl TaskScheduler {
+    /// Open the task service without enabling dispatch. Recovery still repairs
+    /// interrupted reservations and durable cancellation/finalization intents.
+    pub async fn open(
+        storage: Arc<dyn Storage>,
+        catalog: TaskCatalog,
+        options: SchedulerOptions,
+        mut session_options: SessionOptions,
+        context: &Context,
+    ) -> Result<Self> {
+        let owner = Arc::new(Mutex::new(Weak::<Inner>::new()));
+        let close_owner = owner.clone();
+        let previous_close = session_options.before_close.take();
+        session_options.before_close = Some(Arc::new(move |session| {
+            let inner = close_owner.lock().upgrade();
+            let previous = previous_close.clone();
+            Box::pin(async move {
+                if let Some(inner) = inner {
+                    TaskScheduler { inner }.join().await;
+                }
+                if let Some(previous) = previous {
+                    previous(session).await?;
+                }
+                Ok(())
+            })
+        }));
+        let now = session_options.now.clone();
+        let read_only = session_options.read_only;
+        let report = session_options.report.clone();
+        let timers = Timers::new(session_options.set_timer.clone(), report);
+        let session = Session::new(storage, session_options);
+        let scheduler = Self {
+            inner: Arc::new(Inner {
+                storage: session.guarded_storage(),
+                session,
+                catalog: catalog.clone(),
+                options,
+                context: without_abort_signal(context),
+                now,
+                read_only,
+                timers,
+                tree: TaskTree::default(),
+                state: Mutex::new(State::default()),
+                subscriptions: Mutex::new(None),
+                task_waiters: Waiters::default(),
+                idle_waiters: Waiters::default(),
+            }),
+        };
+        *owner.lock() = Arc::downgrade(&scheduler.inner);
+        let weak = Arc::downgrade(&scheduler.inner);
+        let publication = scheduler
+            .inner
+            .session
+            .subscribe_internal(move |publication, _| {
+                if let Some(inner) = weak.upgrade() {
+                    TaskScheduler { inner }.observe(publication);
+                }
+                Ok(())
+            })?;
+        let weak = Arc::downgrade(&scheduler.inner);
+        let close = scheduler.inner.session.subscribe_close(move || {
+            if let Some(inner) = weak.upgrade() {
+                TaskScheduler { inner }.seal();
+            }
+        })?;
+        let weak = Arc::downgrade(&scheduler.inner);
+        let registry = catalog.subscribe(move || {
+            if let Some(inner) = weak.upgrade() {
+                let scheduler = TaskScheduler { inner };
+                scheduler.kick();
+            }
+        });
+        *scheduler.inner.subscriptions.lock() = Some((publication, close, Some(registry)));
+        let initialize = scheduler.clone();
+        let result = scheduler
+            .inner
+            .session
+            .commit(
+                move |tx| async move {
+                    let mut records = Vec::new();
+                    for status in [
+                        TaskStatus::Pending,
+                        TaskStatus::Running,
+                        TaskStatus::Waiting,
+                        TaskStatus::Sleeping,
+                        TaskStatus::Completing,
+                    ] {
+                        let storage = initialize.inner.storage.clone();
+                        let context = initialize.inner.context.clone();
+                        records.extend(
+                            scan_all(move |cursor| {
+                                storage.scan_tasks(
+                                    &TaskQuery {
+                                        status: Some(status),
+                                        ..Default::default()
+                                    },
+                                    256,
+                                    cursor.as_ref(),
+                                    &context,
+                                )
+                            })
+                            .await?,
+                        );
+                    }
+                    for record in records {
+                        initialize.track(record.clone());
+                        if initialize.inner.read_only {
+                            continue;
+                        }
+                        if record.info.abandon_on_restart.is_some() {
+                            initialize.inner.state.lock().abandoned.insert(record.id());
+                        }
+                        if record.state.status() == TaskStatus::Running {
+                            let checkpoint = record.state.checkpoint().unwrap().clone();
+                            let mut recovered = with_state(record, TaskState::pending(checkpoint));
+                            recovered.info.restarts =
+                                Some(recovered.info.restarts.unwrap_or(0) + 1);
+                            tx.set_task(recovered)?;
+                        }
+                    }
+                    Ok(())
+                },
+                context,
+            )
+            .await;
+        if let Err(error) = result {
+            let _ = scheduler.inner.session.close(&Context::default()).await;
+            return Err(error);
+        }
+        if !scheduler.inner.read_only {
+            scheduler.inner.state.lock().cascade = true;
+            for record in scheduler.inner.tree.live_records() {
+                if matches!(
+                    record.state,
+                    TaskState::Waiting {
+                        policy: JoinPolicy::FailFast,
+                        ..
+                    }
+                ) {
+                    scheduler.inner.state.lock().fail_fast.insert(record.id());
+                }
+            }
+        }
+        scheduler.schedule_reconcile();
+        scheduler.schedule_wake();
+        Ok(scheduler)
+    }
+    pub fn session(&self) -> Session {
+        self.inner.session.clone()
+    }
+    pub fn index_sizes(&self) -> IndexSizes {
+        self.inner.tree.sizes()
+    }
+    fn now(&self) -> f64 {
+        (self.inner.now)()
+    }
+    fn report(
+        &self,
+        error: Error,
+        kind: &'static str,
+        task: Option<TaskId>,
+        reason: Option<&'static str>,
+    ) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (self.inner.options.on_report)(error, TaskReport { kind, task, reason })
+        }));
+    }
+    fn fail(&self, error: Error) {
+        if !self.inner.state.lock().closing {
+            self.inner.session.fail(error);
+        }
+    }
+    fn restart_limit(&self) -> f64 {
+        let limit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (self.inner.options.restart_limit)()
+        }))
+        .unwrap_or_else(|error| {
+            self.report(crate::session::panic_error(error), "host_error", None, None);
+            5.0
+        });
+        if limit >= 1.0 { limit.floor() } else { 5.0 }
+    }
+    fn parked(&self, record: &TaskRecord) -> bool {
+        !record.info.abort_requested
+            && record
+                .info
+                .restarts
+                .is_some_and(|n| n as f64 >= self.restart_limit())
+    }
+    fn not_due(&self, record: &TaskRecord) -> bool {
+        matches!(record.state, TaskState::Sleeping { until, .. } if !record.info.abort_requested && until > self.now())
+    }
+    fn waiting_on(&self, record: &TaskRecord) -> Vec<TaskId> {
+        if record.info.abort_requested {
+            return self.inner.tree.owned_live(record.id(), None, false, None);
+        }
+        match &record.state {
+            TaskState::Waiting { on, .. } => on
+                .iter()
+                .filter(|id| self.inner.tree.live(**id).is_some())
+                .copied()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+    fn track(&self, record: TaskRecord) {
+        let id = record.id();
+        let previous = self.inner.tree.live(id);
+        let above = self.inner.tree.track(record.clone());
+        let mut state = self.inner.state.lock();
+        if let Some(TaskState::Waiting { on, .. }) = previous.as_ref().map(|r| &r.state) {
+            for target in on {
+                if let Some(waiters) = state.waiting.get_mut(target) {
+                    waiters.shift_remove(&id);
+                    if waiters.is_empty() {
+                        state.waiting.remove(target);
+                    }
+                }
+            }
+        }
+        if record.state.status() == TaskStatus::Terminal {
+            state.runnable.shift_remove(&id);
+            state.held.shift_remove(&id);
+            state.sleeping.shift_remove(&id);
+            state.parked.shift_remove(&id);
+            state.failed_migrations.remove(&id);
+            state.fail_fast.shift_remove(&id);
+            if let Some(above) = above {
+                if above.state.status() == TaskStatus::Completing {
+                    state.held.insert(above.id());
+                } else if above.info.abort_requested {
+                    state.runnable.insert(above.id());
+                }
+            }
+            let waiters = state.waiting.get(&id).cloned().unwrap_or_default();
+            state.runnable.extend(waiters);
+            return;
+        }
+        if record.state.status() == TaskStatus::Completing {
+            state.runnable.shift_remove(&id);
+            state.held.insert(id);
+        } else {
+            state.runnable.insert(id);
+        }
+        if let TaskState::Waiting { on, .. } = &record.state {
+            for target in on {
+                state.waiting.entry(*target).or_default().insert(id);
+            }
+        }
+        if record.state.status() == TaskStatus::Sleeping {
+            state.sleeping.insert(id);
+        } else {
+            state.sleeping.shift_remove(&id);
+        }
+    }
+    fn observe(&self, publication: &CommitPublication) {
+        for change in &publication.changes {
+            if let CommitChange::Conversation(record) = change {
+                self.inner
+                    .tree
+                    .set_edge(record.id, record.owner.as_ref().map(|owner| owner.task_id));
+            }
+        }
+        let mut changed = false;
+        let mut reconcile = false;
+        let mut cascade = false;
+        for change in &publication.changes {
+            let CommitChange::Task(record) = change else {
+                continue;
+            };
+            changed = true;
+            let previous = self.inner.tree.live(record.id());
+            self.track((**record).clone());
+            if record.state.status() == TaskStatus::Terminal {
+                reconcile = true;
+                self.inner
+                    .task_waiters
+                    .resolve(&record.id(), (**record).clone());
+            }
+            let invocation = self
+                .inner
+                .state
+                .lock()
+                .invocations
+                .get(&record.id())
+                .cloned();
+            if record.info.abort_requested
+                && !previous.as_ref().is_some_and(|r| r.info.abort_requested)
+            {
+                cascade = true;
+                if let Some(invocation) = invocation.filter(|i| i.mode == InvocationMode::Run) {
+                    invocation.controller.abort();
+                }
+            }
+            if failed_outcome(record) && !previous.as_ref().is_some_and(|r| failed_outcome(r)) {
+                let waiters = self
+                    .inner
+                    .state
+                    .lock()
+                    .waiting
+                    .get(&record.id())
+                    .cloned()
+                    .unwrap_or_default();
+                for waiter in waiters {
+                    if self.inner.tree.live(waiter).is_some_and(|r| {
+                        matches!(
+                            r.state,
+                            TaskState::Waiting {
+                                policy: JoinPolicy::FailFast,
+                                ..
+                            }
+                        )
+                    }) {
+                        self.inner.state.lock().fail_fast.insert(waiter);
+                        reconcile = true;
+                    }
+                }
+            }
+            if matches!(
+                record.state,
+                TaskState::Waiting {
+                    policy: JoinPolicy::FailFast,
+                    ..
+                }
+            ) && previous
+                .as_ref()
+                .is_none_or(|r| r.state.status() != TaskStatus::Waiting)
+            {
+                self.inner.state.lock().fail_fast.insert(record.id());
+                reconcile = true;
+            }
+            if record.state.status() != TaskStatus::Terminal {
+                if previous
+                    .as_ref()
+                    .is_some_and(|r| r.info.abort_reason.is_some())
+                    && record.info.abort_reason.is_none()
+                {
+                    cascade = true;
+                }
+                if record.state.status() == TaskStatus::Completing
+                    && previous
+                        .as_ref()
+                        .is_none_or(|r| r.state.status() != TaskStatus::Completing)
+                {
+                    reconcile = true;
+                    cascade |= cancellation_intent(record);
+                }
+                if previous.is_none() {
+                    if !self.inner.tree.known(Node::Task(record.id())) {
+                        reconcile = true;
+                    } else if !record.info.background
+                        && !record.info.abort_requested
+                        && self
+                            .inner
+                            .tree
+                            .cancelling_owner(TaskNode::of(record).parent())
+                            .is_some()
+                    {
+                        cascade = true;
+                    }
+                }
+            }
+        }
+        if self.inner.tree.has_cancellation_intents() {
+            for change in &publication.changes {
+                if let CommitChange::Submission(record) = change {
+                    let node = Node::Conversation(record.info.conversation_id);
+                    if matches!(record.state, SubmissionState::InputQueued)
+                        && (!self.inner.tree.known(node)
+                            || self.inner.tree.cancelling_owner(node).is_some())
+                    {
+                        cascade = true;
+                    }
+                }
+            }
+        }
+        let pending = {
+            let mut state = self.inner.state.lock();
+            state.cascade |= cascade;
+            state.cascade
+        };
+        if reconcile || pending {
+            self.schedule_reconcile();
+        }
+        self.inner.tree.sweep();
+        if changed {
+            self.settle_idle();
+            self.kick();
+        }
+    }
+    pub fn resume(&self) -> Result<()> {
+        if self.inner.read_only {
+            return Err(Error::read_only("running tasks"));
+        }
+        self.inner.state.lock().enabled = true;
+        self.kick();
+        Ok(())
+    }
+    pub fn pause(&self) {
+        self.inner.state.lock().enabled = false;
+        self.schedule_wake();
+    }
+    pub fn retry(&self, id: TaskId, context: &Context) -> StorageFuture<()> {
+        let scheduler = self.clone();
+        let operation = self.inner.session.commit(
+            move |tx| async move {
+                let mut record = tx
+                    .task(id)
+                    .await?
+                    .ok_or_else(|| Error::message(format!("Task {id} does not exist")))?;
+                if !matches!(
+                    record.state.status(),
+                    TaskStatus::Terminal | TaskStatus::Completing
+                ) && scheduler.parked(&record)
+                {
+                    record.info.restarts = None;
+                    tx.set_task(record)?;
+                }
+                Ok(())
+            },
+            context,
+        );
+        let scheduler = self.clone();
+        eager(async move {
+            operation.await?;
+            scheduler.resume()
+        })
+    }
+    pub fn wait_for_task(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord> {
+        let scheduler = self.clone();
+        let context = context.clone();
+        let found = self.inner.session.read_on_line(move || async move {
+            if scheduler.inner.state.lock().closing {
+                return Err(closed_error(&scheduler.inner.session));
+            }
+            if scheduler.inner.tree.live(id).is_some() {
+                return Ok(scheduler.inner.task_waiters.add(id, &context));
+            }
+            let record = scheduler
+                .inner
+                .storage
+                .task(id, &context)
+                .await?
+                .ok_or_else(|| Error::message(format!("Task {id} does not exist")))?;
+            Ok(ready(Ok(record)))
+        });
+        eager(async move { found.await?.await })
+    }
+    pub fn wait_for_idle(
+        &self,
+        conversation: Option<ConversationId>,
+        context: &Context,
+    ) -> StorageFuture<()> {
+        if self.inner.state.lock().closing {
+            return ready(Err(closed_error(&self.inner.session)));
+        }
+        if self.inner.tree.idle(conversation) {
+            return ready(Ok(()));
+        }
+        self.schedule_reconcile();
+        self.inner.idle_waiters.add(conversation, context)
+    }
+    fn settle_idle(&self) {
+        for scope in self.inner.idle_waiters.keys() {
+            if self.inner.tree.idle(scope) {
+                self.inner.idle_waiters.resolve(&scope, ());
+            }
+        }
+    }
+    fn kick(&self) {
+        self.schedule_wake();
+        let spawn = {
+            let mut state = self.inner.state.lock();
+            state.dirty = true;
+            if state.draining || !state.enabled || state.closing {
+                false
+            } else {
+                state.draining = true;
+                true
+            }
+        };
+        if spawn {
+            let scheduler = self.clone();
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                let _ = scheduler.drain().await;
+            });
+        }
+    }
+    fn drain(&self) -> StorageFuture<()> {
+        let scheduler = self.clone();
+        Box::pin(async move {
+            loop {
+                let again = {
+                    let mut state = scheduler.inner.state.lock();
+                    if state.dirty && state.enabled && !state.closing {
+                        state.dirty = false;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !again {
+                    break;
+                }
+                match scheduler.reserve().await {
+                    Ok(reservations) => {
+                        for reservation in reservations {
+                            scheduler.start(reservation);
+                        }
+                    }
+                    Err(error) => {
+                        scheduler.fail(error);
+                        break;
+                    }
+                }
+            }
+            let dirty = {
+                let mut state = scheduler.inner.state.lock();
+                state.draining = false;
+                state.dirty
+            };
+            if dirty {
+                scheduler.kick();
+            }
+            Ok(())
+        })
+    }
+    fn fit(
+        &self,
+        record: &TaskRecord,
+        task: Option<&AnyTask>,
+    ) -> std::result::Result<bool, BlockedReason> {
+        let Some(task) = task else {
+            return Err(BlockedReason::MissingTask);
+        };
+        if task.version() == record.info.version {
+            return Ok(false);
+        }
+        if task.version() < record.info.version {
+            return Err(BlockedReason::TaskTooOld);
+        }
+        if self
+            .inner
+            .state
+            .lock()
+            .failed_migrations
+            .get(&record.id())
+            .is_some_and(|failed| failed.same_definition(task))
+        {
+            return Err(BlockedReason::MigrationFailed);
+        }
+        Ok(true)
+    }
+    fn resolve(
+        &self,
+        record: &TaskRecord,
+        snapshot: &TaskCatalogSnapshot,
+    ) -> std::result::Result<(AnyTask, TaskRecord), BlockedReason> {
+        let installed = snapshot.task(&record.info.kind);
+        let migrates = self.fit(record, installed.map(|installed| &installed.task))?;
+        let task = installed.unwrap().task.clone();
+        if !migrates {
+            return Ok((task, record.clone()));
+        }
+        let migrated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let migrate = task.0.migrate.as_ref().ok_or_else(|| {
+                Error::message(format!(
+                    "Task {} version {} has no migration from {}",
+                    record.info.kind,
+                    task.version(),
+                    record.info.version
+                ))
+            })?;
+            migrate(
+                record.info.input.clone(),
+                record.state.checkpoint().unwrap().clone(),
+                record.info.version,
+            )
+        }))
+        .unwrap_or_else(|error| Err(crate::session::panic_error(error)));
+        match migrated {
+            Ok((input, checkpoint)) => {
+                let mut record = record.clone();
+                record.info.input = input;
+                record.info.version = task.version();
+                match &mut record.state {
+                    TaskState::Pending {
+                        checkpoint: current,
+                        ..
+                    }
+                    | TaskState::Running {
+                        checkpoint: current,
+                        ..
+                    }
+                    | TaskState::Waiting {
+                        checkpoint: current,
+                        ..
+                    }
+                    | TaskState::Sleeping {
+                        checkpoint: current,
+                        ..
+                    } => *current = checkpoint,
+                    _ => unreachable!(),
+                }
+                Ok((task, record))
+            }
+            Err(error) => {
+                self.inner
+                    .state
+                    .lock()
+                    .failed_migrations
+                    .insert(record.id(), task);
+                self.report(error, "migration_failed", Some(record.id()), None);
+                Err(BlockedReason::MigrationFailed)
+            }
+        }
+    }
+    pub fn blocked_reason(&self, record: &TaskRecord) -> Option<BlockedReason> {
+        if matches!(
+            record.state.status(),
+            TaskStatus::Running | TaskStatus::Completing | TaskStatus::Terminal
+        ) || (record.info.abort_requested && record.info.abort_reason.is_none())
+        {
+            return None;
+        }
+        if self.parked(record) {
+            return Some(BlockedReason::RestartLimit);
+        }
+        let snapshot = self.inner.catalog.snapshot();
+        let installed = snapshot.task(&record.info.kind);
+        match self.fit(record, installed.map(|i| &i.task)) {
+            Err(reason) => Some(reason),
+            Ok(true) if installed.unwrap().task.0.migrate.is_none() => {
+                Some(BlockedReason::MigrationFailed)
+            }
+            _ => None,
+        }
+    }
+    fn reserve(&self) -> StorageFuture<Vec<Reservation>> {
+        let scheduler = self.clone();
+        let reservations = Arc::new(Mutex::new(Vec::<Reservation>::new()));
+        let capture = reservations.clone();
+        let operation = self.inner.session.commit(move |tx| async move {
+            let stopped = { let state = scheduler.inner.state.lock(); !state.enabled || state.closing };
+            if stopped { return Ok(()); }
+            let abandoned = scheduler.inner.state.lock().abandoned.iter().copied().collect::<Vec<_>>();
+            if !abandoned.is_empty() {
+                for id in &abandoned { if let Some(record) = scheduler.inner.tree.live(*id).filter(|r| !r.info.abort_requested) { tx.set_task(with_abort_mark((*record).clone(), Some(AbortReason::Restart)))?; } }
+                // Retired only after this commit resolves; no handler runs in this pass.
+                return Ok(());
+            }
+            load_scopes(&scheduler.inner.tree, scheduler.inner.storage.as_ref(), &scheduler.inner.context).await?;
+            let now = scheduler.now();
+            let sleeping = scheduler.inner.state.lock().sleeping.iter().copied().collect::<Vec<_>>();
+            for id in sleeping { if scheduler.inner.tree.live(id).is_some_and(|r| !matches!(r.state, TaskState::Sleeping { until, .. } if !r.info.abort_requested && until > now)) { scheduler.inner.state.lock().runnable.insert(id); } }
+            let parked = scheduler.inner.state.lock().parked.iter().copied().collect::<Vec<_>>();
+            for id in parked { if !scheduler.inner.tree.live(id).is_some_and(|r| scheduler.parked(&r)) { let mut state = scheduler.inner.state.lock(); state.parked.shift_remove(&id); state.runnable.insert(id); } }
+            let candidates = scheduler.inner.state.lock().runnable.iter().copied().collect::<Vec<_>>();
+            let mut snapshot = None;
+            for id in candidates {
+                let record = scheduler.inner.tree.live(id);
+                if record.as_ref().is_none_or(|r| r.state.status() == TaskStatus::Completing) || scheduler.inner.state.lock().invocations.contains_key(&id) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
+                let record = record.unwrap();
+                if !scheduler.waiting_on(&record).is_empty() || scheduler.not_due(&record) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
+                if scheduler.parked(&record) { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.parked.insert(id); continue; }
+                let mode = if record.info.abort_requested { InvocationMode::Abort } else { InvocationMode::Run };
+                if mode == InvocationMode::Run && !record.info.background && scheduler.inner.tree.cancelling_owner(TaskNode::of(&record).parent()).is_some() { scheduler.inner.state.lock().cascade = true; scheduler.schedule_reconcile(); continue; }
+                if mode == InvocationMode::Abort && record.info.restarts.unwrap_or(0) as f64 >= scheduler.restart_limit() {
+                    let message = format!("Abort handler of task {id} ({}) was cut off {} times", record.info.kind, record.info.restarts.unwrap_or(0));
+                    scheduler.terminate(&tx, &record, TaskOutcome::Faulted { error: TaskOutcomeError { message: message.into(), detail: Some(crate::wire::encode(&serde_json::json!({"reason":"restart_limit"}))) } }).await?;
+                    continue;
+                }
+                let snapshot = snapshot.get_or_insert_with(|| scheduler.inner.catalog.snapshot());
+                let (task, resolved) = match scheduler.resolve(&record, snapshot) {
+                    Ok(ready) => ready,
+                    Err(reason) => { if mode == InvocationMode::Abort && record.info.abort_reason.is_none() { scheduler.terminate(&tx, &record, TaskOutcome::Orphaned { reason: reason.text().into() }).await?; } continue; }
+                };
+                let checkpoint = resolved.state.checkpoint().unwrap().clone();
+                if resolved != *record || record.state.status() != TaskStatus::Running { tx.set_task(with_state(resolved, TaskState::Running { checkpoint, memos: None }))?; }
+                let controller = AbortController::new();
+                let (done, _) = tokio::sync::watch::channel(false);
+                let invocation = Arc::new(Invocation { task: id, conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
+                { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.invocations.insert(id, invocation.clone()); }
+                capture.lock().push(Reservation { invocation, task });
+            }
+            Ok(())
+        }, &self.inner.context);
+        let scheduler = self.clone();
+        Box::pin(async move {
+            if let Err(error) = operation.await {
+                for reservation in reservations.lock().drain(..) {
+                    scheduler.end(&reservation.invocation);
+                    reservation.invocation.done.send_replace(true);
+                }
+                return Err(error);
+            }
+            let mut state = scheduler.inner.state.lock();
+            if !state.abandoned.is_empty() {
+                state.abandoned.clear();
+                state.dirty = true;
+            }
+            drop(state);
+            Ok(std::mem::take(&mut *reservations.lock()))
+        })
+    }
+    fn start(&self, reservation: Reservation) {
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            let invocation = reservation.invocation.clone();
+            let result = std::panic::AssertUnwindSafe(scheduler.run(reservation))
+                .catch_unwind()
+                .await;
+            if let Err(panic) = result {
+                scheduler.report(
+                    crate::session::panic_error(panic),
+                    "task_error",
+                    Some(invocation.task),
+                    None,
+                );
+            }
+            scheduler.end(&invocation);
+            invocation.done.send_replace(true);
+            scheduler.kick();
+        });
+    }
+    async fn run(&self, reservation: Reservation) {
+        let invocation = reservation.invocation;
+        let definition = reservation.task;
+        let mut previous: Option<(JsonValue, Result<()>)> = None;
+        let mut reported: Option<Option<AnyTask>> = None;
+        let driver: Arc<dyn TaskDriver> = Arc::new(Driver {
+            scheduler: self.clone(),
+            invocation: invocation.clone(),
+        });
+        loop {
+            let Some(current) = self
+                .step(&invocation, previous.take(), &definition, &mut reported)
+                .await
+            else {
+                return;
+            };
+            let checkpoint = current.state.checkpoint().unwrap().clone();
+            let handler = if invocation.mode == InvocationMode::Abort {
+                Some(definition.0.abort.clone())
+            } else {
+                crate::wire::get(&checkpoint, "phase")
+                    .and_then(JsonValue::as_string)
+                    .and_then(|phase| definition.0.phases.get(phase))
+                    .cloned()
+            };
+            let result = std::panic::AssertUnwindSafe(async {
+                let handler = handler.ok_or_else(|| {
+                    Error::message(format!(
+                        "Task {} has no handler for checkpoint phase",
+                        current.info.kind
+                    ))
+                })?;
+                handler(current, driver.clone(), invocation.context.clone()).await
+            })
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)));
+            previous = Some((checkpoint, result));
+            // Definition replacement is decided on the line, after checking what
+            // the old handler actually made durable.
+        }
+    }
+    async fn step(
+        &self,
+        invocation: &Arc<Invocation>,
+        previous: Option<(JsonValue, Result<()>)>,
+        definition: &AnyTask,
+        reported: &mut Option<Option<AnyTask>>,
+    ) -> Option<TaskRecord> {
+        let scheduler = self.clone();
+        let invocation = invocation.clone();
+        let call = invocation.clone();
+        let definition = definition.clone();
+        let old_reported = reported.clone();
+        let capture = Arc::new(Mutex::new(old_reported));
+        let update = capture.clone();
+        let fault = Arc::new(Mutex::new(None));
+        let capture_fault = fault.clone();
+        let result = self
+            .inner
+            .session
+            .commit(
+                move |tx| async move {
+                    let current = scheduler
+                        .inner
+                        .tree
+                        .live(invocation.task)
+                        .filter(|r| r.state.status() == TaskStatus::Running);
+                    let Some(current) = current.filter(|_| !scheduler.inner.state.lock().closing)
+                    else {
+                        scheduler.end(&invocation);
+                        return Ok(None);
+                    };
+                    let cancelled = invocation.mode == InvocationMode::Run
+                        && (current.info.abort_requested
+                            || (!current.info.background
+                                && scheduler
+                                    .inner
+                                    .tree
+                                    .cancelling_owner(TaskNode::of(&current).parent())
+                                    .is_some()));
+                    if cancelled {
+                        scheduler.end(&invocation);
+                        scheduler.schedule_reconcile();
+                        return Ok(None);
+                    }
+                    let failure = if let Some((checkpoint, result)) = previous {
+                        if invocation.mode == InvocationMode::Abort {
+                            Some(result.err().unwrap_or_else(|| {
+                                Error::message(format!(
+                                    "Abort handler of task {} returned without a terminal outcome",
+                                    invocation.task
+                                ))
+                            }))
+                        } else if let Err(error) = result {
+                            Some(error)
+                        } else if current.state.checkpoint() == Some(&checkpoint) {
+                            let phase = crate::wire::get(&checkpoint, "phase")
+                                .map(|value| value.to_utf8().unwrap_or_else(|| value.to_string()))
+                                .unwrap_or_else(|| "undefined".into());
+                            Some(Error::message(format!(
+                                "Task {} phase {phase} returned without durable progress",
+                                current.info.kind
+                            )))
+                        } else {
+                            let snapshot = scheduler.inner.catalog.snapshot();
+                            let next = snapshot
+                                .task(&current.info.kind)
+                                .map(|installed| installed.task.clone());
+                            if !next
+                                .as_ref()
+                                .is_some_and(|next| next.same_definition(&definition))
+                            {
+                                if next.as_ref().is_some_and(|next| next.can_reserve(&current)) {
+                                    tx.set_task(with_state(
+                                        (*current).clone(),
+                                        TaskState::pending(
+                                            current.state.checkpoint().unwrap().clone(),
+                                        ),
+                                    ))?;
+                                    scheduler.end(&invocation);
+                                    return Ok(None);
+                                }
+                                let different =
+                                    update.lock().as_ref().is_none_or(|reported| {
+                                        match (reported, &next) {
+                                            (None, None) => false,
+                                            (Some(a), Some(b)) => !a.same_definition(b),
+                                            _ => true,
+                                        }
+                                    });
+                                if different {
+                                    *update.lock() = Some(next.clone());
+                                    scheduler.report(
+                                        Error::message(format!(
+                                            "Task {} keeps running under its old {} definition",
+                                            current.id(),
+                                            current.info.kind
+                                        )),
+                                        "task_outdated",
+                                        Some(current.id()),
+                                        Some(if next.is_some() {
+                                            "incompatible_task"
+                                        } else {
+                                            "missing_task"
+                                        }),
+                                    );
+                                }
+                            }
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(error) = failure {
+                        scheduler.end(&invocation);
+                        scheduler
+                            .terminate(
+                                &tx,
+                                &current,
+                                TaskOutcome::Faulted {
+                                    error: TaskOutcomeError {
+                                        message: error.to_string().into(),
+                                        detail: None,
+                                    },
+                                },
+                            )
+                            .await?;
+                        *capture_fault.lock() = Some(error);
+                        Ok(None)
+                    } else {
+                        Ok(Some((*current).clone()))
+                    }
+                },
+                &without_abort_signal(&call.context),
+            )
+            .await;
+        *reported = capture.lock().take();
+        match result {
+            Ok(current) => {
+                if let Some(error) = fault.lock().take() {
+                    self.report(error, "task_faulted", Some(call.task), Some("threw"));
+                }
+                current
+            }
+            Err(error) => {
+                self.end(&call);
+                self.fail(error);
+                None
+            }
+        }
+    }
+    fn end(&self, invocation: &Invocation) {
+        if invocation.ended.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        {
+            let mut state = self.inner.state.lock();
+            if state
+                .invocations
+                .get(&invocation.task)
+                .is_some_and(|current| std::ptr::eq(current.as_ref(), invocation))
+            {
+                state.invocations.shift_remove(&invocation.task);
+                if self.inner.tree.live(invocation.task).is_some() {
+                    state.runnable.insert(invocation.task);
+                }
+            }
+        }
+        for watch in std::mem::take(&mut *invocation.watches.lock()).into_values() {
+            watch.stop();
+        }
+        for disarm in std::mem::take(&mut *invocation.timers.lock()).into_values() {
+            disarm();
+        }
+        invocation
+            .controller
+            .abort_with_reason(SignalReason::Error(AbortError::new(
+                invocation.ended_error().to_string(),
+            )));
+    }
+    async fn terminate(
+        &self,
+        tx: &Transaction,
+        record: &TaskRecord,
+        outcome: TaskOutcome,
+    ) -> Result<()> {
+        load_scopes(
+            &self.inner.tree,
+            self.inner.storage.as_ref(),
+            &self.inner.context,
+        )
+        .await?;
+        let overlay = TaskOverlay::from_transaction(tx);
+        if !self
+            .inner
+            .tree
+            .owned_live(record.id(), Some(&overlay), true, None)
+            .is_empty()
+        {
+            tx.set_task(with_state(
+                record.clone(),
+                TaskState::Completing { outcome },
+            ))?;
+        } else {
+            tx.set_task(with_state(
+                record.clone(),
+                TaskState::Terminal {
+                    outcome: outcome.clone(),
+                },
+            ))?;
+            (self.inner.options.settle_outcome)(tx.clone(), record.clone(), outcome).await?;
+        }
+        Ok(())
+    }
+    async fn commit_state(
+        &self,
+        tx: &Transaction,
+        invocation: &Invocation,
+        mut current: TaskRecord,
+        next: TaskState,
+    ) -> Result<()> {
+        if let TaskState::Waiting { on, policy, .. } = &next {
+            validate_wait(
+                &self.inner.tree,
+                self.inner.storage.as_ref(),
+                &self.inner.context,
+                invocation.mode,
+                current.id(),
+                on,
+                *policy,
+                &TaskOverlay::from_transaction(tx),
+            )
+            .await?;
+        }
+        if let TaskState::Sleeping { until, .. } = &next {
+            validate_sleep(invocation.mode, current.id(), *until)?;
+        }
+        if let TaskState::Terminal { outcome } = &next {
+            let overlay = TaskOverlay::from_transaction(tx);
+            load_scopes(
+                &self.inner.tree,
+                self.inner.storage.as_ref(),
+                &self.inner.context,
+            )
+            .await?;
+            for record in overlay.tasks.values() {
+                self.inner
+                    .tree
+                    .load_chain(
+                        TaskNode::of(record).parent(),
+                        Some(&overlay),
+                        self.inner.storage.as_ref(),
+                        &self.inner.context,
+                    )
+                    .await?;
+            }
+            if !self
+                .inner
+                .tree
+                .owned_live(current.id(), Some(&overlay), true, None)
+                .is_empty()
+            {
+                current.info.restarts = None;
+                return tx.set_task(with_state(
+                    current,
+                    TaskState::Completing {
+                        outcome: outcome.clone(),
+                    },
+                ));
+            }
+        }
+        if crate::tasks::encode(&current.state)? != crate::tasks::encode(&next)? {
+            current.info.restarts = None;
+        }
+        tx.set_task(with_state(current, next))
+    }
+    fn schedule_reconcile(&self) {
+        let spawn = {
+            let mut state = self.inner.state.lock();
+            if state.closing || self.inner.read_only {
+                false
+            } else {
+                state.reconcile_dirty = true;
+                if state.reconciling {
+                    false
+                } else {
+                    state.reconciling = true;
+                    true
+                }
+            }
+        };
+        if spawn {
+            let scheduler = self.clone();
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                let _ = scheduler.reconcile().await;
+            });
+        }
+    }
+    fn reconcile(&self) -> StorageFuture<()> {
+        let scheduler = self.clone();
+        Box::pin(async move {
+            loop {
+                let again = {
+                    let mut state = scheduler.inner.state.lock();
+                    if state.reconcile_dirty && !state.closing {
+                        state.reconcile_dirty = false;
+                        true
+                    } else {
+                        state.reconciling = false;
+                        false
+                    }
+                };
+                if !again {
+                    break;
+                }
+                let reconcile = scheduler.clone();
+                let operation = scheduler.inner.session.commit(
+                    move |tx| async move {
+                        if reconcile.inner.state.lock().closing {
+                            return Ok(());
+                        }
+                        reconcile.reconcile_on_line(&tx).await
+                    },
+                    &scheduler.inner.context,
+                );
+                if let Err(error) = operation.await {
+                    scheduler.fail(error);
+                }
+                scheduler.schedule_wake();
+                scheduler.settle_idle();
+            }
+            Ok(())
+        })
+    }
+    async fn reconcile_on_line(&self, tx: &Transaction) -> Result<()> {
+        load_scopes(
+            &self.inner.tree,
+            self.inner.storage.as_ref(),
+            &self.inner.context,
+        )
+        .await?;
+        let cascade = {
+            let mut state = self.inner.state.lock();
+            std::mem::take(&mut state.cascade)
+        };
+        let queued = if cascade {
+            self.queued_conversations().await?
+        } else {
+            Vec::new()
+        };
+        let intents = self.inner.tree.cancellation_intents();
+        let intent_ids = intents
+            .iter()
+            .map(|record| record.id())
+            .collect::<HashSet<_>>();
+        let mut marks = IndexMap::<TaskId, (TaskRecord, Option<AbortReason>)>::new();
+        let mut mark = |record: &TaskRecord, reason: Option<AbortReason>| {
+            if marks
+                .get(&record.id())
+                .is_some_and(|(_, reason)| reason.is_none())
+                || (record.info.abort_requested
+                    && (record.info.abort_reason.is_none() || reason.is_some()))
+            {
+                return;
+            }
+            marks.insert(record.id(), (record.clone(), reason));
+        };
+        for owner in intents {
+            let restart =
+                owner.info.abort_reason == Some(AbortReason::Restart) && !failed_outcome(&owner);
+            for reached in self
+                .inner
+                .tree
+                .walk_down(Node::Task(owner.id()), None, false, |id| {
+                    !intent_ids.contains(&id)
+                })
+            {
+                if let Some(record) = reached.live.filter(|_| !reached.node.background) {
+                    mark(&record, restart.then_some(AbortReason::Restart));
+                }
+            }
+        }
+        let checks = { std::mem::take(&mut self.inner.state.lock().fail_fast) };
+        for id in checks {
+            let Some(record) = self.inner.tree.live(id) else {
+                continue;
+            };
+            let TaskState::Waiting { on, .. } = &record.state else {
+                continue;
+            };
+            let mut failed = false;
+            for id in on {
+                let record = match self.inner.tree.live(*id) {
+                    Some(record) => Some((*record).clone()),
+                    None => self.inner.storage.task(*id, &self.inner.context).await?,
+                };
+                if record.as_ref().is_some_and(failed_outcome) {
+                    failed = true;
+                    break;
+                }
+            }
+            if failed {
+                for id in on {
+                    if let Some(record) = self.inner.tree.live(*id).filter(|r| !failed_outcome(r)) {
+                        mark(&record, None);
+                    }
+                }
+            }
+        }
+        for (_, (record, reason)) in marks {
+            tx.set_task(with_abort_mark(record, reason))?;
+        }
+        for id in queued {
+            if self
+                .inner
+                .tree
+                .cancelling_owner(Node::Conversation(id))
+                .is_some()
+            {
+                (self.inner.options.withdraw_inputs)(tx.clone(), id).await?;
+            }
+        }
+        let mut round = std::mem::take(&mut self.inner.state.lock().held)
+            .into_iter()
+            .collect::<Vec<_>>();
+        let mut done = HashSet::new();
+        let mut overlay = TaskOverlay::from_transaction(tx);
+        while !round.is_empty() {
+            let mut next = IndexSet::new();
+            for id in round {
+                let Some(record) = overlay
+                    .tasks
+                    .get(&id)
+                    .cloned()
+                    .or_else(|| self.inner.tree.live(id))
+                else {
+                    continue;
+                };
+                let TaskState::Completing { outcome } = &record.state else {
+                    continue;
+                };
+                if done.contains(&id)
+                    || !self
+                        .inner
+                        .tree
+                        .owned_live(id, Some(&overlay), true, Some(&done))
+                        .is_empty()
+                {
+                    continue;
+                }
+                let terminal = with_state(
+                    (*record).clone(),
+                    TaskState::Terminal {
+                        outcome: outcome.clone(),
+                    },
+                );
+                tx.set_task(terminal.clone())?;
+                overlay.set_task(terminal);
+                done.insert(id);
+                if matches!(
+                    outcome,
+                    TaskOutcome::Faulted { .. } | TaskOutcome::Orphaned { .. }
+                ) {
+                    (self.inner.options.settle_outcome)(
+                        tx.clone(),
+                        (*record).clone(),
+                        outcome.clone(),
+                    )
+                    .await?;
+                }
+                if let Some(above) = self
+                    .inner
+                    .tree
+                    .nearest_live_above(TaskNode::of(&record), Some(&overlay))
+                    .filter(|r| r.state.status() == TaskStatus::Completing)
+                {
+                    next.insert(above.id());
+                }
+            }
+            round = next.into_iter().collect();
+        }
+        self.schedule_sweep();
+        Ok(())
+    }
+    async fn queued_conversations(&self) -> Result<Vec<ConversationId>> {
+        let storage = self.inner.storage.clone();
+        let context = self.inner.context.clone();
+        let submissions = scan_all(move |cursor| {
+            storage.scan_submissions(
+                &SubmissionQuery {
+                    status: Some(SubmissionStatus::Queued),
+                    ..Default::default()
+                },
+                256,
+                cursor.as_ref(),
+                &context,
+            )
+        })
+        .await?;
+        let ids = submissions
+            .into_iter()
+            .filter(|s| matches!(s.state, SubmissionState::InputQueued))
+            .map(|s| s.info.conversation_id)
+            .collect::<IndexSet<_>>();
+        for id in &ids {
+            self.inner
+                .tree
+                .load_chain(
+                    Node::Conversation(*id),
+                    None,
+                    self.inner.storage.as_ref(),
+                    &self.inner.context,
+                )
+                .await?;
+        }
+        Ok(ids.into_iter().collect())
+    }
+    fn schedule_sweep(&self) {
+        {
+            let mut state = self.inner.state.lock();
+            if state.sweep_pending || state.closing {
+                return;
+            }
+            state.sweep_pending = true;
+        }
+        let scheduler = self.clone();
+        drop(self.inner.session.read_on_line(move || async move {
+            scheduler.inner.state.lock().sweep_pending = false;
+            scheduler.inner.tree.sweep();
+            Ok(())
+        }));
+    }
+    pub fn abort(&self, id: TaskId, context: &Context) -> StorageFuture<AbortResult> {
+        self.abort_with(id, context, false)
+    }
+    fn abort_with(
+        &self,
+        id: TaskId,
+        context: &Context,
+        keep_restart: bool,
+    ) -> StorageFuture<AbortResult> {
+        let scheduler = self.clone();
+        let operation = self.inner.session.commit(
+            move |tx| async move {
+                let current = tx
+                    .task(id)
+                    .await?
+                    .ok_or_else(|| Error::message(format!("Task {id} does not exist")))?;
+                if current.state.status() == TaskStatus::Terminal {
+                    return Ok((AbortResult::Terminal, None));
+                }
+                if keep_restart && current.info.abort_reason == Some(AbortReason::Restart) {
+                    return Ok((AbortResult::Marked, None));
+                }
+                let invocation = scheduler.inner.state.lock().invocations.get(&id).cloned();
+                if invocation.is_none() && current.state.status() != TaskStatus::Completing {
+                    load_scopes(
+                        &scheduler.inner.tree,
+                        scheduler.inner.storage.as_ref(),
+                        &scheduler.inner.context,
+                    )
+                    .await?;
+                    if scheduler
+                        .inner
+                        .tree
+                        .owned_live(id, None, true, None)
+                        .is_empty()
+                        && let Err(reason) =
+                            scheduler.resolve(&current, &scheduler.inner.catalog.snapshot())
+                    {
+                        scheduler
+                            .terminate(
+                                &tx,
+                                &current,
+                                TaskOutcome::Orphaned {
+                                    reason: reason.text().into(),
+                                },
+                            )
+                            .await?;
+                        return Ok((AbortResult::Marked, None));
+                    }
+                }
+                if !current.info.abort_requested || current.info.abort_reason.is_some() {
+                    tx.set_task(with_abort_mark(current, None))?;
+                }
+                Ok((
+                    AbortResult::Marked,
+                    invocation.filter(|i| i.mode == InvocationMode::Run),
+                ))
+            },
+            context,
+        );
+        let scheduler = self.clone();
+        let context = context.clone();
+        eager(async move {
+            let (result, invocation) = operation.await?;
+            if let Some(invocation) = invocation {
+                let session = scheduler.inner.session.clone();
+                let wait = async move {
+                    tokio::select! { _ = invocation.finished() => Ok(()), failure = session.failed() => failure }
+                };
+                await_with_context(wait, &context)
+                    .await
+                    .map_err(|error| Error::message(error.to_string()))??;
+            }
+            Ok(result)
+        })
+    }
+    pub fn abort_conversation(
+        &self,
+        conversation: ConversationId,
+        background: bool,
+        context: &Context,
+    ) -> StorageFuture<()> {
+        let scheduler = self.clone();
+        let operation = self.inner.session.commit(
+            move |tx| async move {
+                load_scopes(
+                    &scheduler.inner.tree,
+                    scheduler.inner.storage.as_ref(),
+                    &scheduler.inner.context,
+                )
+                .await?;
+                let queued = scheduler.queued_conversations().await?;
+                let mut reached = Vec::new();
+                for task in scheduler.inner.tree.walk_down(
+                    Node::Conversation(conversation),
+                    None,
+                    background,
+                    |_| true,
+                ) {
+                    let Some(record) = task.live.filter(|_| background || !task.node.background)
+                    else {
+                        continue;
+                    };
+                    reached.push(record.id());
+                    if !record.info.abort_requested || record.info.abort_reason.is_some() {
+                        tx.set_task(with_abort_mark((*record).clone(), None))?;
+                    }
+                }
+                for id in queued {
+                    if scheduler.inner.tree.scope_contains(
+                        Node::Conversation(id),
+                        Scope::Conversation(conversation),
+                        background,
+                    ) == Some(true)
+                    {
+                        (scheduler.inner.options.withdraw_inputs)(tx.clone(), id).await?;
+                    }
+                }
+                Ok(reached)
+            },
+            context,
+        );
+        let scheduler = self.clone();
+        let context = context.clone();
+        eager(async move {
+            let reached = operation.await?;
+            if background {
+                for id in reached {
+                    scheduler.wait_for_task(id, &context).await?;
+                }
+            }
+            scheduler.wait_for_idle(Some(conversation), &context).await
+        })
+    }
+    pub fn wake(&self) -> Wake {
+        if self.inner.read_only {
+            return Wake::default();
+        }
+        let mut wake = {
+            let state = self.inner.state.lock();
+            Wake {
+                active: !state.invocations.is_empty() || state.reconcile_dirty || state.reconciling,
+                at: None,
+            }
+        };
+        let snapshot = self.inner.catalog.snapshot();
+        for record in self.inner.tree.live_records() {
+            if record.state.status() == TaskStatus::Completing
+                || self
+                    .inner
+                    .state
+                    .lock()
+                    .invocations
+                    .contains_key(&record.id())
+            {
+                continue;
+            }
+            if !self.waiting_on(&record).is_empty() {
+                continue;
+            }
+            if self.not_due(&record) {
+                if let TaskState::Sleeping { until, .. } = record.state
+                    && wake.at.is_none_or(|at| until < at)
+                {
+                    wake.at = Some(until);
+                }
+                continue;
+            }
+            if self.parked(&record) {
+                continue;
+            }
+            if (!record.info.abort_requested || record.info.abort_reason.is_some())
+                && self
+                    .fit(&record, snapshot.task(&record.info.kind).map(|i| &i.task))
+                    .is_err()
+            {
+                continue;
+            }
+            wake.active = true;
+        }
+        wake
+    }
+    fn schedule_wake(&self) {
+        {
+            let mut state = self.inner.state.lock();
+            if state.wake_pending || state.closing || self.inner.read_only {
+                return;
+            }
+            state.wake_pending = true;
+        }
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            {
+                let mut state = scheduler.inner.state.lock();
+                state.wake_pending = false;
+                if state.closing {
+                    return;
+                }
+            }
+            let wake = scheduler.wake();
+            if let Some(on_wake) = &scheduler.inner.options.on_wake {
+                if scheduler.inner.state.lock().last_wake == Some(wake) {
+                    return;
+                }
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| on_wake(wake)))
+                    .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)))
+                {
+                    Ok(()) => {
+                        scheduler.inner.state.lock().last_wake = Some(wake);
+                    }
+                    Err(error) => scheduler.report(error, "host_error", None, None),
+                }
+            } else {
+                let at = scheduler
+                    .inner
+                    .state
+                    .lock()
+                    .enabled
+                    .then_some(wake.at)
+                    .flatten();
+                scheduler.arm_timer(at);
+            }
+        });
+    }
+    fn arm_timer(&self, at: Option<f64>) {
+        let old = {
+            let mut state = self.inner.state.lock();
+            if state.timer.as_ref().map(|(at, _)| *at) == at {
+                return;
+            }
+            state.timer.take()
+        };
+        if let Some((_, disarm)) = old {
+            disarm();
+        }
+        let Some(at) = at else {
+            return;
+        };
+        let weak = Arc::downgrade(&self.inner);
+        let disarm = self.inner.timers.foreground(
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    let scheduler = TaskScheduler { inner };
+                    scheduler.inner.state.lock().timer = None;
+                    scheduler.kick();
+                }
+            }),
+            at - self.now(),
+        );
+        self.inner.state.lock().timer = Some((at, disarm));
+    }
+    fn seal(&self) {
+        if let Some((_, _, registry)) = self.inner.subscriptions.lock().as_mut() {
+            registry.take();
+        }
+        let timer = {
+            let mut state = self.inner.state.lock();
+            state.closing = true;
+            state.timer.take()
+        };
+        if let Some((_, disarm)) = timer {
+            disarm();
+        }
+        let error = closed_error(&self.inner.session);
+        self.inner.task_waiters.reject_all(error.clone());
+        self.inner.idle_waiters.reject_all(error);
+        // Invocation signals are deliberately left alone until every Session
+        // close listener, including its document observers, has run.
+    }
+    async fn join(&self) {
+        let stopped = self
+            .inner
+            .state
+            .lock()
+            .invocations
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for invocation in &stopped {
+            invocation.controller.abort();
+        }
+        for invocation in &stopped {
+            invocation.finished().await;
+        }
+        if stopped.is_empty() {
+            return;
+        }
+        let scheduler = self.clone();
+        let _ = self
+            .inner
+            .session
+            .write_at_close(move || {
+                Ok(stopped
+                    .into_iter()
+                    .filter_map(|invocation| scheduler.inner.tree.live(invocation.task))
+                    .filter_map(|record| {
+                        if let TaskState::Running { checkpoint, .. } = &record.state {
+                            Some(StorageWrite::Task {
+                                value: Box::new(with_state(
+                                    (*record).clone(),
+                                    TaskState::pending(checkpoint.clone()),
+                                )),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect())
+            })
+            .await;
+    }
+}
+fn with_abort_mark(mut record: TaskRecord, reason: Option<AbortReason>) -> TaskRecord {
+    record.info.abort_requested = true;
+    record.info.abort_reason = reason;
+    record.info.restarts = None;
+    record
+}
+
+struct Driver {
+    scheduler: TaskScheduler,
+    invocation: Arc<Invocation>,
+}
+impl TaskDriver for Driver {
+    fn check(&self) -> Result<()> {
+        if self.invocation.ended.load(Ordering::Acquire) {
+            Err(self.invocation.ended_error())
+        } else {
+            Ok(())
+        }
+    }
+    fn task_id(&self) -> TaskId {
+        self.invocation.task
+    }
+    fn conversation_id(&self) -> ConversationId {
+        self.invocation.conversation
+    }
+    fn signal(&self) -> pi_chord::context::AbortSignal {
+        self.invocation.controller.signal()
+    }
+    fn mode(&self) -> InvocationMode {
+        self.invocation.mode
+    }
+    fn session(&self) -> Session {
+        self.scheduler.inner.session.clone()
+    }
+    fn current(&self) -> Option<Arc<TaskRecord>> {
+        self.scheduler.inner.tree.live(self.invocation.task)
+    }
+    fn commit(&self, change: Change, context: &Context) -> StorageFuture<()> {
+        if let Err(error) = self.check() {
+            return ready(Err(error));
+        }
+        let scheduler = self.scheduler.clone();
+        let invocation = self.invocation.clone();
+        self.session().commit_scoped(
+            move |tx| async move {
+                if invocation.ended.load(Ordering::Acquire) {
+                    return Err(invocation.ended_error());
+                }
+                if scheduler.inner.state.lock().closing {
+                    return Err(closed_error(&scheduler.inner.session));
+                }
+                let current = scheduler.inner.tree.live(invocation.task).ok_or_else(|| {
+                    Error::message(format!("Task {} is terminal", invocation.task))
+                })?;
+                if current.state.status() != TaskStatus::Running {
+                    let value = crate::tasks::encode(&current.state)?;
+                    let status = crate::wire::tag(&value, "status").map_err(Error::message)?;
+                    return Err(Error::message(format!(
+                        "Task {} is {status}",
+                        invocation.task
+                    )));
+                }
+                if invocation.mode == InvocationMode::Run && current.info.abort_requested {
+                    return Err(Error::message(format!(
+                        "Task {} has a durable abort mark",
+                        invocation.task
+                    )));
+                }
+                let next = change(tx.clone(), (*current).clone()).await?;
+                if let Some(next) = next {
+                    scheduler
+                        .commit_state(&tx, &invocation, (*current).clone(), next)
+                        .await?;
+                }
+                Ok(())
+            },
+            context,
+            TransactionScope {
+                conversation_id: Some(self.invocation.conversation),
+                task_id: Some(self.invocation.task),
+            },
+        )
+    }
+    fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord> {
+        self.scheduler
+            .wait_for_task(id, &with_abort_signal(self.signal(), context))
+    }
+    fn abort_owned(&self, id: TaskId, context: &Context) -> StorageFuture<()> {
+        let scheduler = self.scheduler.clone();
+        let owner = self.invocation.task;
+        let context = with_abort_signal(self.signal(), context);
+        let lookup_context = context.clone();
+        let storage = scheduler.inner.storage.clone();
+        let lookup = self
+            .session()
+            .read_on_line(move || async move { storage.task(id, &lookup_context).await });
+        eager(async move {
+            let record = lookup
+                .await?
+                .filter(|r| r.info.owner == Some(owner))
+                .ok_or_else(|| Error::message(format!("Task {id} is not owned by task {owner}")))?;
+            if record.state.status() != TaskStatus::Terminal {
+                scheduler.abort_with(id, &context, true).await?;
+                scheduler.wait_for_task(id, &context).await?;
+            }
+            Ok(())
+        })
+    }
+    fn owned(&self, context: &Context) -> StorageFuture<Vec<TaskRecord>> {
+        let scheduler = self.scheduler.clone();
+        let invocation = self.invocation.clone();
+        let context = context.clone();
+        self.session().read_on_line(move || async move {
+            if invocation.ended.load(Ordering::Acquire) {
+                return Err(invocation.ended_error());
+            }
+            context.check()?;
+            Ok(scheduler
+                .inner
+                .tree
+                .direct_owned(invocation.task)
+                .into_iter()
+                .map(|r| (*r).clone())
+                .collect())
+        })
+    }
+    fn observe(&self, watch: Watch) -> Result<()> {
+        let mut watches = self.invocation.watches.lock();
+        self.check()?;
+        let id = self.invocation.next_watch.fetch_add(1, Ordering::Relaxed);
+        watches.insert(id, watch.clone());
+        drop(watches);
+        let invocation = Arc::downgrade(&self.invocation);
+        tokio::spawn(async move {
+            watch.closed().await;
+            if let Some(invocation) = invocation.upgrade() {
+                invocation.watches.lock().shift_remove(&id);
+            }
+        });
+        Ok(())
+    }
+    fn now(&self) -> f64 {
+        self.scheduler.now()
+    }
+    fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> DisarmTimer {
+        if self.invocation.ended.load(Ordering::Acquire) {
+            return Box::new(|| {});
+        }
+        let id = self.invocation.next_timer.fetch_add(1, Ordering::Relaxed);
+        let invocation = self.invocation.clone();
+        let fired = Arc::new(AtomicBool::new(false));
+        let did_fire = fired.clone();
+        let disarm = self.scheduler.inner.timers.foreground(
+            Box::new(move || {
+                did_fire.store(true, Ordering::Release);
+                invocation.timers.lock().shift_remove(&id);
+                if !invocation.ended.load(Ordering::Acquire) {
+                    callback();
+                }
+            }),
+            delay_ms,
+        );
+        let mut timers = self.invocation.timers.lock();
+        if fired.load(Ordering::Acquire) || self.invocation.ended.load(Ordering::Acquire) {
+            drop(timers);
+            disarm();
+        } else {
+            timers.insert(id, disarm);
+        }
+        let invocation = self.invocation.clone();
+        Box::new(move || {
+            let disarm = invocation.timers.lock().shift_remove(&id);
+            if let Some(disarm) = disarm {
+                disarm();
+            }
+        })
+    }
+    fn report(&self, error: Error) {
+        self.scheduler
+            .report(error, "task_error", Some(self.invocation.task), None);
+    }
+}

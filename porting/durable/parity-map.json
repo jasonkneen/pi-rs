@@ -456,15 +456,31 @@
     },
     {
       "reference": "packages/durable/src/harness/registry.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/catalog.rs"
+      ],
+      "evidence": [
+        "Task snapshot catalog only; full extension registry and built-ins pending",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/scheduler.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/src/harness/state.rs",
+        "crates/pi-durable/src/harness/ownership.rs",
+        "crates/pi-durable/src/harness/runtime.rs",
+        "crates/pi-durable/tests/task_scheduler.rs",
+        "crates/pi-durable/tests/task_ownership.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test task_scheduler --test task_ownership",
+        "scripts/run-stock-durable-tasks.mjs: 16 selected unmodified cases in both retention modes",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/submissions.ts",
@@ -504,9 +520,15 @@
     },
     {
       "reference": "packages/durable/src/harness/util.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/util.rs",
+        "crates/pi-durable/tests/task_scheduler.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test task_scheduler",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/view.ts",
@@ -732,9 +754,15 @@
     },
     {
       "reference": "packages/durable/src/tasks.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tasks.rs",
+        "crates/pi-durable/tests/task_scheduler.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test task_scheduler",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/testing/assertions.ts",
@@ -1366,9 +1394,18 @@
     },
     {
       "reference": "packages/durable/test/harness-tasks.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/task_scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs"
+      ],
+      "evidence": [
+        "16 of 36 unmodified stock cases selected; remaining 20 explicitly unselected",
+        "Native Session/scheduler execution counters verified; stock test owns its backend and callbacks",
+        "Both document retention modes; stock assertions and 5 second timeout unchanged"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-telemetry-options.test.ts",
