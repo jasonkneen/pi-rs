@@ -3,6 +3,7 @@
 //! and original test backend; no scheduling decisions are made in the adapter.
 use indexmap::IndexMap;
 use parking_lot::Mutex;
+use pi_chord::context::{ContextKey, create_context_key, with_context_value};
 use pi_chord::{
     AbortController,
     context::{AbortError, AbortReason as SignalReason, with_abort_signal},
@@ -17,12 +18,16 @@ use std::{
     collections::HashMap,
     io::{BufRead, Write},
     sync::{
-        Arc,
+        Arc, LazyLock,
         atomic::{AtomicU64, Ordering},
     },
 };
+#[path = "support/context_bridge.rs"]
+mod context_bridge;
 #[path = "support/task_remote_storage.rs"]
 mod remote_storage;
+static CALL_CONTEXT: LazyLock<ContextKey<u64>> =
+    LazyLock::new(|| create_context_key("stock-test context"));
 fn encode(value: &impl Serialize) -> JsonValue {
     pi_chord::json::to_value(value).unwrap()
 }
@@ -58,6 +63,8 @@ struct Hub {
     contexts: Mutex<HashMap<u64, AbortController>>,
     phases: AtomicU64,
     commits: AtomicU64,
+    context_reads: AtomicU64,
+    ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
 impl Hub {
     fn emit(&self, value: JsonValue) {
@@ -66,6 +73,14 @@ impl Hub {
         output.flush().unwrap();
     }
     fn call(&self, method: &str, args: JsonValue) -> StorageFuture<Option<JsonValue>> {
+        self.call_context(method, args, &Context::default())
+    }
+    fn call_context(
+        &self,
+        method: &str,
+        args: JsonValue,
+        context: &Context,
+    ) -> StorageFuture<Option<JsonValue>> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = tokio::sync::oneshot::channel();
         self.pending.lock().insert(id, Pending::Async(send));
@@ -74,6 +89,11 @@ impl Hub {
             ("id", encode(&id)),
             ("method", encode(&method)),
             ("args", args),
+            (
+                "context",
+                encode(&context.value(&CALL_CONTEXT).map(|id| *id)),
+            ),
+            ("abortable", encode(&context.abort_signal().is_some())),
         ]));
         Box::pin(async move {
             receive
@@ -239,7 +259,7 @@ impl Hub {
         let controller = AbortController::new();
         let context = with_abort_signal(controller.signal(), &Context::default());
         self.contexts.lock().insert(id, controller);
-        context
+        with_context_value(&CALL_CONTEXT, id, &context)
     }
     fn begin(
         self: Arc<Self>,
@@ -252,6 +272,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method.starts_with("context.") {
+            return self.context_request(&method, request, context);
+        }
         Ok(match method.as_str() {
             "open" => Box::pin(async move {
                 let harness: u64 = field(&request, "id")?;
@@ -405,7 +428,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -439,6 +462,16 @@ fn to_next(state: TaskState) -> Result<NextTaskState> {
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--order-tool-results") {
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).unwrap();
+        let messages: Vec<Arc<JsonValue>> = serde_json::from_str(&input).unwrap();
+        println!(
+            "{}",
+            encode(&pi_durable::harness::context::order_tool_results(&messages))
+        );
+        return;
+    }
     let hub = Arc::new(Hub {
         output: Mutex::new(std::io::stdout()),
         next: AtomicU64::new(1_000_000),
@@ -452,12 +485,15 @@ async fn main() {
         contexts: Mutex::new(HashMap::new()),
         phases: AtomicU64::new(0),
         commits: AtomicU64::new(0),
+        context_reads: AtomicU64::new(0),
+        ranges: Mutex::new(HashMap::new()),
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move||{
         for line in std::io::stdin().lock().lines(){let value:JsonValue=serde_json::from_str(&line.unwrap()).unwrap();
             match value["type"].to_utf8().as_deref(){
                 Some("callback.result")=>{hub.response(value);continue;}
+                Some("context.release")=>{hub.ranges.lock().remove(&field::<u64>(&value,"range").unwrap());continue;}
                 Some("storage.adopt")=>{let id=field::<u64>(&value,"id").unwrap();let adopt=hub.adoptions.lock().remove(&id);if let Some(adopt)=adopt{adopt(field(&value,"seq").unwrap());}continue;}
                 Some("abort")=>{if let Some(controller)=hub.contexts.lock().get(&field::<u64>(&value,"id").unwrap()){controller.abort_with_reason(SignalReason::Error(AbortError::new(value["message"].to_utf8().unwrap())));}continue;}
                 _=>{}

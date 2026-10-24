@@ -2,7 +2,7 @@
 //! reservation; typed task code cannot bypass its ordered commit gate.
 use super::state::NextTaskState;
 use crate::{
-    storage::{StorageFuture, ready},
+    storage::{StorageFuture, line::eager, ready},
     tasks::{decode, encode},
     *,
 };
@@ -25,6 +25,12 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn abort_owned(&self, id: TaskId, context: &Context) -> StorageFuture<()>;
     fn owned(&self, context: &Context) -> StorageFuture<Vec<TaskRecord>>;
     fn observe(&self, watch: Watch) -> Result<()>;
+    fn context(
+        &self,
+        conversation: ConversationId,
+        at: Option<EntryId>,
+        context: &Context,
+    ) -> StorageFuture<super::context::ContextView>;
     fn now(&self) -> f64;
     fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> DisarmTimer;
     fn report(&self, error: Error);
@@ -231,6 +237,41 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
             })
         })
     }
+    pub fn context(
+        &self,
+        conversation: ConversationId,
+        at: Option<EntryId>,
+        context: &Context,
+    ) -> StorageFuture<super::context::ContextView> {
+        self.read(|| self.driver.context(conversation, at, context))
+    }
+    pub fn snapshot_as_of<T: DocumentState, D: RewindableScope>(
+        &self,
+        token: &DocToken<T, D>,
+        owner: D::Owner,
+        at: EntryId,
+        context: &Context,
+    ) -> StorageFuture<Option<Arc<T>>> {
+        self.read(|| {
+            self.driver
+                .session()
+                .snapshot_as_of(token, owner, at, context)
+        })
+    }
+    pub fn snapshot_family_as_of<T: DocumentState, Input, D: RewindableScope>(
+        &self,
+        token: &DocFamilyToken<T, Input, D>,
+        owner: D::Owner,
+        key: impl Into<JsonString>,
+        at: EntryId,
+        context: &Context,
+    ) -> StorageFuture<Option<Arc<T>>> {
+        self.read(|| {
+            self.driver
+                .session()
+                .snapshot_family_as_of(token, owner, key, at, context)
+        })
+    }
     pub fn snapshot<T: DocumentState, D: DocScope>(
         &self,
         token: &DocToken<T, D>,
@@ -258,21 +299,37 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
         scope: D::Owner,
         context: &Context,
     ) -> StorageFuture<Option<DocumentWatch<T>>> {
+        self.read(|| self.bind_observation(self.driver.session().watch_doc(token, scope, context)))
+    }
+    pub fn watch_doc_family<T: DocumentState, Input, D: DocScope>(
+        &self,
+        token: &DocFamilyToken<T, Input, D>,
+        owner: D::Owner,
+        key: impl Into<JsonString>,
+        context: &Context,
+    ) -> StorageFuture<Option<DocumentWatch<T>>> {
         self.read(|| {
-            let watch = self.driver.session().watch_doc(token, scope, context);
-            let driver = self.driver.clone();
-            Box::pin(async move {
-                let watch = watch.await?;
-                if let Some(watch) = &watch {
-                    if let Err(error) = driver.observe(watch.raw().clone()) {
-                        watch.stop();
-                        return Err(error);
-                    }
-                } else {
-                    driver.check()?;
-                }
-                Ok(watch)
-            })
+            self.bind_observation(
+                self.driver
+                    .session()
+                    .watch_doc_family(token, owner, key, context),
+            )
+        })
+    }
+    fn bind_observation<T: DocumentState>(
+        &self,
+        acquisition: StorageFuture<Option<DocumentWatch<T>>>,
+    ) -> StorageFuture<Option<DocumentWatch<T>>> {
+        let driver = self.driver.clone();
+        eager(async move {
+            let watch = acquisition.await?;
+            if let Some(watch) = &watch
+                && let Err(error) = driver.observe(watch.raw().clone())
+            {
+                watch.stop();
+                return Err(error);
+            }
+            Ok(watch)
         })
     }
 }

@@ -396,9 +396,17 @@
     },
     {
       "reference": "packages/durable/src/harness/context.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/context.rs",
+        "crates/pi-durable/tests/context.rs",
+        "crates/pi-durable/tests/context_runtime.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test context --test context_runtime",
+        "scripts/run-stock-durable-context.mjs: all 22 unmodified cases in both retention modes",
+        "Native context module under reference outer services; complete native harness and allocation audit still pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/define.ts",
@@ -474,12 +482,14 @@
         "crates/pi-durable/src/harness/ownership.rs",
         "crates/pi-durable/src/harness/runtime.rs",
         "crates/pi-durable/tests/task_scheduler.rs",
-        "crates/pi-durable/tests/task_ownership.rs"
+        "crates/pi-durable/tests/task_ownership.rs",
+        "crates/pi-durable/tests/context_runtime.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
         "scripts/run-stock-durable-tasks.mjs: 16 selected unmodified cases in both retention modes",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Native context cache retention, expiry and late-read guards; dropped-waiter coverage"
       ]
     },
     {
@@ -1220,9 +1230,17 @@
     },
     {
       "reference": "packages/durable/test/harness-context.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/examples/support/context_bridge.rs",
+        "scripts/run-stock-durable-context.mjs",
+        "scripts/stock/durable-context-adapter.mjs"
+      ],
+      "evidence": [
+        "22/22 stock tests in each retention mode; pinned source bytes and native counters verified",
+        "Release bridge; original 5 second timeout and assertions unchanged",
+        "Native scope is context construction/incremental ranges; reference Harness, Session, scheduler and backend"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-conversations.test.ts",

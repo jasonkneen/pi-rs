@@ -15,6 +15,7 @@ mod wire;
 pub use documents::*;
 pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
+pub use harness::context::ContextView;
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};
 pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
 pub use session::*;

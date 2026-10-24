@@ -3,7 +3,7 @@
 import {spawn} from "node:child_process";
 import {createInterface} from "node:readline";
 import {writeFileSync} from "node:fs";
-import {BACKGROUND_CONTEXT,withAbortSignal} from "@earendil-works/chord/context";
+import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 let child,exited,next=1,storageNext=1,definitionNext=1,callbackNext=1;
 const pending=new Map(),storages=new Map(),definitions=new Map(),definitionIds=new WeakMap(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map();
 const stats={phases:0,commits:0,storageCalls:0};
@@ -17,7 +17,8 @@ function start(){
  createInterface({input:child.stdout}).on("line",line=>{
   const frame=JSON.parse(line);
   if(frame.type==="callback"){
-   invoke(frame.method,frame.args).then(value=>send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})}),failure=>send({type:"callback.result",id:frame.id,error:{name:failure.name,message:failure.message}}));return;
+   const context=pending.get(frame.context)?.context??BACKGROUND_CONTEXT;
+   invoke(frame.method,frame.args,frame.abortable?context:withoutAbortSignal(context)).then(value=>send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})}),failure=>send({type:"callback.result",id:frame.id,error:{name:failure.name,message:failure.message}}));return;
   }
   if(frame.type==="signal"){runtime(frame.runtime).controller.abort(new Error(frame.message));return;}
   if(frame.type==="report"){const harness=harnesses.get(frame.harness);harness?.onReport?.(error(frame.error),frame.info);return;}
@@ -30,7 +31,7 @@ function call(method,args={},context){
  const id=next++;
  return new Promise((resolve,reject)=>{
   const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
-  pending.set(id,{resolve,reject,detach:()=>signal?.removeEventListener("abort",abort)});
+  pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
   send({id,method,...args});
   if(signal?.aborted)abort();else signal?.addEventListener("abort",abort,{once:true});
  });
@@ -53,7 +54,7 @@ function runtime(id){
  };
  runtimes.set(id,held);return held;
 }
-async function invoke(method,args){
+async function invoke(method,args,context){
  if(method==="now"){const harness=harnesses.get(args);return harness?.options.now?.()??Date.now();}
  if(method==="initial"){const[id,input]=args;return definitions.get(id).initial(input);}
  if(method==="migrate"){const[id,input,checkpoint,version]=args;return definitions.get(id).migrate(input,checkpoint,version);}
@@ -66,11 +67,11 @@ async function invoke(method,args){
  if(method==="storage"){
   stats.storageCalls++;const storage=storages.get(args.handle);let values=args.args;
   if(args.method==="commit"){
-   const[writes,adoption]=values;return storage.commit(writes,seq=>send({type:"storage.adopt",id:adoption,seq}),BACKGROUND_CONTEXT);
+   const[writes,adoption]=values;return storage.commit(writes,seq=>send({type:"storage.adopt",id:adoption,seq}),context);
   }
   // JSON null is used only for omitted optional cursor/cutoff arguments here.
   if(args.method.startsWith("scan")||args.method==="findLatestHeadMarker")values=values.map(value=>value===null?undefined:value);
-  return storage[args.method](...values,BACKGROUND_CONTEXT);
+  return storage[args.method](...values,context);
  }
  throw new Error(`Unknown native callback ${method}`);
 }
@@ -91,11 +92,17 @@ export const Harness={async open(storage,options,context){
  function conversation(conversationId){return{id:conversationId,commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
  harnesses.set(id,harness);return harness;
 }};
-export async function shutdown(){
+const storageIds=new WeakMap();let shuttingDown=false;
+export const transport={request:call,storage(storage){let id=storageIds.get(storage);if(id===undefined){id=storageNext++;storageIds.set(storage,id);storages.set(id,storage);}return id;},release(range){if(!shuttingDown&&child)send({type:"context.release",range});}};
+async function finish(contextOnly){
+ shuttingDown=true;
  if(!child)throw new Error("Stock task tests did not reach Rust");
  const native=await call("stats");
- if(native.phases!==stats.phases||native.phases===0||native.commits===0||stats.storageCalls===0)throw new Error("Native scheduler was bypassed");
+ if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
+ else if(native.phases!==stats.phases||native.phases===0||native.commits===0||stats.storageCalls===0)throw new Error("Native scheduler was bypassed");
  Object.assign(stats,native);if(pending.size)throw new Error(`Native requests still pending: ${pending.size}`);
  child.stdin.end();if(await exited!==0)throw new Error("Native task bridge failed");
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify(stats));
 }
+export async function shutdown(){await finish(false);}
+export async function shutdownContextTransport(){await finish(true);}

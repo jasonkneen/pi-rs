@@ -44,6 +44,8 @@ pub struct ControlledStorage {
     pub close_error: Mutex<Option<Error>>,
     pub closes: Arc<AtomicUsize>,
     pub mints: AtomicUsize,
+    pub entry_rows: Arc<AtomicUsize>,
+    pub range_gate: Mutex<Option<Arc<Gate>>>,
 }
 macro_rules! forward {
     ($method:ident($($arg:ident:$ty:ty),*) -> $out:ty) => {
@@ -119,7 +121,34 @@ impl Storage for ControlledStorage {
     forward!(entry(id:EntryId)->Option<StoredEntry>);
     forward!(entry_in(conversation:ConversationId,id:EntryId)->Option<StoredEntry>);
     forward!(find_latest_head_marker(conversation:ConversationId,at:Option<EntryId>)->Option<EntryRecord>);
-    forward!(scan_entries(query:&EntryQuery,limit:usize,cursor:Option<&Cursor>)->Page<EntryRecord>);
+    fn scan_entries(
+        &self,
+        query: &EntryQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+        context: &Context,
+    ) -> StorageFuture<Page<EntryRecord>> {
+        let memory = self.memory.clone();
+        let query = query.clone();
+        let cursor = cursor.cloned();
+        let context = context.clone();
+        let gate = if limit > 1 {
+            self.range_gate.lock().take()
+        } else {
+            None
+        };
+        let rows = self.entry_rows.clone();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.wait().await;
+            }
+            let page = memory
+                .scan_entries(&query, limit, cursor.as_ref(), &context)
+                .await?;
+            rows.fetch_add(page.items.len(), Ordering::SeqCst);
+            Ok(page)
+        })
+    }
     forward!(task(id:TaskId)->Option<TaskRecord>);
     forward!(scan_tasks(query:&TaskQuery,limit:usize,cursor:Option<&Cursor>)->Page<TaskRecord>);
     forward!(submission(id:SubmissionId)->Option<SubmissionRecord>);

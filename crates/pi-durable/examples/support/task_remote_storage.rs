@@ -12,21 +12,23 @@ impl RemoteStorage {
         &self,
         method: &str,
         args: JsonValue,
+        context: &Context,
     ) -> StorageFuture<T> {
-        let call = self.hub.call(
+        let call = self.hub.call_context(
             "storage",
             object([
                 ("handle", encode(&self.handle)),
                 ("method", encode(&method)),
                 ("args", args),
             ]),
+            context,
         );
         Box::pin(async move { decode(&call.await?.unwrap_or(JsonValue::Null)) })
     }
 }
 macro_rules! read {
     ($name:ident,$wire:literal,($($arg:ident:$ty:ty),*),$out:ty) => {
-        fn $name(&self,$($arg:$ty,)* _context:&Context)->StorageFuture<$out> { self.call($wire, encode(&($($arg,)*))) }
+        fn $name(&self,$($arg:$ty,)* context:&Context)->StorageFuture<$out> { self.call($wire, encode(&($($arg,)*)), context) }
     };
 }
 impl Storage for RemoteStorage {
@@ -34,11 +36,11 @@ impl Storage for RemoteStorage {
         &self,
         writes: &[StorageWrite],
         adopt: Adopt,
-        _context: &Context,
+        context: &Context,
     ) -> StorageFuture<Seq> {
         let id = self.hub.next.fetch_add(1, Ordering::Relaxed);
         self.hub.adoptions.lock().insert(id, adopt);
-        let operation = self.call("commit", encode(&(writes, id)));
+        let operation = self.call("commit", encode(&(writes, id)), context);
         let hub = self.hub.clone();
         Box::pin(async move {
             let result = operation.await;
@@ -47,7 +49,7 @@ impl Storage for RemoteStorage {
         })
     }
     fn mint_id(&self) -> StorageFuture<i64> {
-        self.call("mintId", encode(&Vec::<u8>::new()))
+        self.call("mintId", encode(&Vec::<u8>::new()), &Context::default())
     }
     read!(conversation,"conversation",(id:ConversationId),Option<ConversationRecord>);
     read!(scan_conversations,"scanConversations",(query:&ConversationQuery,limit:usize,cursor:Option<&Cursor>),Page<ConversationRecord>);
@@ -63,7 +65,7 @@ impl Storage for RemoteStorage {
     read!(find_document,"findDocument",(address:&DocumentAddress,at:DocumentPoint),Option<DocumentRecord>);
     read!(document,"document",(id:DocumentId,at:DocumentPoint),Option<StoredDocument>);
     read!(scan_documents,"scanDocuments",(query:&DocumentQuery,limit:usize,cursor:Option<&Cursor>),Page<DocumentRecord>);
-    fn close(&self, _context: &Context) -> StorageFuture<()> {
-        self.call("close", encode(&Vec::<u8>::new()))
+    fn close(&self, context: &Context) -> StorageFuture<()> {
+        self.call("close", encode(&Vec::<u8>::new()), context)
     }
 }

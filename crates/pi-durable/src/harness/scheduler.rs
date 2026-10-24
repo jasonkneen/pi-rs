@@ -70,6 +70,7 @@ type SettleOutcome =
 type WithdrawInputs = Arc<dyn Fn(Transaction, ConversationId) -> StorageFuture<()> + Send + Sync>;
 #[derive(Clone)]
 pub struct SchedulerOptions {
+    pub context_retention_ms: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub restart_limit: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
@@ -79,6 +80,7 @@ pub struct SchedulerOptions {
 impl Default for SchedulerOptions {
     fn default() -> Self {
         Self {
+            context_retention_ms: Arc::new(|| 600_000.0),
             restart_limit: Arc::new(|| 5.0),
             on_report: Arc::new(|_, _| {}),
             on_wake: None,
@@ -109,6 +111,13 @@ struct State {
     timer: Option<(f64, DisarmTimer)>,
     last_wake: Option<Wake>,
     wake_pending: bool,
+    contexts: HashMap<ConversationId, KeptContext>,
+    expiry: Option<(f64, DisarmTimer)>,
+    expiry_generation: u64,
+}
+struct KeptContext {
+    range: Arc<super::context::ContextRange>,
+    idle_since: Option<f64>,
 }
 struct Invocation {
     task: TaskId,
@@ -628,6 +637,91 @@ impl TaskScheduler {
                 self.inner.idle_waiters.resolve(&scope, ());
             }
         }
+        let now = self.now();
+        let retention = self.context_retention();
+        let mut state = self.inner.state.lock();
+        state.contexts.retain(|id, kept| {
+            if kept
+                .idle_since
+                .is_some_and(|since| now - since >= retention)
+            {
+                return false;
+            }
+            if !self.inner.tree.idle(Some(*id)) {
+                kept.idle_since = None;
+            } else if retention > 0.0 {
+                kept.idle_since.get_or_insert(now);
+            } else {
+                return false;
+            }
+            true
+        });
+        drop(state);
+        self.schedule_expiry();
+    }
+    fn context_retention(&self) -> f64 {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (self.inner.options.context_retention_ms)()
+        }))
+        .unwrap_or_else(|error| {
+            self.report(crate::session::panic_error(error), "host_error", None, None);
+            0.0
+        })
+    }
+    fn schedule_expiry(&self) {
+        let retention = self.context_retention();
+        let (at, previous, generation) = {
+            let mut state = self.inner.state.lock();
+            let at = state
+                .contexts
+                .values()
+                .filter_map(|kept| kept.idle_since.map(|since| since + retention))
+                .reduce(f64::min);
+            if state.expiry.as_ref().map(|(at, _)| *at) == at {
+                return;
+            }
+            let previous = state.expiry.take();
+            state.expiry_generation += 1;
+            (
+                if state.closing { None } else { at },
+                previous,
+                state.expiry_generation,
+            )
+        };
+        if let Some((_, disarm)) = previous {
+            disarm();
+        }
+        let Some(at) = at else {
+            return;
+        };
+        let weak = Arc::downgrade(&self.inner);
+        let disarm = self.inner.timers.background(
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    let scheduler = TaskScheduler { inner };
+                    {
+                        let mut state = scheduler.inner.state.lock();
+                        if state.expiry_generation != generation || state.closing {
+                            return;
+                        }
+                        state.expiry = None;
+                    }
+                    scheduler.settle_idle();
+                }
+            }),
+            at - self.now(),
+        );
+        let mut state = self.inner.state.lock();
+        if state.expiry_generation == generation && !state.closing {
+            state.expiry = disarm.map(|disarm| (at, disarm));
+        } else if let Some(disarm) = disarm {
+            drop(state);
+            disarm();
+        }
+    }
+    /// Context retention is diagnostic only; entries remain authoritative in Storage.
+    pub fn retained_contexts(&self) -> usize {
+        self.inner.state.lock().contexts.len()
     }
     fn kick(&self) {
         self.schedule_wake();
@@ -1713,12 +1807,21 @@ impl TaskScheduler {
         self.inner.state.lock().timer = Some((at, disarm));
     }
     fn seal(&self) {
+        let expiry = {
+            let mut state = self.inner.state.lock();
+            state.closing = true;
+            state.contexts.clear();
+            state.expiry_generation += 1;
+            state.expiry.take()
+        };
+        if let Some((_, disarm)) = expiry {
+            disarm();
+        }
         if let Some((_, _, registry)) = self.inner.subscriptions.lock().as_mut() {
             registry.take();
         }
         let timer = {
             let mut state = self.inner.state.lock();
-            state.closing = true;
             state.timer.take()
         };
         if let Some((_, disarm)) = timer {
@@ -1809,6 +1912,87 @@ impl TaskDriver for Driver {
     }
     fn current(&self) -> Option<Arc<TaskRecord>> {
         self.scheduler.inner.tree.live(self.invocation.task)
+    }
+    fn context(
+        &self,
+        conversation: ConversationId,
+        at: Option<EntryId>,
+        context: &Context,
+    ) -> StorageFuture<super::context::ContextView> {
+        let previous = self
+            .scheduler
+            .inner
+            .state
+            .lock()
+            .contexts
+            .get(&conversation)
+            .map(|kept| kept.range.clone());
+        let read = super::context::read_context_from(
+            &self.scheduler.inner.session,
+            self.scheduler.inner.storage.clone(),
+            conversation,
+            context,
+            at,
+            previous,
+        );
+        let scheduler = self.scheduler.clone();
+        let invocation = self.invocation.clone();
+        eager(async move {
+            let read = read.await?;
+            if let Some(range) = read.range {
+                let eligible = {
+                    let state = scheduler.inner.state.lock();
+                    !state.closing
+                        && !invocation.ended.load(Ordering::Acquire)
+                        && state
+                            .contexts
+                            .get(&conversation)
+                            .is_none_or(|kept| kept.range.bounds.tail <= range.bounds.tail)
+                };
+                if !eligible {
+                    return Ok(read.view);
+                }
+                let idle = scheduler.inner.tree.idle(Some(conversation));
+                if idle {
+                    let retention = scheduler.context_retention();
+                    if retention.is_nan() || retention <= 0.0 {
+                        return Ok(read.view);
+                    }
+                }
+                let since = if idle {
+                    let kept = scheduler
+                        .inner
+                        .state
+                        .lock()
+                        .contexts
+                        .get(&conversation)
+                        .and_then(|kept| kept.idle_since);
+                    Some(kept.unwrap_or_else(|| scheduler.now()))
+                } else {
+                    None
+                };
+                let mut state = scheduler.inner.state.lock();
+                let kept = state.contexts.get(&conversation);
+                if !state.closing
+                    && !invocation.ended.load(Ordering::Acquire)
+                    && kept.is_none_or(|kept| kept.range.bounds.tail <= range.bounds.tail)
+                {
+                    let idle_since = if idle {
+                        kept.and_then(|kept| kept.idle_since).or(since)
+                    } else {
+                        None
+                    };
+                    state
+                        .contexts
+                        .insert(conversation, KeptContext { range, idle_since });
+                }
+                drop(state);
+                if idle {
+                    scheduler.schedule_expiry();
+                }
+            }
+            Ok(read.view)
+        })
     }
     fn commit(&self, change: Change, context: &Context) -> StorageFuture<()> {
         if let Err(error) = self.check() {
