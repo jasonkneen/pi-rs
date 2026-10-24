@@ -1,6 +1,7 @@
 //! Opaque original JS registrations are host capabilities. Rust owns registry
 //! validation, publication, selection, wrappers, filters and hook ordering.
 use super::*;
+use pi_durable::harness::reader::{ReaderSubscription, RegistryReader, RegistryView};
 use pi_durable::harness::{agent::*, registry::*, settings::*};
 use serde::Deserialize;
 
@@ -48,8 +49,72 @@ pub(super) struct RegistryBridge {
     operations: AtomicU64,
     resolutions: AtomicU64,
     wrappers: AtomicU64,
+    reader_listeners: Mutex<HashMap<u64, ReaderListener>>,
+    pub reader_snapshots: AtomicU64,
+    pub reader_subscriptions: AtomicU64,
+}
+type ReaderListener = Arc<dyn Fn() + Send + Sync>;
+struct HostReader {
+    hub: Arc<Hub>,
+    handle: u64,
+}
+impl RegistryReader for HostReader {
+    fn snapshot(&self) -> Result<RegistryView> {
+        self.hub
+            .registry
+            .reader_snapshots
+            .fetch_add(1, Ordering::Relaxed);
+        let id: u64 = decode(&self.hub.sync("readerSnapshot", encode(&self.handle))?)?;
+        self.hub
+            .registry
+            .snapshots
+            .lock()
+            .get(&id)
+            .cloned()
+            .map(Into::into)
+            .ok_or_else(|| Error::message("Custom reader returned an unknown native snapshot"))
+    }
+    fn subscribe(&self, listener: Arc<dyn Fn() + Send + Sync>) -> Result<ReaderSubscription> {
+        self.hub
+            .registry
+            .reader_subscriptions
+            .fetch_add(1, Ordering::Relaxed);
+        let id = self.hub.next.fetch_add(1, Ordering::Relaxed);
+        self.hub
+            .registry
+            .reader_listeners
+            .lock()
+            .insert(id, listener);
+        let subscription = self.hub.sync("readerSubscribe", encode(&(self.handle, id)));
+        let subscription: u64 = match subscription.and_then(|value| decode(&value)) {
+            Ok(id) => id,
+            Err(error) => {
+                self.hub.registry.reader_listeners.lock().remove(&id);
+                return Err(error);
+            }
+        };
+        let hub = self.hub.clone();
+        Ok(ReaderSubscription::new(move || {
+            hub.registry.reader_listeners.lock().remove(&id);
+            hub.sync("readerUnsubscribe", encode(&subscription))?;
+            Ok(())
+        }))
+    }
 }
 impl Hub {
+    pub(super) fn registry_reader(
+        self: &Arc<Self>,
+        request: &JsonValue,
+    ) -> Result<Arc<dyn RegistryReader>> {
+        if let Some(handle) = request["reader"].as_u64() {
+            Ok(Arc::new(HostReader {
+                hub: self.clone(),
+                handle,
+            }))
+        } else {
+            Ok(Arc::new(self.registry_by_id(field(request, "registry")?)?))
+        }
+    }
     pub(super) fn registry_by_id(&self, id: u64) -> Result<Registry<ToolHandle, SectionHandle>> {
         self.registry
             .registries
@@ -252,6 +317,18 @@ impl Hub {
                 .ok_or_else(|| Error::message("Unknown test agent"))
         };
         Ok(Some(match method {
+            "registry.notifyReader" => {
+                let listener = self
+                    .registry
+                    .reader_listeners
+                    .lock()
+                    .get(&field(&request, "listener")?)
+                    .cloned();
+                if let Some(listener) = listener {
+                    listener();
+                }
+                JsonValue::Null
+            }
             "registry.create" => {
                 let builtins = field::<Vec<JsonValue>>(&request, "builtins")?
                     .iter()

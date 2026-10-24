@@ -305,6 +305,113 @@ async fn no_progress_and_handler_errors_fault_but_a_committed_outcome_wins() {
 }
 
 #[tokio::test]
+async fn reentrant_close_during_phase_snapshot_prevents_the_next_handler() {
+    use pi_durable::harness::reader::{ReaderSubscription, RegistryReader, RegistryView};
+    use std::sync::atomic::AtomicBool;
+    struct ClosingReader {
+        catalog: TaskCatalog,
+        close_next: Arc<AtomicBool>,
+        session: Arc<Mutex<Option<Session>>>,
+    }
+    impl RegistryReader for ClosingReader {
+        fn snapshot(&self) -> Result<RegistryView> {
+            if self.close_next.swap(false, Ordering::SeqCst) {
+                // close() seals admission synchronously, even while this read
+                // runs inside the scheduler's Session-line decision.
+                drop(
+                    self.session
+                        .lock()
+                        .as_ref()
+                        .unwrap()
+                        .close(&Context::default()),
+                );
+            }
+            Ok(RegistryView::from_catalog(self.catalog.snapshot()))
+        }
+        fn subscribe(&self, listener: Arc<dyn Fn() + Send + Sync>) -> Result<ReaderSubscription> {
+            RegistryReader::subscribe(&self.catalog, listener)
+        }
+    }
+    let close_next = Arc::new(AtomicBool::new(false));
+    let session = Arc::new(Mutex::new(None));
+    let phases = Arc::new(Mutex::new(Vec::new()));
+    let (first, flag, second) = (phases.clone(), close_next.clone(), phases.clone());
+    let task: JsonTask = define_task(TaskDefinition {
+        name: "close-in-snapshot".into(),
+        version: 1,
+        initial: Arc::new(|_| Ok(json(r#"{"phase":"one"}"#))),
+        phases: IndexMap::from([
+            (
+                "one".into(),
+                Arc::new(
+                    move |_,
+                          runtime: TaskRuntime<JsonValue, JsonValue, JsonValue>,
+                          context: Context| {
+                        let (phases, flag) = (first.clone(), flag.clone());
+                        Box::pin(async move {
+                            phases.lock().push("one");
+                            runtime
+                                .commit(
+                                    |_, _| async {
+                                        Ok(Some(NextTaskState::Running {
+                                            checkpoint: json(r#"{"phase":"two"}"#),
+                                        }))
+                                    },
+                                    &context,
+                                )
+                                .await?;
+                            flag.store(true, Ordering::SeqCst);
+                            Ok(())
+                        }) as pi_durable::storage::StorageFuture<()>
+                    },
+                ) as PhaseHandler<JsonValue, JsonValue, JsonValue>,
+            ),
+            (
+                "two".into(),
+                Arc::new(move |_, _, _| {
+                    second.lock().push("two");
+                    Box::pin(async { Ok(()) })
+                }),
+            ),
+        ]),
+        abort: Arc::new(|_, _, _| Box::pin(async { Ok(()) })),
+        migrate: None,
+        hooks: None,
+    });
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::default()),
+        ClosingReader {
+            catalog: catalog(std::slice::from_ref(&task)),
+            close_next,
+            session: session.clone(),
+        },
+        SchedulerOptions::default(),
+        SessionOptions::default(),
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    *session.lock() = Some(scheduler.session().clone());
+    let root = scheduler
+        .session()
+        .commit(
+            |tx| async move { Ok(tx.create_root_conversation().await?.id) },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    start(&scheduler, root, &task).await;
+    scheduler.resume().unwrap();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), scheduler.session().closed())
+            .await
+            .unwrap(),
+        SessionEnd::Closed
+    ));
+    assert_eq!(*phases.lock(), ["one"]);
+}
+
+#[tokio::test]
 async fn a_terminal_commit_holds_for_ordinary_owned_work() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let entered = Arc::new(tokio::sync::Notify::new());

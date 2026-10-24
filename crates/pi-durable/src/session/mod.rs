@@ -749,14 +749,17 @@ impl Session {
             context,
         ))
     }
-    fn snapshot_as_of_raw(
+    pub fn snapshot_as_of_raw(
         &self,
         definition: Arc<AnyDocDefinition>,
         mut address: DocumentAddress,
         at: EntryId,
         context: &Context,
     ) -> StorageFuture<Option<Arc<JsonValue>>> {
-        if let Err(error) = self.usable() {
+        if let Err(error) = self
+            .usable()
+            .and_then(|()| definition.check_address(&address))
+        {
             return ready(Err(error));
         }
         let context = context.clone();
@@ -817,13 +820,17 @@ impl Session {
     ) -> StorageFuture<Option<DocumentWatch<T>>> {
         typed_watch(self.watch_raw(token.definition.clone(), token.address(owner, key), context))
     }
-    fn watch_raw(
+    pub fn watch_raw(
         &self,
         definition: Arc<AnyDocDefinition>,
         address: DocumentAddress,
         context: &Context,
     ) -> StorageFuture<Option<Watch>> {
-        if let Err(error) = self.usable().and_then(|()| cancelled(context)) {
+        if let Err(error) = self
+            .usable()
+            .and_then(|()| definition.check_address(&address))
+            .and_then(|()| cancelled(context))
+        {
             return ready(Err(error));
         }
         let context = context.clone();

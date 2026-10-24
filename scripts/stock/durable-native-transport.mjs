@@ -5,7 +5,7 @@ import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map();
 let exited;
-export function failure(value){const error=new Error(value.message);if(value.name&&value.name!=="Error")error.name=value.name;return error;}
+export function failure(value){const error=new Error(value.message);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
 function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,error:!!frame.error})+"\n");}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}

@@ -126,6 +126,34 @@ pub struct AnyDocDefinition {
     checkpoint: Checkpoint,
 }
 impl AnyDocDefinition {
+    /// Validated dynamic definition boundary for embedded/runtime adapters.
+    pub fn new(
+        kind: impl Into<JsonString>,
+        version: u64,
+        scope: DefinitionScope,
+        family: bool,
+        initial: impl Fn(Option<&JsonValue>) -> Result<JsonObject> + Send + Sync + 'static,
+        checkpoint: impl Fn(&JsonObject, &[Op], CheckpointInfo) -> Result<bool> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        let kind = kind.into();
+        validate(&kind, version)?;
+        Ok(Self {
+            kind,
+            version,
+            scope,
+            family,
+            initial: Arc::new(initial),
+            migrate: None,
+            checkpoint: Arc::new(checkpoint),
+        })
+    }
+    pub fn with_migration(
+        mut self,
+        migrate: impl Fn(JsonObject, u64) -> Result<JsonObject> + Send + Sync + 'static,
+    ) -> Self {
+        self.migrate = Some(Arc::new(migrate));
+        self
+    }
     pub fn check_address(&self, address: &DocumentAddress) -> Result<()> {
         if address.kind != self.kind || address.key.is_some() != self.family {
             return Err(Error::message(

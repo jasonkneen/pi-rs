@@ -67,13 +67,18 @@ impl<T> Clone for DocDraft<T> {
         }
     }
 }
+impl<T> DocDraft<T> {
+    pub fn same_draft(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cell, &other.cell)
+    }
+}
 impl<T: Serialize + DeserializeOwned> DocDraft<T> {
     pub fn read(&self) -> Result<T> {
-        let mut change = self.cell.change.lock();
+        let change = self.cell.change.lock();
         if self.cell.sealed.load(Ordering::Acquire) {
             return Err(settled());
         }
-        wire::decode(change.state()?).map_err(Error::message)
+        wire::decode(change.current()?).map_err(Error::message)
     }
     pub fn update<R>(&self, update: impl FnOnce(&mut T) -> Result<R>) -> Result<R> {
         let mut change = self.cell.change.lock();
@@ -87,6 +92,26 @@ impl<T: Serialize + DeserializeOwned> DocDraft<T> {
         JsonObject::try_from_value(value.clone()).map_err(Error::message)?;
         *draft = value;
         Ok(result)
+    }
+}
+
+impl DocDraft<JsonObject> {
+    /// Record explicit JSON edits before persistence, preserving structural no-ops.
+    pub fn apply_ops(&self, ops: &[pi_chord::delta::Op]) -> Result<()> {
+        let mut change = self.cell.change.lock();
+        if self.cell.sealed.load(Ordering::Acquire) {
+            return Err(settled());
+        }
+        change.apply_ops_checked(ops, |value| {
+            if value.is_object() {
+                Ok(())
+            } else {
+                Err(pi_chord::delta::Error::Type(
+                    "Expected a JSON object".into(),
+                ))
+            }
+        })?;
+        Ok(())
     }
 }
 
@@ -730,7 +755,10 @@ impl Transaction {
         address: DocumentAddress,
         seed: Option<JsonValue>,
     ) -> StorageFuture<DocDraft<JsonObject>> {
-        if let Err(error) = definition.check_address(&address) {
+        if let Err(error) = self
+            .assert_open()
+            .and_then(|()| definition.check_address(&address))
+        {
             return ready(Err(error));
         }
         self.typed_doc(definition.clone(), address, seed)

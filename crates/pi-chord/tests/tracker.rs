@@ -214,3 +214,115 @@ fn wide_changes_fall_back_to_one_base_and_reserved_paths_are_folded() {
     assert!(matches!(&ops[..],[Op::Set(path,_)] if path==&vec![Seg::from("safe")]));
     assert_eq!(apply(before, &ops).unwrap(), after);
 }
+
+#[test]
+fn recorded_structural_edits_survive_equal_final_values_and_publish_only_at_adoption() {
+    let initial = Arc::new(value(r#"{"items":[1,2]}"#));
+    let mut tracker = Tracker::new(initial.clone());
+    let mut change = tracker.begin_change();
+    let ops: Vec<Op> =
+        serde_json::from_str(r#"[["p",["items"],0,1,[]],["p",["items"],0,0,[1]]]"#).unwrap();
+    change.apply_ops(&ops).unwrap();
+    assert_eq!(change.current().unwrap(), initial.as_ref());
+    assert!(Arc::ptr_eq(tracker.value(), &initial));
+    let prepared = change.prepare().unwrap();
+    assert_eq!(prepared.ops(), ops);
+    assert!(!Arc::ptr_eq(prepared.value(), &initial));
+    assert_eq!(
+        apply_immutable(Some(&initial), prepared.ops()).unwrap(),
+        **prepared.value()
+    );
+    assert!(change.current().is_err());
+    assert!(change.apply_ops(&ops).is_err());
+    tracker.adopt(&prepared).unwrap();
+    assert!(Arc::ptr_eq(tracker.value(), prepared.value()));
+}
+
+#[test]
+fn recorded_edits_mix_with_opaque_updates_and_reject_failed_candidates_atomically() {
+    let mut tracker = track(value(r#"{"a":0,"b":0,"items":[]}"#));
+    let mut change = tracker.begin_change();
+    *change.state().unwrap() = value(r#"{"a":1,"b":0,"items":[]}"#);
+    let ops = vec![Op::Splice(
+        vec![Seg::from("items")],
+        0,
+        0,
+        vec![JsonValue::from(3)],
+    )];
+    change.apply_ops(&ops).unwrap();
+    *change.state().unwrap() = value(r#"{"a":1,"b":2,"items":[3]}"#);
+    let before = change.current().unwrap().clone();
+    assert!(
+        change
+            .apply_ops(&[Op::Append(vec![Seg::from("a")], "bad".into())])
+            .is_err()
+    );
+    assert!(
+        change
+            .apply_ops_checked(&[Op::Replace(JsonValue::Null)], |_| Err(Error::Type(
+                "rejected".into()
+            )))
+            .is_err()
+    );
+    assert_eq!(change.current().unwrap(), &before);
+    change
+        .apply_ops(&[Op::Set(vec![Seg::from("a")], JsonValue::from(4))])
+        .unwrap();
+    let prepared = change.prepare().unwrap();
+    assert_eq!(prepared.ops().len(), 4);
+    assert_eq!(
+        apply_immutable(Some(prepared.base()), prepared.ops()).unwrap(),
+        value(r#"{"a":4,"b":2,"items":[3]}"#)
+    );
+    tracker.adopt(&prepared).unwrap();
+}
+
+#[test]
+fn retained_settled_changes_release_their_old_roots() {
+    for abort in [false, true] {
+        let mut tracker = track(value(r#"{"retained":"old root"}"#));
+        let weak = Arc::downgrade(tracker.value());
+        let mut change = tracker.begin_change();
+        *change.state().unwrap() = value(r#"{"retained":"new root"}"#);
+        if abort {
+            change.abort();
+            drop(tracker);
+        } else {
+            let prepared = change.prepare().unwrap();
+            tracker.adopt(&prepared).unwrap();
+            drop(prepared);
+        }
+        assert!(weak.upgrade().is_none());
+        assert!(change.current().is_err());
+    }
+}
+
+#[test]
+fn recorded_replacements_discard_overwritten_prefixes_and_remain_classifiable_as_bases() {
+    let mut tracker = track(value(r#"{"count":0}"#));
+    let mut change = tracker.begin_change();
+    change
+        .apply_ops(&[Op::Set(vec!["count".into()], JsonValue::from(1))])
+        .unwrap();
+    let replacement = value(r#"{"count":2}"#);
+    change
+        .apply_ops(&[
+            Op::Replace(replacement.clone()),
+            Op::Set(vec!["count".into()], JsonValue::from(3)),
+        ])
+        .unwrap();
+    let prepared = change.prepare().unwrap();
+    assert!(is_base(prepared.ops()));
+    assert_eq!(
+        prepared.ops(),
+        &[
+            Op::Replace(replacement),
+            Op::Set(vec!["count".into()], JsonValue::from(3))
+        ]
+    );
+    assert_eq!(
+        apply_immutable(None, prepared.ops()).unwrap(),
+        value(r#"{"count":3}"#)
+    );
+    tracker.adopt(&prepared).unwrap();
+}

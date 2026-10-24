@@ -1,4 +1,4 @@
-use super::{Error, Op, diff_revisions};
+use super::{Error, Op, apply_immutable, diff_revisions};
 use crate::JsonValue;
 use parking_lot::Mutex;
 use std::sync::{
@@ -40,9 +40,17 @@ pub struct Tracker {
     value: Arc<JsonValue>,
     owner: Arc<AtomicU64>,
 }
+enum Edits {
+    Diff,
+    Recorded {
+        ops: Vec<Op>,
+        untracked_base: Option<JsonValue>,
+    },
+}
 pub struct Change {
-    base: Arc<JsonValue>,
+    base: Option<Arc<JsonValue>>,
     state: Option<JsonValue>,
+    edits: Edits,
     lease: Arc<Lease>,
     settled: bool,
 }
@@ -78,8 +86,9 @@ impl Tracker {
     }
     pub fn begin_change(&self) -> Change {
         Change {
-            base: self.value.clone(),
+            base: Some(self.value.clone()),
             state: Some(self.value.as_ref().clone()),
+            edits: Edits::Diff,
             lease: self.lease(Status::Open),
             settled: false,
         }
@@ -121,32 +130,105 @@ impl Tracker {
 }
 
 impl Change {
-    pub fn state(&mut self) -> Result<&mut JsonValue, Error> {
+    fn check_open(&self) -> Result<(), Error> {
         if self.settled || self.lease.stale() || *self.lease.status.lock() != Status::Open {
             return Err(error("Cannot use a settled overlay"));
+        }
+        Ok(())
+    }
+    pub fn current(&self) -> Result<&JsonValue, Error> {
+        self.check_open()?;
+        self.state
+            .as_ref()
+            .ok_or_else(|| error("Cannot use a settled overlay"))
+    }
+    pub fn state(&mut self) -> Result<&mut JsonValue, Error> {
+        self.check_open()?;
+        if let Edits::Recorded { untracked_base, .. } = &mut self.edits
+            && untracked_base.is_none()
+        {
+            *untracked_base = self.state.clone();
         }
         self.state
             .as_mut()
             .ok_or_else(|| error("Cannot use a settled overlay"))
     }
+    fn pending_diff(&self) -> Vec<Op> {
+        let current = self.state.as_ref().expect("open change owns draft");
+        match &self.edits {
+            Edits::Diff => {
+                diff_revisions(self.base.as_ref().expect("open change owns base"), current)
+            }
+            Edits::Recorded {
+                untracked_base: Some(base),
+                ..
+            } => diff_revisions(base, current),
+            Edits::Recorded {
+                untracked_base: None,
+                ..
+            } => Vec::new(),
+        }
+    }
+    /// Apply and retain an explicit operation stream, including structural edits
+    /// whose final value equals the base. Failure changes neither draft nor log.
+    pub fn apply_ops(&mut self, ops: &[Op]) -> Result<(), Error> {
+        self.apply_ops_checked(ops, |_| Ok(()))
+    }
+    /// Validate the candidate before adopting it into this open change. Object
+    /// document boundaries use this to reject a scalar root without replaying twice.
+    pub fn apply_ops_checked(
+        &mut self,
+        ops: &[Op],
+        validate: impl FnOnce(&JsonValue) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let current = self.current()?;
+        if ops.is_empty() {
+            return validate(current);
+        }
+        let candidate = apply_immutable(Some(current), ops)?;
+        validate(&candidate)?;
+        let pending = self.pending_diff();
+        let mut recorded = match std::mem::replace(&mut self.edits, Edits::Diff) {
+            Edits::Diff => Vec::new(),
+            Edits::Recorded { ops, .. } => ops,
+        };
+        recorded.extend(pending);
+        recorded.extend_from_slice(ops);
+        self.state = Some(candidate);
+        self.edits = Edits::Recorded {
+            ops: recorded,
+            untracked_base: None,
+        };
+        Ok(())
+    }
     pub fn prepare(&mut self) -> Result<Prepared, Error> {
         if self.settled {
             return Err(error("Change has already been settled"));
         }
-        if self.lease.stale() || *self.lease.status.lock() != Status::Open {
-            return Err(error("Cannot use a settled overlay"));
+        self.check_open()?;
+        let pending = self.pending_diff();
+        let mut ops = match std::mem::replace(&mut self.edits, Edits::Diff) {
+            Edits::Diff => Vec::new(),
+            Edits::Recorded { ops, .. } => ops,
+        };
+        ops.extend(pending);
+        // Replacements reset persisted path dictionaries and classify a base.
+        // Earlier operations are overwritten, so keep the last replacement at
+        // index zero just as a flushed reference batch does.
+        if let Some(index) = ops.iter().rposition(|op| matches!(op, Op::Replace(_))) {
+            ops.drain(..index);
         }
+        let base = self.base.take().expect("open change owns base");
         let value = self.state.take().expect("open change owns draft");
-        let ops = diff_revisions(&self.base, &value);
         let value = if ops.is_empty() {
-            self.base.clone()
+            base.clone()
         } else {
             Arc::new(value)
         };
         *self.lease.status.lock() = Status::Prepared;
         self.settled = true;
         Ok(Prepared {
-            base: self.base.clone(),
+            base,
             value,
             ops,
             lease: self.lease.clone(),
@@ -156,6 +238,8 @@ impl Change {
         self.lease.abort();
         self.settled = true;
         self.state = None;
+        self.base = None;
+        self.edits = Edits::Diff;
     }
 }
 impl Prepared {

@@ -1347,6 +1347,11 @@ impl TaskScheduler {
             else {
                 return;
             };
+            // A host registry reader may close the Session while the step
+            // refreshes its snapshot. Recheck after that decision settles.
+            if self.inner.state.lock().closing {
+                return;
+            }
             *invocation.agent.lock() = None;
             let checkpoint = current.state.checkpoint().unwrap().clone();
             let handler = if invocation.mode == InvocationMode::Abort {

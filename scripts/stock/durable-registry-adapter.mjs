@@ -29,6 +29,7 @@ export function createRegistry(){
  registries.set(result,registry);return result;
 }
 export function nativeRegistryId(registry){return registries.get(registry);}
+export function nativeSnapshotId(value){const id=ids.get(value);if(id===undefined)throw new Error("Custom reader must return a native registry snapshot");return id;}
 export function snapshot(id){
  let held=snapshots.get(id);if(held)return held;
  const request=(method,args={})=>call(method,{snapshot:id,...args});

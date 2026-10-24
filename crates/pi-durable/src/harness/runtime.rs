@@ -302,6 +302,55 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     ) -> StorageFuture<Option<Arc<T>>> {
         self.read(|| self.driver.session().snapshot(token, scope, context))
     }
+    pub fn snapshot_raw(
+        &self,
+        definition: Arc<AnyDocDefinition>,
+        address: DocumentAddress,
+        context: &Context,
+    ) -> StorageFuture<Option<Arc<JsonValue>>> {
+        self.read(|| {
+            self.driver
+                .session()
+                .snapshot_raw(definition, address, context)
+        })
+    }
+    pub fn snapshot_as_of_raw(
+        &self,
+        definition: Arc<AnyDocDefinition>,
+        address: DocumentAddress,
+        at: EntryId,
+        context: &Context,
+    ) -> StorageFuture<Option<Arc<JsonValue>>> {
+        self.read(|| {
+            self.driver
+                .session()
+                .snapshot_as_of_raw(definition, address, at, context)
+        })
+    }
+    pub fn watch_doc_raw(
+        &self,
+        definition: Arc<AnyDocDefinition>,
+        address: DocumentAddress,
+        context: &Context,
+    ) -> StorageFuture<Option<Watch>> {
+        self.read(|| {
+            let acquisition = self
+                .driver
+                .session()
+                .watch_raw(definition, address, context);
+            let driver = self.driver.clone();
+            eager(async move {
+                let watch = acquisition.await?;
+                if let Some(watch) = &watch
+                    && let Err(error) = driver.observe(watch.clone())
+                {
+                    watch.stop();
+                    return Err(error);
+                }
+                Ok(watch)
+            })
+        })
+    }
     pub fn snapshot_family<T: DocumentState, Input, D: DocScope>(
         &self,
         token: &DocFamilyToken<T, Input, D>,

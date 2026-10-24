@@ -64,7 +64,9 @@
       ],
       "evidence": [
         "cargo test -p pi-chord",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Native explicit operation batches preserve structural no-ops, reject invalid candidates atomically, combine opaque updates and normalize replacement prefixes; settled changes release old root references",
+        "Mutable draft capture and copy-on-write allocation remain pending; the stock task transport uses reference JS capture before native operation replay"
       ]
     },
     {
@@ -310,11 +312,13 @@
       "status": "partial",
       "rust": [
         "crates/pi-durable/src/documents.rs",
-        "crates/pi-durable/tests/documents.rs"
+        "crates/pi-durable/tests/documents.rs",
+        "crates/pi-durable/tests/dynamic_documents.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
       ]
     },
     {
@@ -520,12 +524,13 @@
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
-        "scripts/run-stock-durable-tasks.mjs: 28 selected unmodified cases in both retention modes",
+        "scripts/run-stock-durable-tasks.mjs: 35 selected unmodified cases in both retention modes",
         "porting/durable/STATUS.md",
         "Native context cache retention, expiry and late-read guards; dropped-waiter coverage",
         "Native phase registry identity/refresh, idle wake without snapshot reads, conservative wake on registry failure, failure cleanup and subscription disposal",
         "Native shared agent resolution starts eagerly, survives dropped/cancelled waiters, caches errors and resets per phase and abort invocation; one live settings reader supplies runtime and scheduler policy",
-        "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication"
+        "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication",
+        "Native and stock regressions prove reentrant close during phase snapshot refresh prevents the next handler"
       ]
     },
     {
@@ -681,11 +686,13 @@
         "crates/pi-durable/src/session/guard.rs",
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "crates/pi-durable/tests/dynamic_documents.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
       ]
     },
     {
@@ -695,11 +702,13 @@
         "crates/pi-durable/src/session/transaction.rs",
         "crates/pi-durable/src/session/types.rs",
         "crates/pi-durable/tests/session.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "crates/pi-durable/tests/dynamic_documents.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
       ]
     },
     {
@@ -1564,16 +1573,23 @@
         "scripts/stock/durable-native-transport.mjs",
         "scripts/stock/durable-native-handles.mjs",
         "crates/pi-durable/tests/agent_runtime.rs",
-        "scripts/stock/durable-settings-wire.mjs"
+        "scripts/stock/durable-settings-wire.mjs",
+        "crates/pi-durable/examples/support/document_bridge.rs",
+        "crates/pi-durable/tests/dynamic_documents.rs",
+        "crates/pi-durable/examples/support/task_graph_bridge.rs",
+        "crates/pi-durable/examples/support/registry_bridge.rs"
       ],
       "evidence": [
-        "28 of 36 unmodified stock cases selected; remaining 8 explicitly unselected",
+        "35 of 36 unmodified stock cases selected; remaining submission-dependent reservation failure case explicitly unselected",
         "Native Session/scheduler/registry execution counters verified; stock test owns its backend and callbacks",
         "Both document retention modes; stock assertions and 5 second timeout unchanged",
         "Original phase snapshot, idleness, pagination, cancellation and queued commit/close assertions run over native services",
         "Stock lazy phase agent/hook, pre-cancelled waiter and failed shared resolution cases now run unchanged; literal test-name regexes are escaped",
         "Ordered admission/adoption/backend completion stays separate from synchronous callback replies; adopted agent documents may call the host clock without deadlocking input",
-        "Timestamp/inspection case now runs against native inspection; cached JS Error hydration leaves default name on its prototype"
+        "Timestamp/inspection case now runs against native inspection; cached JS Error hydration leaves default name on its prototype",
+        "Stock task document retirement, ended invocation observation/clock/report guards, historical runtime reads, late watch acquisition, close-before-signal watch disposal, fault-write failure/reopen and custom RegistryReader reentrant close cases run unchanged",
+        "Native document/read/watch/context and custom reader counters required; JS only captures mutable proxy edits and runs original definitions/listeners/backend",
+        "Phase-completion transport turn yields on invocation end, next phase, or a pending host promise; admitted close seals synchronously during nested registry callbacks"
       ]
     },
     {
