@@ -42,8 +42,11 @@ function transaction(id){return{
  createConversation:options=>call("tx.createConversation",{tx:id,options}),
  forkConversation:(conversation,at,options)=>call("tx.forkConversation",{tx:id,conversation,at,options}),
  createTask:(task,input,options)=>call("createTask",{tx:id,definition:describeTask(task),input,options}),
- appendEntry:(conversation,entry)=>call("appendEntry",{tx:id,conversation,entry}),
- entry:entry=>call("entry",{tx:id,entry}),
+ appendEntry:(first,second,third)=>typeof first==="number"?call("appendEntry",{tx:id,conversation:first,entry:second}):call("appendEntry",{tx:id,conversation:second,entry:{...third,kind:first.kind}}),
+ entry:(first,second)=>typeof first==="number"?call("entry",{tx:id,entry:first}):call("entry",{tx:id,kind:first.kind,entry:second}),
+ createSubmission:record=>call("createSubmission",{tx:id,record}),
+ settleSubmission:(submission,settlement)=>call("settleSubmission",{tx:id,submission,settlement}),
+ scanEntries:(query,limit,cursor)=>call("scanEntries",{tx:id,query,limit,cursor}),
  scanTasks:(query,limit,cursor)=>call("scanTasks",{tx:id,query,limit,cursor}),
 };}
 function runtime(id){
@@ -94,11 +97,13 @@ export const Harness={async open(storage,options,context){
  const id=await call("open",{storage:storageId,registry,reader,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const harness={options,onReport:options.onReport,
+  submission:(submission,context)=>call("submission.get",{harness:id,submission},context).then(submission=>submission===undefined?undefined:submissionHandle(submission)),
+  abortSubmission:(submission,context,conversation)=>call("submission.abort",{harness:id,submission,conversation},context),
   inspect:context=>call("inspect",{harness:id},context).then(inspect),
   watchTaskGraph:context=>call("graph.watch",{harness:id},context).then(graphWatch),
   ...documents({harness:id}),
   conversation:async(idToFind,context)=>{const record=await call("conversation",{harness:id,conversation:idToFind},context);return record?conversation(record.id):undefined;},
-  root:async context=>conversation(await call("root",{harness:id},context)),
+  root:async(context,options)=>conversation(await call("root",{harness:id,options},context)),
   resume:()=>{nativeTransport.sync("resume",{harness:id});},
   createConversation:async(options,context)=>conversation(await call("createConversation",{harness:id,options},context)),
   waitForIdle:context=>call("waitForIdle",{harness:id,conversation:null},context),
@@ -106,21 +111,25 @@ export const Harness={async open(storage,options,context){
   waitForTask:(task,context)=>call("waitForTask",{harness:id,task},context),
   abortTask:(task,context)=>call("abortTask",{harness:id,task},context),
   commit:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
+  commitWith:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
   closed,close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
  };
- function conversation(conversationId){return{id:conversationId,configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
+ function submissionHandle(submission){return {id:submission,status:context=>call("submission.status",{harness:id,submission},context),wait:context=>call("submission.wait",{harness:id,submission},context),abort:context=>call("submission.abort",{harness:id,submission,handle:true},context)};}
+ function conversation(conversationId){return{id:conversationId,submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
  harnesses.set(id,harness);return harness;
 }};
 const storageIds=new WeakMap();let shuttingDown=false;
 export const transport={request:call,storage(storage){let id=storageIds.get(storage);if(id===undefined){id=storageNext++;storageIds.set(storage,id);storages.set(id,storage);}return id;},release(range){if(!shuttingDown&&nativeTransport.started)send({type:"context.release",range});}};
-async function finish(contextOnly){
+async function finish(contextOnly,submissionsOnly=false){
  shuttingDown=true;
  if(!nativeTransport.started)throw new Error("Stock task tests did not reach Rust");
  const native=await call("stats");
  if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
+ else if(submissionsOnly){if(native.submissionAdmissions===0||native.submissionReads===0||native.submissionWaits===0||stats.storageCalls===0)throw new Error("Native submissions were bypassed");}
  else if(native.phases!==stats.phases||native.phases===0||native.commits===0||stats.storageCalls===0)throw new Error("Native scheduler was bypassed");
  Object.assign(stats,native);await nativeTransport.close();
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify(stats));
 }
 export async function shutdown(){await finish(false);}
 export async function shutdownContextTransport(){await finish(true);}
+export async function shutdownSubmissions(){await finish(false,true);}

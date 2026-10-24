@@ -29,6 +29,6 @@ Acceptance requires focused crate tests, reference fixtures, full conformance on
 
 ## Current state
 
-- Reference inventory and parity ledger generated. The native Chord subset, durable storage and Session/transaction services are in progress. SQLite now has native schema/migrations, native/host adapters, cross-language file checks and all 105 stock SQLite tests under both retention settings. Native task graph/watch and inspection services now have stock coverage as well; the remaining inspection case and eight task cases remain open. See STATUS.md for the exact native scope, evidence and remaining work.
+- Reference inventory and parity ledger generated. The native Chord subset, durable storage and Session/transaction services are in progress. SQLite now has native schema/migrations, native/host adapters, cross-language file checks and all 105 stock SQLite tests under both retention settings. Native task graph/watch and inspection services now have stock coverage as well; all 36 stock task cases now pass in both retention modes. Native submission/inbox/live/usage/provider services are implemented with 28 independent reference scenarios and three selected stock submission cases. Executable generation/tool phases and the remaining submission/inspection cases remain open. See STATUS.md for the exact native scope, evidence and remaining work.
 - All eight milestones remain open until their checks prove parity. A foundational crate compiling is not completion of the port.
 - No remote changes or pushes are part of this work.

@@ -556,11 +556,13 @@ impl SubmissionRecord {
     pub fn id(&self) -> SubmissionId {
         self.info.id
     }
+}
+impl SubmissionState {
     fn to_json(&self) -> JsonValue {
-        let mut v = wire::encode(&self.info);
-        wire::put(&mut v, "type", self.state.kind());
-        wire::put(&mut v, "status", &self.state.status());
-        match &self.state {
+        let mut v = wire::object();
+        wire::put(&mut v, "type", self.kind());
+        wire::put(&mut v, "status", &self.status());
+        match self {
             SubmissionState::InputPlaced { entry } | SubmissionState::WriteDone { entry } => {
                 wire::put(&mut v, "entry", entry)
             }
@@ -612,9 +614,23 @@ impl SubmissionRecord {
             },
             _ => return Err(format!("Invalid submission {kind}/{status}")),
         };
+        Ok(state)
+    }
+}
+raw_serde!(SubmissionState);
+impl SubmissionRecord {
+    fn to_json(&self) -> JsonValue {
+        let mut value = wire::encode(&self.info);
+        let JsonValue::Object(state) = wire::encode(&self.state) else {
+            unreachable!("submission state is an object")
+        };
+        value.as_object_mut().unwrap().extend(state);
+        value
+    }
+    fn from_json(value: &JsonValue) -> std::result::Result<Self, String> {
         Ok(Self {
-            info: wire::decode(v)?,
-            state,
+            info: wire::decode(value)?,
+            state: wire::decode(value)?,
         })
     }
 }

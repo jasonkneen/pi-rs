@@ -95,7 +95,7 @@ impl<T: Serialize + DeserializeOwned> DocDraft<T> {
     }
 }
 
-impl DocDraft<JsonObject> {
+impl<T> DocDraft<T> {
     /// Record explicit JSON edits before persistence, preserving structural no-ops.
     pub fn apply_ops(&self, ops: &[pi_chord::delta::Op]) -> Result<()> {
         let mut change = self.cell.change.lock();

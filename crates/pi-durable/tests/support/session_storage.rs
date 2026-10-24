@@ -39,6 +39,7 @@ pub struct ControlledStorage {
     pub commit_gate: Mutex<Option<Arc<Gate>>>,
     pub after_adopt: Mutex<Option<Arc<Gate>>>,
     pub find_gate: Mutex<Option<Arc<Gate>>>,
+    pub submission_gate: Mutex<Option<Arc<Gate>>>,
     pub read_error: Mutex<Option<Error>>,
     pub mint_error: Mutex<Option<Error>>,
     pub close_error: Mutex<Option<Error>>,
@@ -151,7 +152,23 @@ impl Storage for ControlledStorage {
     }
     forward!(task(id:TaskId)->Option<TaskRecord>);
     forward!(scan_tasks(query:&TaskQuery,limit:usize,cursor:Option<&Cursor>)->Page<TaskRecord>);
-    forward!(submission(id:SubmissionId)->Option<SubmissionRecord>);
+    fn submission(
+        &self,
+        id: SubmissionId,
+        ctx: &Context,
+    ) -> StorageFuture<Option<SubmissionRecord>> {
+        let (memory, context, gate) = (
+            self.memory.clone(),
+            ctx.clone(),
+            self.submission_gate.lock().take(),
+        );
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.wait().await;
+            }
+            memory.submission(id, &context).await
+        })
+    }
     forward!(scan_submissions(query:&SubmissionQuery,limit:usize,cursor:Option<&Cursor>)->Page<SubmissionRecord>);
     forward!(submission_by_request(conversation:ConversationId,request:&JsonString)->Option<SubmissionRecord>);
     forward!(document(id:DocumentId,at:DocumentPoint)->Option<StoredDocument>);

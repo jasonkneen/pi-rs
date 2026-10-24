@@ -32,6 +32,8 @@ mod graph_bridge;
 mod registry_bridge;
 #[path = "support/task_remote_storage.rs"]
 mod remote_storage;
+#[path = "support/submission_bridge.rs"]
+mod submission_bridge;
 static CALL_CONTEXT: LazyLock<ContextKey<u64>> =
     LazyLock::new(|| create_context_key("stock-test context"));
 fn encode(value: &impl Serialize) -> JsonValue {
@@ -95,6 +97,7 @@ struct Hub {
     registry: registry_bridge::RegistryBridge,
     graph: graph_bridge::GraphBridge,
     documents: document_bridge::DocumentBridge,
+    submissions: submission_bridge::SubmissionBridge,
     inspections: AtomicU64,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
@@ -339,6 +342,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method.starts_with("submission.") {
+            return self.submission_request(&method, request, context);
+        }
         if method.starts_with("doc.") {
             return self.document_request(&method, request, context);
         }
@@ -367,9 +373,30 @@ impl Hub {
                 let resolver = self.clone();
                 let scheduler=TaskScheduler::open(Arc::new(remote_storage::RemoteStorage{hub:self.clone(),handle}),registry,SchedulerOptions{
                     settings:Arc::new(move ||registry_bridge::settings(&settings.sync("settings",encode(&harness))?)),
-                    agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
+                    settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
                     on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}})))),..Default::default()
-                },SessionOptions{report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|pi_durable::harness::agent::create_agent(&tx,record))),now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
+                },SessionOptions{report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
+                let resume = scheduler.clone();
+                let clock = self.clone();
+                let settings = self.clone();
+                let submissions = Submissions::new(
+                    scheduler.session().clone(),
+                    SubmissionsOptions {
+                        now: Arc::new(move || {
+                            decode(&clock.sync("now", encode(&harness)).unwrap()).unwrap()
+                        }),
+                        queue_modes: Arc::new(move || {
+                            registry_bridge::settings(&settings.sync("settings", encode(&harness))?)
+                                .map(|settings| QueueModes::from(&settings))
+                        }),
+                        resume: Arc::new(move || resume.resume()),
+                        telemetry: pi_telemetry::noop_telemetry_context(),
+                    },
+                )?;
+                self.submissions
+                    .services
+                    .lock()
+                    .insert(harness, submissions);
                 self.schedulers.lock().insert(harness, scheduler);
                 Ok(Some(encode(&harness)))
             }),
@@ -466,7 +493,50 @@ impl Hub {
             )),
             "entry" => {
                 let operation = self.transaction(&request)?.entry(field(&request, "entry")?);
-                Box::pin(async move { Ok(operation.await?.map(|entry| encode(&entry))) })
+                let kind: Option<JsonString> = field(&request, "kind")?;
+                Box::pin(async move {
+                    Ok(operation
+                        .await?
+                        .filter(|entry| kind.as_ref().is_none_or(|kind| entry.kind == *kind))
+                        .map(|entry| encode(&entry)))
+                })
+            }
+            "createSubmission" => {
+                let operation = self
+                    .transaction(&request)?
+                    .create_submission(field(&request, "record")?);
+                Box::pin(async move { Ok(Some(encode(&operation.await?))) })
+            }
+            "settleSubmission" => {
+                self.transaction(&request)?.settle_submission(
+                    field(&request, "submission")?,
+                    field(&request, "settlement")?,
+                )?;
+                Box::pin(async { Ok(None) })
+            }
+            "scanEntries" => {
+                let operation = self.transaction(&request)?.scan_entries(
+                    field(&request, "query")?,
+                    field(&request, "limit")?,
+                    field(&request, "cursor")?,
+                );
+                Box::pin(async move { Ok(Some(encode(&operation.await?))) })
+            }
+            "entries" => {
+                let scheduler = self.scheduler(&request)?;
+                let mut query = request["query"].clone();
+                query
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("conversationId".into(), request["conversation"].clone());
+                let query: EntryQuery = decode(&query)?;
+                let limit = field(&request, "limit")?;
+                let cursor = field(&request, "cursor")?;
+                let operation = scheduler.session().commit(
+                    move |tx| async move { tx.scan_entries(query, limit, cursor).await },
+                    &context,
+                );
+                Box::pin(async move { Ok(Some(encode(&operation.await?))) })
             }
             "runtimeContext" => {
                 self.context_reads.fetch_add(1, Ordering::Relaxed);
@@ -708,7 +778,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -777,6 +847,7 @@ async fn main() {
         registry: registry_bridge::RegistryBridge::default(),
         graph: graph_bridge::GraphBridge::default(),
         documents: document_bridge::DocumentBridge::default(),
+        submissions: submission_bridge::SubmissionBridge::default(),
         inspections: AtomicU64::new(0),
     });
     let runtime = tokio::runtime::Handle::current();

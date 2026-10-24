@@ -441,9 +441,19 @@
     },
     {
       "reference": "packages/durable/src/harness/generation.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/generation.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Only native generation record creation, initial checkpoint, input trace linkage, run start and handover are implemented; executable preparation/request/retry/poll/tools/abort phases remain pending",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/harness.ts",
@@ -451,17 +461,29 @@
       "rust": [
         "crates/pi-durable/src/harness/inspect.rs",
         "crates/pi-durable/src/harness/task_graph.rs",
-        "crates/pi-durable/src/harness/scheduler.rs"
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/src/harness/mod.rs"
       ],
       "evidence": [
-        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending"
+        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending",
+        "Native built-in conversation document initialization creates live, inbox, usage and provider state before the agent hook; the complete Harness and remaining conversation conveniences remain pending"
       ]
     },
     {
       "reference": "packages/durable/src/harness/inbox.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/inbox.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Native queue document and final/post-tools boundaries, independent steering/follow-up modes, writes-before-users, reset promotion, stale heads and positional removal; withdrawal keeps queued writes",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/json.ts",
@@ -471,9 +493,19 @@
     },
     {
       "reference": "packages/durable/src/harness/live.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/live.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Native typed live state, shared slot progress, nested binary lookup/removal, compaction status helpers, partial-to-aborted entry conversion with usage and scheduler outcome cleanup; provider/tool integration remains pending",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/prompt.ts",
@@ -483,9 +515,19 @@
     },
     {
       "reference": "packages/durable/src/harness/provider.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/provider.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Persisted native UUIDv7 provider identity with initial-on-fork semantics; runtime legacy identity helper implemented; provider request integration remains pending",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/registry.ts",
@@ -524,7 +566,7 @@
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
-        "scripts/run-stock-durable-tasks.mjs: 35 selected unmodified cases in both retention modes",
+        "scripts/run-stock-durable-tasks.mjs: 36 unmodified cases in both retention modes",
         "porting/durable/STATUS.md",
         "Native context cache retention, expiry and late-read guards; dropped-waiter coverage",
         "Native phase registry identity/refresh, idle wake without snapshot reads, conservative wake on registry failure, failure cleanup and subscription disposal",
@@ -535,9 +577,20 @@
     },
     {
       "reference": "packages/durable/src/harness/submissions.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/submissions.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Native eager admission/get/status/wait/abort controller; request deduplication, display-only bypass, busy rejection, queued/idle placement, scoped withdrawal, content-free tracing and settled receipt refinement",
+        "Wait registration is ordered with publication and close; admitted waits retain their service observer after external handles are dropped",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/task-graph.ts",
@@ -575,18 +628,32 @@
         "crates/pi-durable/tests/agent_runtime.rs",
         "crates/pi-durable/src/harness/inspect.rs",
         "crates/pi-durable/src/harness/task_graph.rs",
-        "crates/pi-durable/src/harness/scheduler.rs"
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/src/harness/types.rs",
+        "crates/pi-durable/src/harness/live.rs",
+        "crates/pi-durable/src/harness/inbox.rs"
       ],
       "evidence": [
         "RegistryReader and typed-retaining RegistryView capabilities; native runtime agent/settings and typed hook runner implemented; model/environment/conversation and remaining contracts pending",
-        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending"
+        "Native inspection and graph types; the full Harness, executable generation and other services remain pending",
+        "Submission drafts/receipts, queue modes, live presentation, slot and compaction types now have native counterparts; provider message content remains lossless JSON at this boundary"
       ]
     },
     {
       "reference": "packages/durable/src/harness/usage.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/usage.rs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md",
+        "Lossless arbitrary UTF16 bucket keys, finite JSON number arithmetic including fractional/optional counters, own-key aggregation and base-on-every-update document policy; wider model/tool accounting integration remains pending",
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/util.ts",
@@ -1530,9 +1597,22 @@
     },
     {
       "reference": "packages/durable/test/harness-submissions.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/submissions.rs",
+        "crates/pi-durable/examples/support/submission_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "crates/pi-durable/tests/submissions.rs",
+        "crates/pi-durable/tests/submissions_reference.rs"
+      ],
+      "evidence": [
+        "Three of ten unmodified stock cases selected in both retention modes; seven generation-dependent cases remain unselected",
+        "Native submission admission/status/wait and backend counters required; idle passive write, transactional settlement and typed entry cases run unchanged",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "cargo test -p pi-durable --test submissions --test submissions_reference",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-support.ts",
@@ -1564,7 +1644,7 @@
     },
     {
       "reference": "packages/durable/test/harness-tasks.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/tests/task_scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
@@ -1577,10 +1657,11 @@
         "crates/pi-durable/examples/support/document_bridge.rs",
         "crates/pi-durable/tests/dynamic_documents.rs",
         "crates/pi-durable/examples/support/task_graph_bridge.rs",
-        "crates/pi-durable/examples/support/registry_bridge.rs"
+        "crates/pi-durable/examples/support/registry_bridge.rs",
+        "crates/pi-durable/examples/support/submission_bridge.rs"
       ],
       "evidence": [
-        "35 of 36 unmodified stock cases selected; remaining submission-dependent reservation failure case explicitly unselected",
+        "All 36 unmodified stock cases pass in both retention modes; no cases unselected",
         "Native Session/scheduler/registry execution counters verified; stock test owns its backend and callbacks",
         "Both document retention modes; stock assertions and 5 second timeout unchanged",
         "Original phase snapshot, idleness, pagination, cancellation and queued commit/close assertions run over native services",
@@ -1589,7 +1670,8 @@
         "Timestamp/inspection case now runs against native inspection; cached JS Error hydration leaves default name on its prototype",
         "Stock task document retirement, ended invocation observation/clock/report guards, historical runtime reads, late watch acquisition, close-before-signal watch disposal, fault-write failure/reopen and custom RegistryReader reentrant close cases run unchanged",
         "Native document/read/watch/context and custom reader counters required; JS only captures mutable proxy edits and runs original definitions/listeners/backend",
-        "Phase-completion transport turn yields on invocation end, next phase, or a pending host promise; admitted close seals synchronously during nested registry callbacks"
+        "Phase-completion transport turn yields on invocation end, next phase, or a pending host promise; admitted close seals synchronously during nested registry callbacks",
+        "The reservation-failure/reopen case now uses the real native submission controller; later submission admission rejects the original Session failure"
       ]
     },
     {

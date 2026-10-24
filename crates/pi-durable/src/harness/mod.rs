@@ -2,14 +2,33 @@
 pub mod agent;
 pub mod catalog;
 pub mod context;
+pub mod generation;
 pub mod hooks;
+pub mod inbox;
 pub mod inspect;
+pub mod live;
 pub mod ownership;
+pub mod provider;
 pub mod reader;
 pub mod registry;
 pub mod runtime;
 pub mod scheduler;
 pub mod settings;
 pub mod state;
+pub mod submissions;
 pub mod task_graph;
+pub mod types;
+pub mod usage;
+
+/// Built-in documents are created before the host's conversation-created hook.
+pub async fn create_conversation_documents(
+    tx: &crate::Transaction,
+    record: crate::ConversationRecord,
+) -> crate::Result<()> {
+    tx.doc(&live::live_doc(), record.id).await?;
+    tx.doc(&inbox::inbox_doc(), record.id).await?;
+    tx.doc(&usage::usage_doc(), record.id).await?;
+    tx.doc(&provider::provider_doc(), record.id).await?;
+    agent::create_agent(tx, record).await
+}
 pub mod util;
