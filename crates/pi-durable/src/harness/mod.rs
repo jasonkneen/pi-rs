@@ -2,12 +2,14 @@
 pub mod agent;
 pub mod catalog;
 pub mod context;
+pub mod declaration;
 pub mod generation;
 pub mod hooks;
 pub mod inbox;
 pub mod inspect;
 pub mod live;
 pub mod ownership;
+pub mod prompt;
 pub mod provider;
 pub mod reader;
 pub mod registry;

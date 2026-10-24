@@ -15,6 +15,7 @@ node --experimental-strip-types scripts/golden/gen-durable-delta.mjs "$reference
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-session.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-submissions.mjs "$reference" --check
+node --conditions=source --experimental-strip-types scripts/golden/gen-durable-prompt.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange
@@ -26,4 +27,5 @@ node scripts/run-stock-durable-tasks.mjs "$reference" --suite=graph --report=/tm
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=inspect --report=/tmp/pi-durable-stock-inspect-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=submissions --report=/tmp/pi-durable-stock-submissions-report.json
 node scripts/run-stock-durable-context.mjs "$reference" --report=/tmp/pi-durable-stock-context-report.json
+node scripts/run-stock-durable-prompt.mjs "$reference" --report=/tmp/pi-durable-stock-prompt-report.json
 node scripts/run-stock-durable-registry.mjs "$reference" --report=/tmp/pi-durable-stock-registry-report.json

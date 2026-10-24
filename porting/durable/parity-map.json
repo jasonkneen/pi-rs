@@ -509,9 +509,19 @@
     },
     {
       "reference": "packages/durable/src/harness/prompt.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/harness/prompt.rs",
+        "crates/pi-durable/src/harness/declaration.rs",
+        "crates/pi-durable/tests/prompt.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test prompt",
+        "node --conditions=source --experimental-strip-types scripts/golden/gen-durable-prompt.mjs /Users/jkneen/Documents/GitHub/pi-mono --check",
+        "node scripts/run-stock-durable-prompt.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-prompt-report.json",
+        "142 independent planner/replay cases; native renderer ordering, error identity, cancellation, instructions and UTF16 tags; full stock prompt file under both retention settings",
+        "Stock gate uses native prompt/context modules with original JS callbacks, outer Harness/Session/scheduler/backend; embedded JS exports and full generation integration remain pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/provider.ts",
@@ -1524,9 +1534,18 @@
     },
     {
       "reference": "packages/durable/test/harness-prompt.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/tests/prompt.rs",
+        "crates/pi-durable/examples/support/prompt_bridge.rs",
+        "scripts/stock/durable-prompt-adapter.mjs",
+        "scripts/run-stock-durable-prompt.mjs"
+      ],
+      "evidence": [
+        "node scripts/run-stock-durable-prompt.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-prompt-report.json",
+        "All nine original cases, unchanged assertions/timers/deadlines, both retention modes, test hash and native execution counters checked",
+        "Native prompt/context modules; original JS render callbacks, outer Harness/Session/scheduler/backend"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-read-only.test.ts",

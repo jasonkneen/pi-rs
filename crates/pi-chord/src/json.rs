@@ -218,6 +218,28 @@ fn quote(value: &JsonString, out: &mut String) {
     out.push('"');
 }
 
+/// ECMAScript own-property order: array-index keys, then other keys in insertion order.
+pub fn object_entries(map: &Map) -> impl Iterator<Item = (&JsonString, &Value)> {
+    let mut indices = Vec::new();
+    let mut other = Vec::new();
+    for (key, value) in map {
+        let index = key.to_string_checked().ok().and_then(|s| {
+            s.parse::<u32>()
+                .ok()
+                .filter(|n| *n < u32::MAX && n.to_string() == s)
+        });
+        if let Some(index) = index {
+            indices.push((index, key, value));
+        } else {
+            other.push((key, value));
+        }
+    }
+    indices.sort_by_key(|(index, _, _)| *index);
+    indices
+        .into_iter()
+        .map(|(_, key, value)| (key, value))
+        .chain(other)
+}
 pub fn stringify(value: &Value) -> String {
     fn write(value: &Value, out: &mut String) {
         match value {
@@ -238,29 +260,8 @@ pub fn stringify(value: &Value) -> String {
                 out.push(']');
             }
             Value::Object(m) => {
-                // ECMAScript enumerates array-index keys before other object keys.
-                let mut indices = Vec::new();
-                let mut other = Vec::new();
-                for (key, value) in m {
-                    let index = key.to_string_checked().ok().and_then(|s| {
-                        s.parse::<u32>()
-                            .ok()
-                            .filter(|n| *n < u32::MAX && n.to_string() == s)
-                    });
-                    if let Some(index) = index {
-                        indices.push((index, key, value));
-                    } else {
-                        other.push((key, value));
-                    }
-                }
-                indices.sort_by_key(|(index, _, _)| *index);
                 out.push('{');
-                for (i, (key, value)) in indices
-                    .iter()
-                    .map(|(_, k, v)| (*k, *v))
-                    .chain(other)
-                    .enumerate()
-                {
+                for (i, (key, value)) in object_entries(m).enumerate() {
                     if i > 0 {
                         out.push(',');
                     }

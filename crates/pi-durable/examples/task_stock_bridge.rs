@@ -28,6 +28,8 @@ mod context_bridge;
 mod document_bridge;
 #[path = "support/task_graph_bridge.rs"]
 mod graph_bridge;
+#[path = "support/prompt_bridge.rs"]
+mod prompt_bridge;
 #[path = "support/registry_bridge.rs"]
 mod registry_bridge;
 #[path = "support/task_remote_storage.rs"]
@@ -94,6 +96,7 @@ struct Hub {
     agent_reads: AtomicU64,
     agent_resolutions: AtomicU64,
     hook_calls: AtomicU64,
+    prompt: prompt_bridge::PromptBridge,
     registry: registry_bridge::RegistryBridge,
     graph: graph_bridge::GraphBridge,
     documents: document_bridge::DocumentBridge,
@@ -350,6 +353,9 @@ impl Hub {
         }
         if method.starts_with("graph.") {
             return self.graph_request(&method, request, context);
+        }
+        if method.starts_with("prompt.") {
+            return self.prompt_request(&method, request, context);
         }
         if method.starts_with("context.") {
             return self.context_request(&method, request, context);
@@ -778,7 +784,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -844,6 +850,7 @@ async fn main() {
         agent_resolutions: AtomicU64::new(0),
         hook_calls: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
+        prompt: prompt_bridge::PromptBridge::default(),
         registry: registry_bridge::RegistryBridge::default(),
         graph: graph_bridge::GraphBridge::default(),
         documents: document_bridge::DocumentBridge::default(),
