@@ -29,6 +29,6 @@ Acceptance requires focused crate tests, reference fixtures, full conformance on
 
 ## Current state
 
-- Reference inventory and parity ledger generated. The native Chord subset is in progress. See STATUS.md for evidence and remaining work.
+- Reference inventory and parity ledger generated. The native Chord subset, durable storage and Session/transaction services are in progress. See STATUS.md for evidence and remaining work.
 - All eight milestones remain open until their checks prove parity. A foundational crate compiling is not completion of the port.
 - No remote changes or pushes are part of this work.

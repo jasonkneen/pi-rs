@@ -564,21 +564,44 @@
     },
     {
       "reference": "packages/durable/src/session/forks.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/session/forks.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/session/session.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/session/mod.rs",
+        "crates/pi-durable/src/session/guard.rs",
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/session/transaction.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/session/transaction.rs",
+        "crates/pi-durable/src/session/types.rs",
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/indexeddb.ts",
@@ -729,9 +752,15 @@
     },
     {
       "reference": "packages/durable/src/timers.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/timers.rs",
+        "crates/pi-durable/tests/timers.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tool-search/index.ts",
@@ -1403,15 +1432,29 @@
     },
     {
       "reference": "packages/durable/test/session-adoption.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-checkpoints-migrations.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-definitions.test.ts",
@@ -1433,21 +1476,42 @@
     },
     {
       "reference": "packages/durable/test/session-document-retention.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-documents.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-forks.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-support.ts",
@@ -1457,15 +1521,29 @@
     },
     {
       "reference": "packages/durable/test/session-tables.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-watches.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/tests/session_retention.rs",
+        "crates/pi-durable/tests/session_reference.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/setup-document-retention.ts",

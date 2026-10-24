@@ -126,6 +126,14 @@ pub struct AnyDocDefinition {
     checkpoint: Checkpoint,
 }
 impl AnyDocDefinition {
+    pub fn check_address(&self, address: &DocumentAddress) -> Result<()> {
+        if address.kind != self.kind || address.key.is_some() != self.family {
+            return Err(Error::message(
+                "Document address does not match its definition",
+            ));
+        }
+        self.scope.semantics(&address.scope).map(|_| ())
+    }
     pub fn kind(&self) -> &JsonString {
         &self.kind
     }

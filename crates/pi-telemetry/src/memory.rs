@@ -717,6 +717,10 @@ struct InMemorySpan {
 }
 
 impl TelemetryContext for InMemorySpan {
+    fn record_event(&self, name: &str, attributes: SpanAttributes) {
+        TelemetrySpan::add_event(self, name, attributes);
+    }
+
     fn metrics(&self) -> Option<MetricsRef> {
         Some(self.root.metrics_ref())
     }

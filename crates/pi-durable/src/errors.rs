@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum ErrorKind {
+    Aborted(pi_chord::context::AbortError),
     Delta(pi_chord::delta::Error),
     Message(String),
     StorageRequest(String),
@@ -47,6 +48,7 @@ impl Error {
     }
     pub fn name(&self) -> &'static str {
         match self.kind() {
+            ErrorKind::Aborted(_) => "AbortError",
             ErrorKind::StorageRequest(_) => "StorageRequestError",
             ErrorKind::ReadAfterWrite(_) => "ReadAfterWrite",
             ErrorKind::SessionFailed { .. } => "SessionFailed",
@@ -68,6 +70,7 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
+            ErrorKind::Aborted(error) => error.fmt(f),
             ErrorKind::Delta(error) => error.fmt(f),
             ErrorKind::Message(m) | ErrorKind::StorageRequest(m) => f.write_str(m),
             ErrorKind::ReadAfterWrite(method) => write!(
@@ -86,12 +89,18 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self.kind() {
+            ErrorKind::Aborted(error) => Some(error),
             ErrorKind::Delta(error) => Some(error),
             ErrorKind::SessionFailed { cause } | ErrorKind::DocumentCopy { cause, .. } => {
                 Some(cause)
             }
             _ => None,
         }
+    }
+}
+impl From<pi_chord::context::AbortError> for Error {
+    fn from(error: pi_chord::context::AbortError) -> Self {
+        Self(Arc::new(ErrorKind::Aborted(error)))
     }
 }
 impl From<pi_chord::delta::Error> for Error {
