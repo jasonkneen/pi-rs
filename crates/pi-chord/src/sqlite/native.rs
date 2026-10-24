@@ -94,6 +94,9 @@ pub async fn open_native_sqlite_database(
                     std::fs::create_dir_all(parent).map_err(|e| SqliteError::new(e.to_string()))?;
                 }
                 let connection = Connection::open(path)?;
+                // Match the reference's connection-wide Map, including statements
+                // reused after more than rusqlite's default 16 distinct queries.
+                connection.set_prepared_statement_cache_capacity(usize::MAX);
                 connection
                     .busy_timeout(std::time::Duration::from_millis(options.busy_timeout_ms))?;
                 connection.pragma_update(None, "journal_mode", "WAL")?;
@@ -361,5 +364,52 @@ impl SqliteDatabase for NativeSqliteDatabase {
                 worker.close().await
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn retains_prepared_statements_across_more_than_sixteen_distinct_queries() {
+        let database = open_native_sqlite_database(":memory:", Default::default())
+            .await
+            .unwrap();
+        for pass in 0..2 {
+            for index in 0..40 {
+                database
+                    .get(&format!("SELECT {index} AS value"), &[])
+                    .await
+                    .unwrap();
+            }
+            let statements = database
+                .worker
+                .call(|connection| {
+                    // The worker owns this connection and no statement is executing.
+                    // SQLite exposes its live prepared statements for this check.
+                    let mut statements = Vec::new();
+                    unsafe {
+                        let handle = connection.handle();
+                        let mut statement =
+                            rusqlite::ffi::sqlite3_next_stmt(handle, std::ptr::null_mut());
+                        while !statement.is_null() {
+                            let sql =
+                                std::ffi::CStr::from_ptr(rusqlite::ffi::sqlite3_sql(statement));
+                            statements.push(sql.to_string_lossy().into_owned());
+                            statement = rusqlite::ffi::sqlite3_next_stmt(handle, statement);
+                        }
+                    }
+                    Ok(statements)
+                })
+                .await
+                .unwrap();
+            for index in 0..40 {
+                assert!(
+                    statements.contains(&format!("SELECT {index} AS value")),
+                    "missing cached statement {index} after pass {pass}"
+                );
+            }
+        }
+        database.close().await.unwrap();
     }
 }

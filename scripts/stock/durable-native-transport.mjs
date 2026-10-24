@@ -11,6 +11,7 @@ function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
  trace("receive",frame);
+ if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
   const handler=handlers.get(frame.method);
   const reply=value=>send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});
@@ -58,6 +59,16 @@ export const nativeTransport={
   // crosses the pipe. Observe transport failures immediately; callers still
   // receive this same rejecting promise and the original assertions see it.
   response.catch(()=>{});return response;
+ },
+ requestAdmitted(method,args={},context){
+  const id=next,response=this.request(method,{...args,admit:true},context),waiter=pending.get(id),deadline=Date.now()+30000;
+  while(pending.has(id)&&!waiter.admitted){
+   const observed=Atomics.load(signal,0);drain();
+   if(transportFailure)throw transportFailure;if(closed)throw new Error("Native durable transport closed");
+   if(Date.now()>deadline)throw new Error(`Native durable admission timed out: ${method}`);
+   if(pending.has(id)&&!waiter.admitted)Atomics.wait(signal,0,observed,10);
+  }
+  return response;
  },
  sync(method,args={}){
   start();const id=next++,waiter={sync:true};pending.set(id,waiter);send({id,method,...args});const deadline=Date.now()+30000;

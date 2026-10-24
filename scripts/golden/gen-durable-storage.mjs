@@ -15,10 +15,13 @@ const {MemoryStorage}=await import(pathToFileURL(resolve(reference,"packages/dur
 const {createStorageConformance}=await import(pathToFileURL(resolve(reference,"packages/durable/src/testing/storage-conformance.ts")));
 const {BACKGROUND_CONTEXT}=await import(pathToFileURL(resolve(reference,"packages/chord/src/context/index.ts")));
 const jsonl=process.argv.includes("--jsonl");
+const sqlite=process.argv.includes("--sqlite");
+if(jsonl&&sqlite)throw new Error("Choose one persistence backend");
 const reopen=process.argv.includes("--reopen");
-if(reopen&&!jsonl)throw new Error("--reopen requires --jsonl");
-const backendName=jsonl?`jsonl${reopen?"-reopen":""}`:"memory";
-let JsonlStorage,NodeExecutionEnv;
+if(reopen&&!jsonl&&!sqlite)throw new Error("--reopen requires --jsonl or --sqlite");
+const backendName=(jsonl||sqlite)?`${sqlite?"sqlite":"jsonl"}${reopen?"-reopen":""}`:"memory";
+let JsonlStorage,NodeExecutionEnv,openSqlite;
+if(sqlite)({openNodeSqliteStorage:openSqlite}=await import(pathToFileURL(resolve(reference,"packages/durable/src/storage/sqlite/node.ts"))));
 if(jsonl){({JsonlStorage}=await import(pathToFileURL(resolve(reference,"packages/durable/src/storage/jsonl/storage.ts"))));({NodeExecutionEnv}=await import(pathToFileURL(resolve(reference,"packages/durable/src/env/node.ts"))));}
 const assertions={
  ok:assert.ok,strictEqual:assert.strictEqual,deepEqual:assert.deepStrictEqual,partialDeepEqual:assert.partialDeepStrictEqual,
@@ -43,30 +46,30 @@ function instrument(storage){return new Proxy(storage,{get(target,name){
  };
 }});}
 const referenceCases=createStorageConformance({assertions,withStorage:async use=>{
- if(!jsonl){const storage=new MemoryStorage();await use(instrument(storage));await storage.close(BACKGROUND_CONTEXT);return;}
- const directory=await mkdtemp(resolve(tmpdir(),"pi-durable-jsonl-reference-"));
- const fs=new NodeExecutionEnv({cwd:directory});let current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);let closed=false;
+ if(!jsonl&&!sqlite){const storage=new MemoryStorage();await use(instrument(storage));await storage.close(BACKGROUND_CONTEXT);return;}
+ const directory=await mkdtemp(resolve(tmpdir(),`pi-durable-${backendName}-reference-`));
+ const fs=jsonl?new NodeExecutionEnv({cwd:directory}):undefined;const open=()=>sqlite?openSqlite(resolve(directory,"storage.sqlite")):JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);let current=await open();let closed=false;
  const storage=reopen?new Proxy({}, {get(_,name){return async (...args)=>{
   if(name==="close"){closed=true;return current.close(...args);}
   if(name!=="commit"||closed)return current[name](...args);
-  try{return await current.commit(...args);}finally{await current.close(BACKGROUND_CONTEXT);current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);}
+  try{return await current.commit(...args);}finally{await current.close(BACKGROUND_CONTEXT);current=await open();}
  };}}):current;
  try{await use(instrument(storage));}finally{await current.close(BACKGROUND_CONTEXT);await rm(directory,{recursive:true,force:true});}
 }});
 for(const test of referenceCases){current=[];await test.run();records.push({name:test.name,requests:current});}
-const fixtureName=jsonl?`storage-${backendName}`:"storage";
+const fixtureName=(jsonl||sqlite)?`storage-${backendName}`:"storage";
 const target=fileURLToPath(new URL(`../../crates/pi-durable/tests/fixtures/${fixtureName}.json`,import.meta.url));
 const output=JSON.stringify({reference:pin,cases:records},null,2)+"\n";
 if(process.argv.includes("--check")){assert.equal(await readFile(target,"utf8"),output,"Storage traces differ from reference");}
 else {await mkdir(dirname(target),{recursive:true});await writeFile(target,output);}
 const rustTests=records.map((test,index)=>`storage_case!(${test.name.toLowerCase().replaceAll(/[^a-z0-9]+/g,"_").replaceAll(/^_|_$/g,"")}, ${index});`).join("\n")+"\n";
-const rustTarget=fileURLToPath(new URL(`../../crates/pi-durable/tests/fixtures/${jsonl?`storage_${backendName.replaceAll("-","_")}_cases`:"storage_cases"}.rs`,import.meta.url));
+const rustTarget=fileURLToPath(new URL(`../../crates/pi-durable/tests/fixtures/${(jsonl||sqlite)?`storage_${backendName.replaceAll("-","_")}_cases`:"storage_cases"}.rs`,import.meta.url));
 if(process.argv.includes("--check")){assert.equal(await readFile(rustTarget,"utf8"),rustTests,"Rust conformance case map differs");}else await writeFile(rustTarget,rustTests);
 console.log(`Reference ${backendName} passed ${records.length} storage conformance cases with ${records.reduce((n,c)=>n+c.requests.length,0)} recorded operations`);
 
 if(process.argv.includes("--native")||process.argv.includes("--interchange")){
  const root=fileURLToPath(new URL("../../",import.meta.url));
- const child=spawn("cargo",["run","--locked","-q","-p","pi-durable","--example","storage_conformance","--",...(jsonl?["--jsonl"]:[]),...(reopen?["--reopen"]:[])],{cwd:root,stdio:["pipe","pipe","inherit"]});
+ const child=spawn("cargo",["run","--locked","-q","-p","pi-durable","--example","storage_conformance","--",...(jsonl?["--jsonl"]:[]),...(sqlite?["--sqlite"]:[]),...(reopen?["--reopen"]:[])],{cwd:root,stdio:["pipe","pipe","inherit"]});
  const pending=new Map();let next=0;let stderrError;let closing=false;
  const exited=new Promise(resolve=>{child.once("exit",resolve);child.once("error",()=>resolve(1));});
  const lines=createInterface({input:child.stdout});
@@ -89,16 +92,16 @@ if(process.argv.includes("--native")||process.argv.includes("--interchange")){
  try {
   if(process.argv.includes("--native")){for(const test of cases){await test.run();console.log(`Native: ${test.name}`);}console.log(`Native passed all ${cases.length} reference storage cases`);}
   if(process.argv.includes("--interchange")){
-   if(!jsonl||reopen)throw new Error("--interchange requires --jsonl without --reopen");
+   if((!jsonl&&!sqlite)||reopen)throw new Error("--interchange requires --jsonl or --sqlite without --reopen");
    const hybridCases=createStorageConformance({assertions,withStorage:async use=>{
-    await call("reset",[]);const directory=await call("directory",[]);const fs=new NodeExecutionEnv({cwd:directory});
-    let current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);let native=false;let closed=false;
+    await call("reset",[]);const directory=await call("directory",[]);const fs=jsonl?new NodeExecutionEnv({cwd:directory}):undefined;const open=()=>sqlite?openSqlite(directory):JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);
+    let current=await open();let native=false;let closed=false;
     const hybrid=new Proxy({}, {get(_,name){return async (...args)=>{
      if(name==="close"){closed=true;return native?storage.close(...args):current.close(...args);}
      if(name!=="commit"||closed)return native?storage[name](...args):current[name](...args);
      try{return await (native?storage.commit(...args):current.commit(...args));}
      finally{
-      if(native)current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);
+      if(native){await storage.close(BACKGROUND_CONTEXT);current=await open();}
       else {await current.close(BACKGROUND_CONTEXT);await call("reopen",[]);}
       native=!native;
      }

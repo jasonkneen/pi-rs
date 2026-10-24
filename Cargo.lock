@@ -3059,6 +3059,7 @@ dependencies = [
  "pi-chord",
  "pi-json",
  "pi-telemetry",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

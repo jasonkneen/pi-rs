@@ -31,6 +31,7 @@ pub type SqliteRow = IndexMap<String, SqliteValue>;
 #[derive(Debug)]
 pub enum SqliteErrorKind {
     Message(String),
+    External(Arc<dyn std::error::Error + Send + Sync>),
     Rollback {
         primary: SqliteError,
         rollback: SqliteError,
@@ -39,6 +40,10 @@ pub enum SqliteErrorKind {
 #[derive(Clone, Debug)]
 pub struct SqliteError(Arc<SqliteErrorKind>);
 impl SqliteError {
+    /// Preserve a caller's transaction error across the rollback boundary.
+    pub fn external(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self(Arc::new(SqliteErrorKind::External(Arc::new(error))))
+    }
     pub fn new(message: impl Into<String>) -> Self {
         Self(Arc::new(SqliteErrorKind::Message(message.into())))
     }
@@ -56,13 +61,22 @@ impl std::fmt::Display for SqliteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.0.as_ref() {
             SqliteErrorKind::Message(m) => f.write_str(m),
+            SqliteErrorKind::External(error) => error.fmt(f),
             SqliteErrorKind::Rollback { .. } => {
                 f.write_str("SQLite transaction failed and rollback failed")
             }
         }
     }
 }
-impl std::error::Error for SqliteError {}
+impl std::error::Error for SqliteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self.kind() {
+            SqliteErrorKind::External(error) => Some(error.as_ref()),
+            SqliteErrorKind::Rollback { primary, .. } => Some(primary),
+            _ => None,
+        }
+    }
+}
 impl From<rusqlite::Error> for SqliteError {
     fn from(value: rusqlite::Error) -> Self {
         Self::new(value.to_string())

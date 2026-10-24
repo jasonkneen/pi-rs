@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum ErrorKind {
+    Sqlite(pi_chord::sqlite::SqliteError),
     JsonlCorruption {
         message: String,
         cause: Option<Error>,
@@ -98,6 +99,7 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
+            ErrorKind::Sqlite(error) => error.fmt(f),
             ErrorKind::JsonlCorruption { message, .. } => f.write_str(message),
             ErrorKind::JsonlPoisoned { .. } => {
                 f.write_str("JSONL storage is poisoned and must be reopened")
@@ -122,6 +124,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self.kind() {
+            ErrorKind::Sqlite(error) => Some(error),
             ErrorKind::JsonlCorruption { cause, .. } => cause.as_ref().map(|e| e as _),
             ErrorKind::JsonlPoisoned { cause } => Some(cause),
             ErrorKind::JsonlIo { cause, .. } => Some(cause),
@@ -132,6 +135,16 @@ impl std::error::Error for Error {
             }
             _ => None,
         }
+    }
+}
+impl From<pi_chord::sqlite::SqliteError> for Error {
+    fn from(error: pi_chord::sqlite::SqliteError) -> Self {
+        if let pi_chord::sqlite::SqliteErrorKind::External(cause) = error.kind()
+            && let Some(error) = cause.downcast_ref::<Self>()
+        {
+            return error.clone();
+        }
+        Self(Arc::new(ErrorKind::Sqlite(error)))
     }
 }
 impl From<pi_chord::context::AbortError> for Error {

@@ -19,7 +19,9 @@ pub use harness::context::ContextView;
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};
 pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
 pub use session::*;
-pub use storage::{JsonlStorage, JsonlStorageOptions, MemoryStorage, Storage};
+pub use storage::{
+    JsonlStorage, JsonlStorageOptions, MemoryStorage, SqliteStorage, SqliteStorageOptions, Storage,
+};
 pub use tasks::{
     AnyTask, PhaseHandler, RunningTask, Task, TaskDefinition, TaskValue, TypedTaskId, define_task,
 };

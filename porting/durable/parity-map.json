@@ -754,45 +754,101 @@
     },
     {
       "reference": "packages/durable/src/storage/sqlite/cloudflare.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/database.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/migrations.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/migrations.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/node.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/schema.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/schema.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/storage.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/tests/sqlite_storage.rs",
+        "crates/pi-durable/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tasks.ts",
@@ -1712,27 +1768,63 @@
     },
     {
       "reference": "packages/durable/test/sqlite-cloudflare.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/src/storage/sqlite/migrations.rs",
+        "crates/pi-durable/examples/sqlite_stock_bridge.rs",
+        "scripts/run-stock-durable-sqlite.mjs",
+        "scripts/stock/durable-sqlite-adapter.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-sqlite-report.json",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/sqlite-facade.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/src/storage/sqlite/migrations.rs",
+        "crates/pi-durable/examples/sqlite_stock_bridge.rs",
+        "scripts/run-stock-durable-sqlite.mjs",
+        "scripts/stock/durable-sqlite-adapter.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-sqlite-report.json",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/sqlite-migrations.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/src/storage/sqlite/migrations.rs",
+        "crates/pi-durable/examples/sqlite_stock_bridge.rs",
+        "scripts/run-stock-durable-sqlite.mjs",
+        "scripts/stock/durable-sqlite-adapter.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-sqlite-report.json",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/sqlite-storage.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/storage/sqlite/mod.rs",
+        "crates/pi-durable/src/storage/sqlite/migrations.rs",
+        "crates/pi-durable/examples/sqlite_stock_bridge.rs",
+        "scripts/run-stock-durable-sqlite.mjs",
+        "scripts/stock/durable-sqlite-adapter.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-sqlite.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-sqlite-report.json",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/storage-memory.ts",

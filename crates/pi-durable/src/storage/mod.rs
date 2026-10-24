@@ -4,8 +4,10 @@ pub mod jsonl;
 pub(crate) mod line;
 pub mod memory;
 pub mod scan;
+pub mod sqlite;
 pub use jsonl::{JsonlStorage, JsonlStorageOptions};
 pub use memory::{MemoryStorage, PreparedMemoryCommit};
+pub use sqlite::{SqliteStorage, SqliteStorageOptions};
 
 pub type StorageFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;
 pub type Adopt = Box<dyn FnOnce(Seq) + Send + 'static>;
