@@ -57,6 +57,7 @@ struct State<T> {
 struct Inner<T> {
     state: Mutex<State<T>>,
     closed: tokio::sync::watch::Sender<Option<WatchEnd>>,
+    delivery: tokio::sync::watch::Sender<u64>,
 }
 
 pub struct Watch<T = JsonValue> {
@@ -71,6 +72,15 @@ impl<T> Clone for Watch<T> {
 }
 
 impl<T: Send + Sync + 'static> Watch<T> {
+    /// A typed immutable revision with JSON operations for exact-frame replay.
+    pub fn with_frames(
+        value: Arc<T>,
+        detach: impl FnOnce() + Send + 'static,
+        report: impl Fn(String) + Send + Sync + 'static,
+        overflow: impl Fn(&Arc<T>) -> Vec<Op> + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(value, detach, report, None, Arc::new(overflow))
+    }
     fn build(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,
@@ -79,9 +89,11 @@ impl<T: Send + Sync + 'static> Watch<T> {
         overflow: Overflow<T>,
     ) -> Self {
         let (closed, _) = tokio::sync::watch::channel(None);
+        let (delivery, _) = tokio::sync::watch::channel(0);
         Self {
             inner: Arc::new(Inner {
                 closed,
+                delivery,
                 state: Mutex::new(State {
                     value,
                     listener: None,
@@ -105,6 +117,23 @@ impl<T: Send + Sync + 'static> Watch<T> {
     }
     pub fn end_reason(&self) -> Option<WatchEnd> {
         self.inner.state.lock().end.clone()
+    }
+    /// Wait for the delivery loop to become idle. A pending listener keeps it
+    /// active; stopped and unstarted watches are idle. Foreign-runtime adapters
+    /// use this boundary when handing their completed callbacks back to Rust.
+    pub async fn delivery_idle(&self) {
+        let mut delivery = self.inner.delivery.subscribe();
+        loop {
+            {
+                let state = self.inner.state.lock();
+                if state.end.is_some() || !state.started || (!state.scheduled && !state.running) {
+                    return;
+                }
+            }
+            if delivery.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     pub fn start<F, Fut>(&self, listener: F) -> Result<(), String>
@@ -226,6 +255,9 @@ impl<T: Send + Sync + 'static> Watch<T> {
                 }
             };
             let Some((frame, listener)) = next else {
+                inner
+                    .delivery
+                    .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
                 return;
             };
             let retires = frame.retires;
@@ -291,6 +323,9 @@ impl<T: Send + Sync + 'static> Watch<T> {
             detach();
         }
         self.inner.closed.send_replace(Some(end.clone()));
+        self.inner
+            .delivery
+            .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
         end
     }
 

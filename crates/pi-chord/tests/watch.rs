@@ -313,3 +313,42 @@ async fn cancellation_can_only_be_installed_once_on_a_live_watch() {
     watch.stop();
     assert!(watch.observe_cancellation(controller.signal()).is_ok());
 }
+
+#[tokio::test]
+async fn delivery_idle_waits_for_the_listener_and_wakes_every_waiter_on_stop() {
+    let watch = Watch::new(number(0), || {}, |_| {});
+    advance(&watch, 1);
+    // An unstarted watch has no active delivery loop.
+    watch.delivery_idle().await;
+    let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let release = gate.clone();
+    watch
+        .start(move |_| {
+            send.send(()).unwrap();
+            let gate = gate.clone();
+            async move {
+                gate.notified().await;
+                Ok(())
+            }
+        })
+        .unwrap();
+    receive.recv().await.unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(5), watch.delivery_idle())
+            .await
+            .is_err()
+    );
+    let first = watch.clone();
+    let second = watch.clone();
+    let first = tokio::spawn(async move { first.delivery_idle().await });
+    let second = tokio::spawn(async move { second.delivery_idle().await });
+    watch.stop();
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        first.await.unwrap();
+        second.await.unwrap();
+    })
+    .await
+    .unwrap();
+}

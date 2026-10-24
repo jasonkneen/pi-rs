@@ -115,7 +115,9 @@ struct State {
     fail_fast: IndexSet<TaskId>,
     waiting: HashMap<TaskId, IndexSet<TaskId>>,
     invocations: IndexMap<TaskId, Arc<Invocation>>,
-    failed_migrations: HashMap<TaskId, AnyTask>,
+    failed_migrations: HashMap<TaskId, FailedMigration>,
+    blocked_listeners: IndexMap<u64, Arc<dyn Fn() -> Result<()> + Send + Sync>>,
+    next_blocked_listener: u64,
     timer: Option<(f64, DisarmTimer)>,
     last_wake: Option<Wake>,
     wake_pending: bool,
@@ -142,6 +144,35 @@ struct Invocation {
     next_watch: AtomicU64,
     timers: Mutex<IndexMap<u64, DisarmTimer>>,
     next_timer: AtomicU64,
+}
+struct FailedMigration {
+    task: AnyTask,
+    error: Error,
+}
+
+/// The graph retains only fields used to derive blocked reasons, never payloads.
+#[derive(Clone, Debug)]
+pub struct BlockedSubject {
+    pub id: TaskId,
+    pub kind: JsonString,
+    pub version: u64,
+    pub abort_requested: bool,
+    pub abort_reason: Option<AbortReason>,
+    pub restarts: Option<u64>,
+    pub status: TaskStatus,
+}
+impl From<&TaskRecord> for BlockedSubject {
+    fn from(record: &TaskRecord) -> Self {
+        Self {
+            id: record.id(),
+            kind: record.info.kind.clone(),
+            version: record.info.version,
+            abort_requested: record.info.abort_requested,
+            abort_reason: record.info.abort_reason,
+            restarts: record.info.restarts,
+            status: record.state.status(),
+        }
+    }
 }
 impl Invocation {
     fn ended_error(&self) -> Error {
@@ -170,6 +201,7 @@ struct Inner {
     subscriptions: Mutex<Option<(Subscription, Subscription, Option<ReaderSubscription>)>>,
     task_waiters: Waiters<TaskId, TaskRecord>,
     idle_waiters: Waiters<Option<ConversationId>, ()>,
+    graph: std::sync::OnceLock<Result<super::task_graph::TaskGraphView>>,
 }
 #[derive(Clone)]
 pub struct TaskScheduler {
@@ -227,6 +259,7 @@ impl TaskScheduler {
                 subscriptions: Mutex::new(None),
                 task_waiters: Waiters::default(),
                 idle_waiters: Waiters::default(),
+                graph: std::sync::OnceLock::new(),
             }),
         };
         *owner.lock() = Arc::downgrade(&scheduler.inner);
@@ -250,7 +283,9 @@ impl TaskScheduler {
         let subscription = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             registry.subscribe(Arc::new(move || {
                 if let Some(inner) = weak.upgrade() {
-                    TaskScheduler { inner }.kick();
+                    let scheduler = TaskScheduler { inner };
+                    scheduler.kick();
+                    scheduler.notify_blocked();
                 }
             }))
         }))
@@ -677,6 +712,7 @@ impl TaskScheduler {
     }
     pub fn wait_for_task(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord> {
         let scheduler = self.clone();
+        let session = self.inner.session.clone();
         let context = context.clone();
         let found = self.inner.session.read_on_line(move || async move {
             if scheduler.inner.state.lock().closing {
@@ -693,7 +729,11 @@ impl TaskScheduler {
                 .ok_or_else(|| Error::message(format!("Task {id} does not exist")))?;
             Ok(ready(Ok(record)))
         });
-        eager(async move { found.await?.await })
+        eager(async move {
+            let record = found.await?.await?;
+            session.publication_settled().await;
+            Ok(record)
+        })
     }
     pub fn wait_for_idle(
         &self,
@@ -864,13 +904,20 @@ impl TaskScheduler {
         record: &TaskRecord,
         task: Option<&AnyTask>,
     ) -> std::result::Result<bool, BlockedReason> {
+        self.fit_subject(&BlockedSubject::from(record), task)
+    }
+    fn fit_subject(
+        &self,
+        record: &BlockedSubject,
+        task: Option<&AnyTask>,
+    ) -> std::result::Result<bool, BlockedReason> {
         let Some(task) = task else {
             return Err(BlockedReason::MissingTask);
         };
-        if task.version() == record.info.version {
+        if task.version() == record.version {
             return Ok(false);
         }
-        if task.version() < record.info.version {
+        if task.version() < record.version {
             return Err(BlockedReason::TaskTooOld);
         }
         if self
@@ -878,8 +925,8 @@ impl TaskScheduler {
             .state
             .lock()
             .failed_migrations
-            .get(&record.id())
-            .is_some_and(|failed| failed.same_definition(task))
+            .get(&record.id)
+            .is_some_and(|failed| failed.task.same_definition(task))
         {
             return Err(BlockedReason::MigrationFailed);
         }
@@ -939,25 +986,35 @@ impl TaskScheduler {
                 Ok((task, record))
             }
             Err(error) => {
-                self.inner
-                    .state
-                    .lock()
-                    .failed_migrations
-                    .insert(record.id(), task);
+                self.inner.state.lock().failed_migrations.insert(
+                    record.id(),
+                    FailedMigration {
+                        task,
+                        error: error.clone(),
+                    },
+                );
+                self.defer_blocked_notification();
                 self.report(error, "migration_failed", Some(record.id()), None);
                 Err(BlockedReason::MigrationFailed)
             }
         }
     }
     pub fn blocked_reason(&self, record: &TaskRecord) -> Option<BlockedReason> {
+        self.blocked_subject_reason(&BlockedSubject::from(record))
+    }
+    pub fn blocked_subject_reason(&self, record: &BlockedSubject) -> Option<BlockedReason> {
         if matches!(
-            record.state.status(),
+            record.status,
             TaskStatus::Running | TaskStatus::Completing | TaskStatus::Terminal
-        ) || (record.info.abort_requested && record.info.abort_reason.is_none())
+        ) || (record.abort_requested && record.abort_reason.is_none())
         {
             return None;
         }
-        if self.parked(record) {
+        if !record.abort_requested
+            && record
+                .restarts
+                .is_some_and(|n| n as f64 >= self.restart_limit())
+        {
             return Some(BlockedReason::RestartLimit);
         }
         let snapshot = match read_registry(self.inner.registry.as_ref()) {
@@ -975,13 +1032,213 @@ impl TaskScheduler {
                 return None;
             }
         };
-        let installed = snapshot.task(&record.info.kind);
-        match self.fit(record, installed.map(|i| &i.task)) {
+        let installed = snapshot.task(&record.kind);
+        match self.fit_subject(record, installed.map(|i| &i.task)) {
             Err(reason) => Some(reason),
             Ok(true) if installed.unwrap().task.0.migrate.is_none() => {
                 Some(BlockedReason::MigrationFailed)
             }
             _ => None,
+        }
+    }
+    pub fn subscribe_blocked(
+        &self,
+        listener: Arc<dyn Fn() -> Result<()> + Send + Sync>,
+    ) -> ReaderSubscription {
+        let id = {
+            let mut state = self.inner.state.lock();
+            state.next_blocked_listener += 1;
+            let id = state.next_blocked_listener;
+            state.blocked_listeners.insert(id, listener);
+            id
+        };
+        let weak = Arc::downgrade(&self.inner);
+        ReaderSubscription::new(move || {
+            if let Some(inner) = weak.upgrade() {
+                inner.state.lock().blocked_listeners.shift_remove(&id);
+            }
+            Ok(())
+        })
+    }
+    fn notify_blocked(&self) {
+        let listeners = self
+            .inner
+            .state
+            .lock()
+            .blocked_listeners
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for listener in listeners {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener()))
+                .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)));
+            if let Err(error) = result {
+                self.report(error, "listener_error", None, None);
+            }
+        }
+    }
+    fn defer_blocked_notification(&self) {
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            scheduler.notify_blocked();
+        });
+    }
+    pub fn inspect(&self, context: &Context) -> StorageFuture<super::inspect::HarnessInspection> {
+        use super::inspect::*;
+        let scheduler = self.clone();
+        let context = context.clone();
+        self.inner.session.read_on_line(move || async move {
+            let snapshot = read_registry(scheduler.inner.registry.as_ref())?;
+            load_scopes(
+                &scheduler.inner.tree,
+                scheduler.inner.storage.as_ref(),
+                &context,
+            )
+            .await?;
+            let tasks = scheduler
+                .inner
+                .tree
+                .live_records()
+                .into_iter()
+                .map(|record| TaskInspection {
+                    state: scheduler.inspect_task(&record, &snapshot),
+                    record,
+                })
+                .collect();
+            let scheduling = {
+                let state = scheduler.inner.state.lock();
+                if state.closing {
+                    Scheduling::Closing
+                } else if state.enabled {
+                    Scheduling::Running
+                } else {
+                    Scheduling::Paused
+                }
+            };
+            let mut submissions = Vec::new();
+            for status in [SubmissionStatus::Queued, SubmissionStatus::Placed] {
+                let mut cursor = None;
+                loop {
+                    let page = scheduler
+                        .inner
+                        .storage
+                        .scan_submissions(
+                            &SubmissionQuery {
+                                status: Some(status),
+                                ..Default::default()
+                            },
+                            256,
+                            cursor.as_ref(),
+                            &context,
+                        )
+                        .await?;
+                    submissions.extend(page.items);
+                    cursor = page.next;
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+            }
+            submissions.sort_by_key(SubmissionRecord::id);
+            Ok(HarnessInspection {
+                scheduling,
+                tasks,
+                submissions,
+            })
+        })
+    }
+    fn inspect_task(
+        &self,
+        record: &TaskRecord,
+        snapshot: &RegistryView,
+    ) -> super::inspect::TaskInspectionState {
+        use super::inspect::TaskInspectionState as State;
+        if self
+            .inner
+            .state
+            .lock()
+            .invocations
+            .contains_key(&record.id())
+        {
+            return State::Running;
+        }
+        if record.state.status() == TaskStatus::Completing {
+            return State::Completing;
+        }
+        let on = self.waiting_on(record);
+        if !on.is_empty() {
+            return State::Waiting { on };
+        }
+        if self.not_due(record)
+            && let TaskState::Sleeping { until, .. } = record.state
+        {
+            return State::Sleeping { until };
+        }
+        if self.parked(record) {
+            return State::Blocked {
+                reason: BlockedReason::RestartLimit,
+                error: None,
+            };
+        }
+        let task = snapshot
+            .task(&record.info.kind)
+            .map(|installed| &installed.task);
+        match self.fit(record, task) {
+            Err(reason) => State::Blocked {
+                reason,
+                error: if reason == BlockedReason::MigrationFailed {
+                    self.inner
+                        .state
+                        .lock()
+                        .failed_migrations
+                        .get(&record.id())
+                        .map(|failed| failed.error.clone())
+                } else {
+                    None
+                },
+            },
+            Ok(true) if task.unwrap().0.migrate.is_none() => State::Blocked {
+                reason: BlockedReason::MigrationFailed,
+                error: Some(Error::message(format!(
+                    "Task {} version {} has no migration from {}",
+                    record.info.kind,
+                    task.unwrap().version(),
+                    record.info.version
+                ))),
+            },
+            Ok(migrates) => State::Ready { migrates },
+        }
+    }
+    pub fn watch_task_graph(
+        &self,
+        context: &Context,
+    ) -> StorageFuture<super::task_graph::TaskGraphWatch> {
+        use super::task_graph::*;
+        let graph = self.inner.graph.get_or_init(|| {
+            let weak_blocked = Arc::downgrade(&self.inner);
+            let weak_subscribe = Arc::downgrade(&self.inner);
+            TaskGraphView::new(
+                self.inner.session.clone(),
+                self.inner.storage.clone(),
+                TaskGraphBlocking {
+                    blocked: Arc::new(move |subject| {
+                        weak_blocked.upgrade().and_then(|inner| {
+                            TaskScheduler { inner }.blocked_subject_reason(subject)
+                        })
+                    }),
+                    subscribe: Arc::new(move |listener| {
+                        weak_subscribe
+                            .upgrade()
+                            .map(|inner| TaskScheduler { inner }.subscribe_blocked(listener))
+                            .ok_or_else(|| Error::message("Scheduler is closed"))
+                    }),
+                },
+            )
+        });
+        match graph {
+            Ok(graph) => graph.watch(context),
+            Err(error) => ready(Err(error.clone())),
         }
     }
     fn reserve(&self) -> StorageFuture<Vec<Reservation>> {
@@ -1002,7 +1259,9 @@ impl TaskScheduler {
             let sleeping = scheduler.inner.state.lock().sleeping.iter().copied().collect::<Vec<_>>();
             for id in sleeping { if scheduler.inner.tree.live(id).is_some_and(|r| !matches!(r.state, TaskState::Sleeping { until, .. } if !r.info.abort_requested && until > now)) { scheduler.inner.state.lock().runnable.insert(id); } }
             let parked = scheduler.inner.state.lock().parked.iter().copied().collect::<Vec<_>>();
-            for id in parked { if !scheduler.inner.tree.live(id).is_some_and(|r| scheduler.parked(&r)) { let mut state = scheduler.inner.state.lock(); state.parked.shift_remove(&id); state.runnable.insert(id); } }
+            let mut unparked = false;
+            for id in parked { if !scheduler.inner.tree.live(id).is_some_and(|r| scheduler.parked(&r)) { let mut state = scheduler.inner.state.lock(); state.parked.shift_remove(&id); state.runnable.insert(id); unparked = true; } }
+            if unparked { scheduler.defer_blocked_notification(); }
             let candidates = scheduler.inner.state.lock().runnable.iter().copied().collect::<Vec<_>>();
             let mut snapshot = None;
             for id in candidates {
@@ -1010,7 +1269,7 @@ impl TaskScheduler {
                 if record.as_ref().is_none_or(|r| r.state.status() == TaskStatus::Completing) || scheduler.inner.state.lock().invocations.contains_key(&id) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
                 let record = record.unwrap();
                 if !scheduler.waiting_on(&record).is_empty() || scheduler.not_due(&record) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
-                if scheduler.parked(&record) { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.parked.insert(id); continue; }
+                if scheduler.parked(&record) { let newly = { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.parked.insert(id) }; if newly { scheduler.defer_blocked_notification(); } continue; }
                 let mode = if record.info.abort_requested { InvocationMode::Abort } else { InvocationMode::Run };
                 if mode == InvocationMode::Run && !record.info.background && scheduler.inner.tree.cancelling_owner(TaskNode::of(&record).parent()).is_some() { scheduler.inner.state.lock().cascade = true; scheduler.schedule_reconcile(); continue; }
                 if mode == InvocationMode::Abort && record.info.restarts.unwrap_or(0) as f64 >= scheduler.restart_limit() {

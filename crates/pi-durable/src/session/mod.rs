@@ -123,6 +123,7 @@ struct Inner {
     timers: Timers,
     state: Mutex<State>,
     tail: Mutex<Shared<BoxFuture<'static, ()>>>,
+    publication: Mutex<Shared<BoxFuture<'static, ()>>>,
     closed: tokio::sync::watch::Sender<Option<SessionEnd>>,
     close_result: tokio::sync::watch::Sender<Option<Result<()>>>,
 }
@@ -171,6 +172,7 @@ impl Session {
                 options,
                 state: Mutex::new(State::default()),
                 tail: Mutex::new(async {}.boxed().shared()),
+                publication: Mutex::new(async {}.boxed().shared()),
                 closed,
                 close_result,
             }),
@@ -219,7 +221,7 @@ impl Session {
             Ok(())
         }
     }
-    fn report(&self, error: Error) {
+    pub(crate) fn report(&self, error: Error) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.report)(error)
         }));
@@ -451,7 +453,27 @@ impl Session {
             })),
         })
     }
+    pub(crate) fn publication_settled(&self) -> Shared<BoxFuture<'static, ()>> {
+        self.inner.publication.lock().clone()
+    }
     fn publish(&self, publication: &CommitPublication, context: &Context) {
+        // JS promise continuations run after the synchronous publication stack.
+        // Native waiters may run on another thread; keep that same boundary.
+        struct Finish(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Finish {
+            fn drop(&mut self) {
+                if let Some(send) = self.0.take() {
+                    let _ = send.send(());
+                }
+            }
+        }
+        let (send, receive) = tokio::sync::oneshot::channel();
+        *self.inner.publication.lock() = async move {
+            let _ = receive.await;
+        }
+        .boxed()
+        .shared();
+        let _finish = Finish(Some(send));
         use pi_telemetry::{AttributeValue, SpanAttributes};
         for change in &publication.changes {
             let event = match change {

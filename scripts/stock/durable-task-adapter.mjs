@@ -7,7 +7,12 @@ import {handle,describeTask,objectFor} from "./durable-native-handles.mjs";
 import {settingsRequest} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 let storageNext=1,callbackNext=1;
-const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map();
+const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
+function graphValue(snapshot){if(!graphRevisions.has(snapshot.revision))graphRevisions.set(snapshot.revision,snapshot.value);return graphRevisions.get(snapshot.revision);}
+nativeTransport.register("graphFrame",args=>objectFor(args.callback)(graphValue(args.snapshot),args.ops,BACKGROUND_CONTEXT));
+nativeTransport.afterCallback("graphFrame",frame=>nativeTransport.sync("graph.turn",{watch:frame.args.watch,serial:frame.args.serial}));
+function graphWatch(descriptor){const watch=descriptor.watch,closed=call("graph.closed",{watch});closed.catch(()=>{});return {get value(){return graphValue(nativeTransport.sync("graph.value",{watch}));},closed,start:listener=>nativeTransport.sync("graph.start",{watch,callback:handle(listener)}),stop:()=>nativeTransport.sync("graph.stop",{watch}),cancel:()=>nativeTransport.sync("graph.cancel",{watch})};}
+function inspect(value){for(const entry of value.tasks)if(entry.state.error)entry.state.error=error(entry.state.error);return value;}
 const stats={phases:0,commits:0,storageCalls:0};
 const call=(method,args={},context)=>nativeTransport.request(method,args,context);
 const send=frame=>nativeTransport.notify(frame);
@@ -20,6 +25,8 @@ nativeTransport.register("hookInvoke",({callback,handler})=>objectFor(callback)(
 for(const method of ["phase","change","storage"])nativeTransport.register(method,(args,context,frame)=>invoke(method,args,frame.abortable?(context??BACKGROUND_CONTEXT):withoutAbortSignal(context??BACKGROUND_CONTEXT)));
 function change(method,args,callback,context){const id=callbackNext++;callbacks.set(id,callback);const operation=call(method,{...args,callback:id},context).finally(()=>callbacks.delete(id));operation.catch(()=>{});return operation;}
 function transaction(id){return{
+ createConversation:options=>call("tx.createConversation",{tx:id,options}),
+ forkConversation:(conversation,at,options)=>call("tx.forkConversation",{tx:id,conversation,at,options}),
  createTask:(task,input,options)=>call("createTask",{tx:id,definition:describeTask(task),input,options}),
  appendEntry:(conversation,entry)=>call("appendEntry",{tx:id,conversation,entry}),
  entry:entry=>call("entry",{tx:id,entry}),
@@ -59,6 +66,9 @@ export const Harness={async open(storage,options,context){
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport});
  const id=await call("open",{storage:storageId,registry,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const harness={options,onReport:options.onReport,
+  inspect:context=>call("inspect",{harness:id},context).then(inspect),
+  watchTaskGraph:context=>call("graph.watch",{harness:id},context).then(graphWatch),
+  conversation:async(idToFind,context)=>{const record=await call("conversation",{harness:id,conversation:idToFind},context);return record?conversation(record.id):undefined;},
   root:async context=>conversation(await call("root",{harness:id},context)),
   resume:()=>{nativeTransport.sync("resume",{harness:id});},
   createConversation:async(options,context)=>conversation(await call("createConversation",{harness:id,options},context)),

@@ -16,6 +16,10 @@ pub use documents::*;
 pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
 pub use harness::context::ContextView;
+pub use harness::inspect::{HarnessInspection, Scheduling, TaskInspection, TaskInspectionState};
+pub use harness::task_graph::{
+    TaskGraph, TaskGraphNode, TaskGraphOutcome, TaskGraphState, TaskGraphWatch,
+};
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};
 pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
 pub use session::*;

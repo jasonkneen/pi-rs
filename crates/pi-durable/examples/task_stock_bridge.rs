@@ -24,6 +24,8 @@ use std::{
 };
 #[path = "support/context_bridge.rs"]
 mod context_bridge;
+#[path = "support/task_graph_bridge.rs"]
+mod graph_bridge;
 #[path = "support/registry_bridge.rs"]
 mod registry_bridge;
 #[path = "support/task_remote_storage.rs"]
@@ -72,6 +74,8 @@ struct Hub {
     agent_resolutions: AtomicU64,
     hook_calls: AtomicU64,
     registry: registry_bridge::RegistryBridge,
+    graph: graph_bridge::GraphBridge,
+    inspections: AtomicU64,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
 impl Hub {
@@ -300,6 +304,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method.starts_with("graph.") {
+            return self.graph_request(&method, request, context);
+        }
         if method.starts_with("context.") {
             return self.context_request(&method, request, context);
         }
@@ -341,6 +348,38 @@ impl Hub {
                     },
                     &context,
                 ))
+            }
+            "inspect" => {
+                self.inspections.fetch_add(1, Ordering::Relaxed);
+                mapped(self.scheduler(&request)?.inspect(&context))
+            }
+            "conversation" => {
+                let id = field(&request, "conversation")?;
+                mapped(
+                    self.scheduler(&request)?
+                        .session()
+                        .commit(move |tx| async move { tx.conversation(id).await }, &context),
+                )
+            }
+            "tx.createConversation" | "tx.forkConversation" => {
+                let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
+                    Some("ownerless") => ConversationOwnership::Ownerless,
+                    Some("task") => ConversationOwnership::Task(field(
+                        &request["options"]["ownership"],
+                        "taskId",
+                    )?),
+                    _ => return Err(Error::message("Unknown conversation ownership")),
+                };
+                let tx = self.transaction(&request)?;
+                if method == "tx.createConversation" {
+                    mapped(tx.create_conversation(ownership))
+                } else {
+                    mapped(tx.fork_conversation(
+                        field(&request, "conversation")?,
+                        field(&request, "at")?,
+                        ownership,
+                    ))
+                }
             }
             "createConversation" => {
                 let scheduler = self.scheduler(&request)?;
@@ -562,7 +601,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -626,6 +665,8 @@ async fn main() {
         hook_calls: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
         registry: registry_bridge::RegistryBridge::default(),
+        graph: graph_bridge::GraphBridge::default(),
+        inspections: AtomicU64::new(0),
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
@@ -704,7 +745,11 @@ async fn main() {
             // Registry operations are independent of the Session admission
             // line and may be called by a synchronous host callback on it.
             if value["method"].to_utf8().is_some_and(|method| {
-                method.starts_with("registry.") || method == "runtimeRegistry"
+                method.starts_with("registry.")
+                    || method == "runtimeRegistry"
+                    || (method.starts_with("graph.")
+                        && method != "graph.watch"
+                        && method != "graph.turn")
             }) {
                 begin_request(hub.clone(), &runtime, value, context);
             } else {
@@ -749,13 +794,18 @@ fn begin_request(
     // Begin Session operations in wire order before observing their futures.
     // Adoption and backend completion use the same lane, while synchronous
     // callback replies stay readable even if adoption calls the host clock.
+    let boundary = value["method"].to_utf8().is_some_and(|method| {
+        !method.starts_with("graph.")
+            && !method.starts_with("registry.")
+            && method != "runtimeRegistry"
+    });
     let operation = {
         let _entered = runtime.enter();
         hub.clone()
             .begin(value, context)
             .unwrap_or_else(|error| Box::pin(async { Err(error) }))
     };
-    runtime.spawn(async move {let result=operation.await;hub.contexts.lock().remove(&id);
+    runtime.spawn(async move {let result=operation.await;if boundary {hub.graph.response_boundary().await;}hub.contexts.lock().remove(&id);
         hub.emit(match result {Ok(Some(value))=>object([("id",encode(&id)),("value",value)]),Ok(None)=>object([("id",encode(&id)),("missing",encode(&true))]),Err(error)=>encode(&serde_json::json!({"id":id,"error":{"name":error.name(),"message":error.to_string()}}))});
     });
 }

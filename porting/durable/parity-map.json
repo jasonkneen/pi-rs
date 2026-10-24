@@ -443,9 +443,15 @@
     },
     {
       "reference": "packages/durable/src/harness/harness.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/inspect.rs",
+        "crates/pi-durable/src/harness/task_graph.rs",
+        "crates/pi-durable/src/harness/scheduler.rs"
+      ],
+      "evidence": [
+        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/inbox.ts",
@@ -507,15 +513,19 @@
         "crates/pi-durable/src/harness/reader.rs",
         "crates/pi-durable/tests/registry.rs",
         "crates/pi-durable/src/harness/hooks.rs",
-        "crates/pi-durable/tests/agent_runtime.rs"
+        "crates/pi-durable/tests/agent_runtime.rs",
+        "crates/pi-durable/src/harness/inspect.rs",
+        "crates/pi-durable/src/harness/task_graph.rs",
+        "crates/pi-durable/tests/task_graph.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
-        "scripts/run-stock-durable-tasks.mjs: 27 selected unmodified cases in both retention modes",
+        "scripts/run-stock-durable-tasks.mjs: 28 selected unmodified cases in both retention modes",
         "porting/durable/STATUS.md",
         "Native context cache retention, expiry and late-read guards; dropped-waiter coverage",
         "Native phase registry identity/refresh, idle wake without snapshot reads, conservative wake on registry failure, failure cleanup and subscription disposal",
-        "Native shared agent resolution starts eagerly, survives dropped/cancelled waiters, caches errors and resets per phase and abort invocation; one live settings reader supplies runtime and scheduler policy"
+        "Native shared agent resolution starts eagerly, survives dropped/cancelled waiters, caches errors and resets per phase and abort invocation; one live settings reader supplies runtime and scheduler policy",
+        "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication"
       ]
     },
     {
@@ -526,9 +536,18 @@
     },
     {
       "reference": "packages/durable/src/harness/task-graph.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/task_graph.rs",
+        "crates/pi-durable/tests/task_graph.rs",
+        "crates/pi-durable/examples/support/task_graph_bridge.rs"
+      ],
+      "evidence": [
+        "Native shared mount, immutable shared nodes, exact operations, compact blocked subjects, durable publications, cancellation and close",
+        "scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=graph: all 5 unmodified cases in both modes",
+        "Embedded package bindings remain pending",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/telemetry.ts",
@@ -544,14 +563,18 @@
     },
     {
       "reference": "packages/durable/src/harness/types.ts",
-      "status": "pending",
+      "status": "partial",
       "rust": [
         "crates/pi-durable/src/harness/reader.rs",
         "crates/pi-durable/src/harness/hooks.rs",
-        "crates/pi-durable/tests/agent_runtime.rs"
+        "crates/pi-durable/tests/agent_runtime.rs",
+        "crates/pi-durable/src/harness/inspect.rs",
+        "crates/pi-durable/src/harness/task_graph.rs",
+        "crates/pi-durable/src/harness/scheduler.rs"
       ],
       "evidence": [
-        "RegistryReader and typed-retaining RegistryView capabilities; native runtime agent/settings and typed hook runner implemented; model/environment/conversation and remaining contracts pending"
+        "RegistryReader and typed-retaining RegistryView capabilities; native runtime agent/settings and typed hook runner implemented; model/environment/conversation and remaining contracts pending",
+        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending"
       ]
     },
     {
@@ -1380,9 +1403,18 @@
     },
     {
       "reference": "packages/durable/test/harness-inspect.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/inspect.rs",
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/tests/task_graph.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=inspect: first original case in both modes",
+        "Generation/submission case explicitly unselected until its native services land; native regression covers queued/placed filtering",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-lifecycle.test.ts",
@@ -1501,9 +1533,19 @@
     },
     {
       "reference": "packages/durable/test/harness-task-graph.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/harness/task_graph.rs",
+        "crates/pi-durable/examples/support/task_graph_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=graph --report=/tmp/pi-durable-stock-graph-report.json",
+        "All five original cases, assertions and timeouts; Rust Session/scheduler/graph/watches; original JS handlers and backend",
+        "Both retention settings; native acquisition and delivery counters checked",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-tasks-recovery.test.ts",
@@ -1525,12 +1567,13 @@
         "scripts/stock/durable-settings-wire.mjs"
       ],
       "evidence": [
-        "27 of 36 unmodified stock cases selected; remaining 9 explicitly unselected",
+        "28 of 36 unmodified stock cases selected; remaining 8 explicitly unselected",
         "Native Session/scheduler/registry execution counters verified; stock test owns its backend and callbacks",
         "Both document retention modes; stock assertions and 5 second timeout unchanged",
         "Original phase snapshot, idleness, pagination, cancellation and queued commit/close assertions run over native services",
         "Stock lazy phase agent/hook, pre-cancelled waiter and failed shared resolution cases now run unchanged; literal test-name regexes are escaped",
-        "Ordered admission/adoption/backend completion stays separate from synchronous callback replies; adopted agent documents may call the host clock without deadlocking input"
+        "Ordered admission/adoption/backend completion stays separate from synchronous callback replies; adopted agent documents may call the host clock without deadlocking input",
+        "Timestamp/inspection case now runs against native inspection; cached JS Error hydration leaves default name on its prototype"
       ]
     },
     {
