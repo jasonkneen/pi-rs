@@ -48,6 +48,10 @@ def inventory(reference):
                         {"line": source.count("\n", 0, m.start()) + 1, "name": m[2]}
                         for m in re.finditer(r"\b(?:it|test)(?:\.(?:skip|only|todo))?\s*\(\s*([\"'`])(.*?)\1", source)
                     ],
+                    "runnerCases": [
+                        {"line": source.count("\n", 0, m.start()) + 1, "name": m[2]}
+                        for m in re.finditer(r"\bcreateCase\(\s*options,\s*([\"'`])(.*?)\1", source)
+                    ],
                 })
     manifests = {p: json.loads((reference / "packages" / p / "package.json").read_text()) for p in ("chord", "durable")}
     return {"reference": PIN, "packages": {p: {key: manifest.get(key) for key in ("version", "exports", "dependencies")} for p, manifest in manifests.items()}, "files": rows}

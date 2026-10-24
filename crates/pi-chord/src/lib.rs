@@ -6,6 +6,7 @@ pub mod context;
 pub mod delta;
 pub mod json;
 pub mod output;
+pub mod sqlite;
 pub mod watch;
 
 pub use context::{AbortController, AbortSignal, Context};

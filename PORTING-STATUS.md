@@ -52,6 +52,8 @@ Tracks what is ported and what is outstanding. Update when finishing a module.
 # Durable 1.4.0 port
 
 Active work is tracked in `porting/durable/PLAN.md`, `STATUS.md` and `parity-map.json`.
-The new `pi-chord` crate implements the initial JSON/delta/context/watch/output contracts.
-The `pi-durable` crate and its runtime/storage integrations remain to be implemented.
+The new `pi-chord` crate implements JSON/delta/context/watch/output and SQLite contracts.
+The `pi-durable` crate includes persisted records, document definitions, memory storage,
+and the complete 26-case storage conformance suite. Sessions, persistent backends,
+scheduling and agent integrations remain to be implemented.
 This entry does not claim complete durable parity.

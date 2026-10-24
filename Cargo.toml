@@ -11,6 +11,8 @@ repository = "https://github.com/lassejlv/pi-rs"
 
 [workspace.dependencies]
 pi-chord = { path = "crates/pi-chord" }
+pi-durable = { path = "crates/pi-durable" }
+rusqlite = { version = "0.41", features = ["bundled"] }
 pi-ai = { path = "crates/pi-ai" }
 pi-agent = { path = "crates/pi-agent" }
 pi-tui = { path = "crates/pi-tui" }

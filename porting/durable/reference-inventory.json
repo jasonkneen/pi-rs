@@ -194,7 +194,8 @@
         "notReady"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/cluster.ts",
@@ -206,7 +207,8 @@
         "ChildReloads"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/connection.ts",
@@ -221,7 +223,8 @@
         "Connection"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/context/index.ts",
@@ -242,7 +245,8 @@
         "awaitWithContext"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/contract.ts",
@@ -292,7 +296,8 @@
         "Ref"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/declare.ts",
@@ -307,7 +312,8 @@
         "EventOf"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/apply-immutable-trusted.ts",
@@ -317,7 +323,8 @@
         "applyImmutableTrusted"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/diff.ts",
@@ -327,7 +334,8 @@
         "diffRevisions"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/draft.ts",
@@ -337,7 +345,8 @@
         "Draft"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/index.ts",
@@ -396,7 +405,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/revision-validator.ts",
@@ -406,7 +416,8 @@
         "JsonRevisionValidator"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/delta/tracker.ts",
@@ -419,7 +430,8 @@
         "track"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/errors.ts",
@@ -437,7 +449,8 @@
         "runAll"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/host.ts",
@@ -464,7 +477,8 @@
         "HostImpl"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/index.ts",
@@ -675,7 +689,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/json.ts",
@@ -689,7 +704,8 @@
         "isJsonValue"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/link.ts",
@@ -717,7 +733,8 @@
           "line": 109,
           "name": "unpack"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/loader.ts",
@@ -727,7 +744,8 @@
         "nodeLoader"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/manager.ts",
@@ -748,7 +766,8 @@
         "childControl"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/node.ts",
@@ -780,7 +799,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/object.ts",
@@ -829,7 +849,8 @@
           "line": 44,
           "name": "ServeOptionsFor"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/output.ts",
@@ -850,7 +871,8 @@
         "Progress"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/publish.ts",
@@ -861,7 +883,8 @@
         "holdPublications"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/registry.ts",
@@ -875,7 +898,8 @@
         "Registration"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/reload.ts",
@@ -891,7 +915,8 @@
         "Reload"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/remote.ts",
@@ -905,7 +930,8 @@
         "RemoteRef"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/schema.ts",
@@ -921,7 +947,8 @@
         "fits"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/cloudflare.ts",
@@ -932,7 +959,8 @@
         "DurableObjectSqliteDatabase"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/database.ts",
@@ -944,7 +972,8 @@
         "SqliteDatabase"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/index.ts",
@@ -974,7 +1003,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/migrations.ts",
@@ -985,7 +1015,8 @@
         "applySqliteMigrations"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/node.ts",
@@ -997,7 +1028,8 @@
         "openNodeSqliteDatabase"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/sqlite/schema.ts",
@@ -1007,7 +1039,8 @@
         "validateSqliteSchemaPrefix"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/state.ts",
@@ -1027,7 +1060,8 @@
         "replicatedState"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/telemetry-sqlite/index.ts",
@@ -1039,7 +1073,8 @@
         "createSqliteTelemetry"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/telemetry-sqlite/store.ts",
@@ -1051,7 +1086,8 @@
         "findMetrics"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/types.ts",
@@ -1069,7 +1105,8 @@
         "RefBase"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/watch.ts",
@@ -1084,7 +1121,8 @@
         "NativeWatch"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/websocket.ts",
@@ -1096,7 +1134,8 @@
         "acceptWebSockets"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/src/wire.ts",
@@ -1114,7 +1153,8 @@
         "fromWireError"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/awaiting.test.ts",
@@ -1139,7 +1179,8 @@
           "line": 90,
           "name": "ctx.get resolves hydrated; the call's reference is released when the call ends"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/bindings.test.ts",
@@ -1192,7 +1233,8 @@
           "line": 442,
           "name": "a version 3 peer is refused; shapes carry no code version"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/boundary.test.ts",
@@ -1205,7 +1247,8 @@
           "line": 14,
           "name": "does not depend on Pi packages other than pi-telemetry, or on files outside Chord"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/cluster.test.ts",
@@ -1270,7 +1313,8 @@
           "line": 557,
           "name": "forced retirement cancels a browser call relayed to a worker before the server closes the old code's resources"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/context.test.ts",
@@ -1307,7 +1351,8 @@
           "line": 177,
           "name": "stops waiting when the invocation is cancelled"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/contract.test.ts",
@@ -1344,7 +1389,8 @@
           "line": 124,
           "name": "compares opaque members by name@version and function members structurally"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-apply-immutable.test.ts",
@@ -1385,7 +1431,8 @@
           "line": 289,
           "name": "copies a wide object once rather than once per repeated write"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/benchmark.ts",
@@ -1393,7 +1440,8 @@
       "lines": 210,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/benchmark.worker.ts",
@@ -1401,7 +1449,8 @@
       "lines": 436,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/conversation-view-benchmark.ts",
@@ -1409,7 +1458,8 @@
       "lines": 337,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/conversation-view-benchmark.worker.ts",
@@ -1417,7 +1467,8 @@
       "lines": 1140,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/memory-benchmark.ts",
@@ -1425,7 +1476,8 @@
       "lines": 142,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-benchmark/memory-benchmark.worker.ts",
@@ -1433,7 +1485,8 @@
       "lines": 163,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-clone.test.ts",
@@ -1458,7 +1511,8 @@
           "line": 41,
           "name": "copies assigned and inserted values immediately"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-diff.test.ts",
@@ -1547,7 +1601,8 @@
           "line": 260,
           "name": "bounds a wide normalized array fallback with a root replacement"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-tracker/retention.test.ts",
@@ -1555,7 +1610,8 @@
       "lines": 34,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-tracker/retention.worker.ts",
@@ -1563,7 +1619,8 @@
       "lines": 302,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-tracker/tracker.test.ts",
@@ -1844,7 +1901,8 @@
           "line": 1485,
           "name": "supports a MemoryStorage-style recursive clone of Prepared.value"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta-traversal.bench.ts",
@@ -1852,7 +1910,8 @@
       "lines": 201,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/delta.test.ts",
@@ -2025,7 +2084,8 @@
           "line": 502,
           "name": "does not recursively inspect operation payloads"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/fixtures/counting.ts",
@@ -2037,7 +2097,8 @@
         "stateFrames"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/fixtures/echo.ts",
@@ -2047,7 +2108,8 @@
         "Echo"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/fixtures/loader.ts",
@@ -2058,7 +2120,8 @@
         "state"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/fixtures/worker.ts",
@@ -2066,7 +2129,8 @@
       "lines": 41,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/flow-units.test.ts",
@@ -2099,7 +2163,8 @@
           "line": 252,
           "name": "a stalled tab overflows and gets a reset while another tab keeps getting every change"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/flow.test.ts",
@@ -2136,7 +2201,8 @@
           "line": 274,
           "name": "answers calls beyond maxCalls at once with too_many_calls and keeps the link"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/generations.test.ts",
@@ -2161,7 +2227,8 @@
           "line": 152,
           "name": "disposed objects are not kept once their disposal finished"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/host-objects-reload.test.ts",
@@ -2194,7 +2261,8 @@
           "line": 311,
           "name": "a reload that changes a type's lifetime creates its host object, or lets it go"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/host.test.ts",
@@ -2303,7 +2371,8 @@
           "line": 726,
           "name": "a ChordError from a factory keeps its code through dependents"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/hydration.test.ts",
@@ -2328,7 +2397,8 @@
           "line": 163,
           "name": "a reference cycle across hosts fails at readyTimeout with a cycle hint"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/json.test.ts",
@@ -2357,7 +2427,8 @@
           "line": 49,
           "name": "rejects cycles and non-strict container properties"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/link.test.ts",
@@ -2446,7 +2517,8 @@
           "line": 605,
           "name": "a write that fails after the peer process exited (EPIPE) ends the link instead of raising an unhandled error"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/links-review.test.ts",
@@ -2515,7 +2587,8 @@
           "line": 515,
           "name": "#6 a server root that bounces through a worker and back ends normally (no leaked lease)"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/loader.test.ts",
@@ -2532,7 +2605,8 @@
           "line": 17,
           "name": "needs a configured loader for modules"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/manager.test.ts",
@@ -2577,7 +2651,8 @@
           "line": 169,
           "name": "stops an idle child when keepAlive says so"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/output-skip.test.ts",
@@ -2602,7 +2677,8 @@
           "line": 137,
           "name": "refuses skips for head retention"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/output.test.ts",
@@ -2695,7 +2771,8 @@
           "line": 332,
           "name": "stops: waits for the commit in flight and hands back waiters no commit covered yet"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/placement.test.ts",
@@ -2728,7 +2805,8 @@
           "line": 184,
           "name": "types: the family's field is a required string of the input, and remote contracts need a host"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/principals.test.ts",
@@ -2753,7 +2831,8 @@
           "line": 123,
           "name": "refuses a host, a parent link or a route without its principal"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/provider-cost.test.ts",
@@ -2766,7 +2845,8 @@
           "line": 39,
           "name": "one change to K clients: K encodes (one per feed), one frame per link, the same ops on every link"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/readiness.test.ts",
@@ -2799,7 +2879,8 @@
           "line": 193,
           "name": "${operation} can defer eager readiness until the parent admits the worker"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/reload.test.ts",
@@ -2880,7 +2961,8 @@
           "line": 700,
           "name": "the gate rejects new objects of a changed type; after commit they get the new code"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/replicated-state-delivery.test.ts",
@@ -2925,7 +3007,8 @@
           "line": 227,
           "name": "mutable state reports rejected callbacks through its default error reporter"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/replicated-state.test.ts",
@@ -2998,7 +3081,8 @@
           "line": 333,
           "name": "keeps attachments independent and disposes each idempotently"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/requests.test.ts",
@@ -3051,7 +3135,8 @@
           "line": 448,
           "name": "#10 host close disposes holders before what they hold, and before closing links"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/review.test.ts",
@@ -3132,7 +3217,8 @@
           "line": 650,
           "name": "a remote reference refuses a foreign ctx and a ctx not made by Chord, without calling"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/sqlite/cloudflare.test.ts",
@@ -3173,7 +3259,8 @@
           "line": 97,
           "name": "includes direct underlying calls in an active transaction"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/sqlite/helpers.ts",
@@ -3183,7 +3270,8 @@
         "durableObjectStorage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/sqlite/migrations.test.ts",
@@ -3208,7 +3296,8 @@
           "line": 64,
           "name": "rolls initial bootstrap and every pending migration back together"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/sqlite/node.test.ts",
@@ -3249,7 +3338,8 @@
           "line": 156,
           "name": "does not preserve the callback error when rollback itself fails"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state-diff.test.ts",
@@ -3334,7 +3424,8 @@
           "line": 250,
           "name": "falls back to a base operation when leaf operations are larger"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state-draft.test.ts",
@@ -3371,7 +3462,8 @@
           "line": 110,
           "name": "rejects array holes without mutating the committed base"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state-fuzz.test.ts",
@@ -3384,7 +3476,8 @@
           "line": 90,
           "name": "converges across randomized prepared revisions"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state-init.test.ts",
@@ -3421,7 +3514,8 @@
           "line": 220,
           "name": "in a gated reload, an added cell runs init at the gate"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state-value.test.ts",
@@ -3442,7 +3536,8 @@
           "line": 29,
           "name": "makes repeated placements independent"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/state.test.ts",
@@ -3479,7 +3574,8 @@
           "line": 222,
           "name": "re-entrant writes publish in adoption order; derivations never go stale (Sol #3)"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/telemetry-sqlite-store.test.ts",
@@ -3500,7 +3596,8 @@
           "line": 90,
           "name": "keeps surviving descendants discoverable after a stored parent is removed"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/telemetry-sqlite.test.ts",
@@ -3561,7 +3658,8 @@
           "line": 364,
           "name": "reuses migrations, preserves identities across reopen, and merges aggregates from multiple adapters"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/tutorial.test.ts",
@@ -3614,7 +3712,8 @@
           "line": 503,
           "name": "11: short roots release temporary holds"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/types.test.ts",
@@ -3627,7 +3726,8 @@
           "line": 25,
           "name": "state members are T; other variants' members need narrowing; gets are awaited"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/variants.test.ts",
@@ -3644,7 +3744,8 @@
           "line": 123,
           "name": "keeps the last values readable, sends one fresh unit, and a reference joining meanwhile waits for it"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/watch.test.ts",
@@ -3749,7 +3850,8 @@
           "line": 463,
           "name": "retains neither its source nor its listener once stopped, while still referenced"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/chord/test/websocket.test.ts",
@@ -3766,7 +3868,8 @@
           "line": 111,
           "name": "large snapshots and results reach the client as binary messages; clients may not send them"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/codemode/codemode.ts",
@@ -3787,7 +3890,8 @@
         "createCodemodeExtension"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/codemode/describe.ts",
@@ -3803,7 +3907,8 @@
         "codemodeSection"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/codemode/index.ts",
@@ -3834,7 +3939,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/codemode/models.ts",
@@ -3852,7 +3958,8 @@
         "createModelTools"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/codemode/output.ts",
@@ -3864,7 +3971,8 @@
         "formatResult"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/documents.ts",
@@ -3893,7 +4001,8 @@
         "materializeDocumentValue"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/entries.ts",
@@ -3909,7 +4018,8 @@
         "CompactionEntry"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/env/decode.ts",
@@ -3921,7 +4031,8 @@
         "StreamDecoder"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/env/index.ts",
@@ -3977,7 +4088,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/env/line-scan.ts",
@@ -3987,7 +4099,8 @@
         "LineScanner"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/env/node-watch.ts",
@@ -3998,7 +4111,8 @@
         "NodeFileWatcher"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/env/node.ts",
@@ -4015,7 +4129,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/errors.ts",
@@ -4030,7 +4145,8 @@
         "ConversationBusy"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/agent.ts",
@@ -4053,7 +4169,8 @@
         "resolveAgent"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/compaction.ts",
@@ -4072,7 +4189,8 @@
         "serializeConversation"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/context.ts",
@@ -4089,7 +4207,8 @@
         "orderToolResults"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/define.ts",
@@ -4104,7 +4223,8 @@
         "wrapSection"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/events.ts",
@@ -4119,7 +4239,8 @@
         "watchEvents"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/generation.ts",
@@ -4135,7 +4256,8 @@
         "handOver"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/harness.ts",
@@ -4149,7 +4271,8 @@
         "Harness"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/inbox.ts",
@@ -4173,7 +4296,8 @@
         "withdrawQueuedInputs"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/json.ts",
@@ -4183,7 +4307,8 @@
         "assignJson"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/live.ts",
@@ -4209,7 +4334,8 @@
         "settleSchedulerOutcome"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/prompt.ts",
@@ -4221,7 +4347,8 @@
         "planSystemEntries"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/provider.ts",
@@ -4233,7 +4360,8 @@
         "ensureProviderSessionId"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/registry.ts",
@@ -4244,7 +4372,8 @@
         "createRegistry"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/scheduler.ts",
@@ -4260,7 +4389,8 @@
         "TaskScheduler"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/submissions.ts",
@@ -4271,7 +4401,8 @@
         "admitSubmission"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/task-graph.ts",
@@ -4295,7 +4426,8 @@
           "line": 42,
           "name": "restart_limit"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/telemetry.ts",
@@ -4305,7 +4437,8 @@
         "DURABLE_TELEMETRY_SCHEMA"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/tool.ts",
@@ -4322,7 +4455,8 @@
         "appendToolResult"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/types.ts",
@@ -4394,7 +4528,8 @@
           "line": 579,
           "name": "HarnessSettings.afterFailedRun"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/usage.ts",
@@ -4408,7 +4543,8 @@
         "addUsageState"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/util.ts",
@@ -4421,7 +4557,8 @@
         "optionalExtension"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/harness/view.ts",
@@ -4434,7 +4571,8 @@
         "ConversationViews"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/ids.ts",
@@ -4445,7 +4583,8 @@
         "seqFromNumber"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/cloudflare.ts",
@@ -4455,7 +4594,8 @@
         "createCloudflarePhotonImages"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/exif.ts",
@@ -4465,7 +4605,8 @@
         "exifOrientation"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/index.ts",
@@ -4475,7 +4616,8 @@
         "createPhotonImages"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/node-worker.ts",
@@ -4486,7 +4628,8 @@
         "PrepareReply"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/node.ts",
@@ -4497,7 +4640,8 @@
         "createNodePhotonImages"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/images/photon-wasm.d.ts",
@@ -4505,7 +4649,8 @@
       "lines": 5,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/index.ts",
@@ -4859,7 +5004,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/search.ts",
@@ -4871,7 +5017,8 @@
         "rankDocuments"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/session/forks.ts",
@@ -4882,7 +5029,8 @@
         "prepareForkDocumentCopies"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/session/session.ts",
@@ -4896,7 +5044,8 @@
         "contained"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/session/transaction.ts",
@@ -4910,7 +5059,8 @@
         "Transaction"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/indexeddb.ts",
@@ -4920,7 +5070,8 @@
         "IndexedDbStorage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/jsonl/index.ts",
@@ -4938,7 +5089,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/jsonl/node.ts",
@@ -4956,7 +5108,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/jsonl/storage.ts",
@@ -4969,7 +5122,8 @@
         "JsonlStorage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/memory.ts",
@@ -4980,7 +5134,8 @@
         "MemoryStorage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/scan.ts",
@@ -4992,7 +5147,8 @@
         "nextCursor"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/cloudflare.ts",
@@ -5010,7 +5166,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/database.ts",
@@ -5027,7 +5184,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/index.ts",
@@ -5060,7 +5218,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/migrations.ts",
@@ -5081,7 +5240,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/node.ts",
@@ -5101,7 +5261,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/schema.ts",
@@ -5120,7 +5281,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/storage/sqlite/storage.ts",
@@ -5131,7 +5293,8 @@
         "SqliteStorage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tasks.ts",
@@ -5141,7 +5304,8 @@
         "defineTask"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/assertions.ts",
@@ -5152,7 +5316,8 @@
         "createExpectAssertions"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/env-conformance.ts",
@@ -5162,7 +5327,8 @@
         "createEnvConformance"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/index.ts",
@@ -5227,7 +5393,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/runner.ts",
@@ -5239,7 +5406,8 @@
         "registerEnvConformance"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/storage-benchmark.ts",
@@ -5259,7 +5427,8 @@
         "STORAGE_WRITE_BENCHMARKS"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/testing/storage-conformance.ts",
@@ -5269,7 +5438,113 @@
         "createStorageConformance"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": [
+        {
+          "line": 137,
+          "name": "reserves ID 1 for the immutable root conversation"
+        },
+        {
+          "line": 146,
+          "name": "adopts a durable commit once before resolving, and never a failed one"
+        },
+        {
+          "line": 187,
+          "name": "commits mixed table writes atomically and rolls all of them back on failure"
+        },
+        {
+          "line": 252,
+          "name": "detaches retained writes and every returned record"
+        },
+        {
+          "line": 310,
+          "name": "detaches prototype-like JSON keys without changing object prototypes"
+        },
+        {
+          "line": 335,
+          "name": "indexes entries committed out of ID order"
+        },
+        {
+          "line": 358,
+          "name": "continues an entry cursor below its last item after a newer commit"
+        },
+        {
+          "line": 382,
+          "name": "paginates conversations by opaque cursor in ascending ID order"
+        },
+        {
+          "line": 404,
+          "name": "filters and pages conversations by durable owner edges"
+        },
+        {
+          "line": 455,
+          "name": "scans deep fork history newest-first through every ancestor cap"
+        },
+        {
+          "line": 622,
+          "name": "scans tables in either ID order and continues a cursor in its order"
+        },
+        {
+          "line": 675,
+          "name": "replaces complete task records and pages filtered task scans"
+        },
+        {
+          "line": 727,
+          "name": "stores owners and scans waiting and completing tasks by status"
+        },
+        {
+          "line": 763,
+          "name": "stores and scans sleeping tasks by status"
+        },
+        {
+          "line": 782,
+          "name": "indexes request IDs per conversation and replaces complete submission records"
+        },
+        {
+          "line": 859,
+          "name": "stores passive write submissions without input-only lifecycle states"
+        },
+        {
+          "line": 911,
+          "name": "reconstructs rewindable documents and preserves half-open incarnations"
+        },
+        {
+          "line": 1039,
+          "name": "streams long document tails across root replacement deltas"
+        },
+        {
+          "line": 1136,
+          "name": "copies stored document bases independently and rejects ambiguous sources"
+        },
+        {
+          "line": 1347,
+          "name": "uses bases for version transitions and rejects historical reads of current-only documents"
+        },
+        {
+          "line": 1391,
+          "name": "indexes logical addresses and exact-scope scans independently"
+        },
+        {
+          "line": 1531,
+          "name": "keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime"
+        },
+        {
+          "line": 1601,
+          "name": "rolls back record tables and secondary indexes when a document command fails"
+        },
+        {
+          "line": 1680,
+          "name": "keeps indexed string identities lossless"
+        },
+        {
+          "line": 1783,
+          "name": "keeps one global record ID namespace and rejects exhausted ID minting"
+        },
+        {
+          "line": 1805,
+          "name": "rejects every operation after close"
+        }
+      ]
     },
     {
       "path": "packages/durable/src/testing/types.ts",
@@ -5286,7 +5561,8 @@
         "EnvConformanceCase"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/timers.ts",
@@ -5298,7 +5574,8 @@
         "hostTimers"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tool-search/index.ts",
@@ -5317,7 +5594,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tool-search/tool-search.ts",
@@ -5331,7 +5609,8 @@
         "createToolSearchExtension"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/bash.ts",
@@ -5349,7 +5628,8 @@
         "createPowerShellTool"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/edit-diff.ts",
@@ -5371,7 +5651,8 @@
         "generateDiffString"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/edit.ts",
@@ -5383,7 +5664,8 @@
         "createEditTool"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/env.ts",
@@ -5393,7 +5675,8 @@
         "requireEnv"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/file-mutation-queue.ts",
@@ -5403,7 +5686,8 @@
         "withFileMutationQueue"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/image-processor.ts",
@@ -5419,7 +5703,8 @@
         "base64Length"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/image.ts",
@@ -5432,7 +5717,8 @@
         "imageDimensions"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/index.ts",
@@ -5490,7 +5776,8 @@
           ]
         }
       ],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/path-utils.ts",
@@ -5501,7 +5788,8 @@
         "resolveReadToolPath"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/read.ts",
@@ -5514,7 +5802,8 @@
         "createReadTool"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/tools/write.ts",
@@ -5525,7 +5814,8 @@
         "createWriteTool"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/truncate.ts",
@@ -5541,7 +5831,8 @@
         "truncateHeadOf"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/src/types.ts",
@@ -5633,7 +5924,8 @@
         "Storage"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/chat-support.ts",
@@ -5650,7 +5942,8 @@
         "toolsNamed"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/codemode-bench.ts",
@@ -5658,7 +5951,8 @@
       "lines": 93,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/codemode-checkpoints.test.ts",
@@ -5675,7 +5969,8 @@
           "line": 14,
           "name": "checkpoints the codemode store after 64 deltas without changing historical reads or forks"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/codemode-describe.test.ts",
@@ -5704,7 +5999,8 @@
           "line": 68,
           "name": "renders the section from the conversation's callable tools into the system prompt"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/codemode-models.test.ts",
@@ -5741,7 +6037,8 @@
           "line": 253,
           "name": "notes generated images the script did not show"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/codemode.test.ts",
@@ -5914,7 +6211,8 @@
           "line": 1074,
           "name": "finds tools with searchTools(), describeTool(), and describeNamespace(), and lists them in ALL_TOOLS"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/document-append-bench.ts",
@@ -5922,7 +6220,8 @@
       "lines": 54,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/env-line-scan.test.ts",
@@ -5947,7 +6246,8 @@
           "line": 102,
           "name": "rejects empty or invalid ranges"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/env-node-conformance.test.ts",
@@ -5964,7 +6264,8 @@
           "line": 103,
           "name": "reads ranges spanning several internal chunks exactly"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/env-node-spill.test.ts",
@@ -5972,7 +6273,8 @@
       "lines": 89,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/env-node.test.ts",
@@ -6149,7 +6451,8 @@
           "line": 993,
           "name": "streams every line and spills them all once output crosses its line threshold"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/env-truncate.test.ts",
@@ -6190,7 +6493,8 @@
           "line": 95,
           "name": "formats sizes"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/00-conversation.ts",
@@ -6198,7 +6502,8 @@
       "lines": 21,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/01-documents.ts",
@@ -6206,7 +6511,8 @@
       "lines": 46,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/02-forks.ts",
@@ -6214,7 +6520,8 @@
       "lines": 56,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/03-owned-conversations.ts",
@@ -6222,7 +6529,8 @@
       "lines": 70,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/04-watches.ts",
@@ -6230,7 +6538,8 @@
       "lines": 42,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/05-harness.ts",
@@ -6238,7 +6547,8 @@
       "lines": 67,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/06-configuration.ts",
@@ -6246,7 +6556,8 @@
       "lines": 99,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/07-harness-conversations.ts",
@@ -6254,7 +6565,8 @@
       "lines": 42,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/08-context.ts",
@@ -6262,7 +6574,8 @@
       "lines": 136,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/09-registry-reload.ts",
@@ -6270,7 +6583,8 @@
       "lines": 48,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/10-extension-state.ts",
@@ -6278,7 +6592,8 @@
       "lines": 87,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/11-tasks.ts",
@@ -6286,7 +6601,8 @@
       "lines": 64,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/12-recovery.ts",
@@ -6294,7 +6610,8 @@
       "lines": 91,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/13-chat.ts",
@@ -6302,7 +6619,8 @@
       "lines": 45,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/14-system-prompt.ts",
@@ -6310,7 +6628,8 @@
       "lines": 93,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/15-real-model.ts",
@@ -6318,7 +6637,8 @@
       "lines": 69,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/16-coding-tools.ts",
@@ -6326,7 +6646,8 @@
       "lines": 101,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/17-print.ts",
@@ -6334,7 +6655,8 @@
       "lines": 53,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/18-json.ts",
@@ -6342,7 +6664,8 @@
       "lines": 103,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/19-inbox.ts",
@@ -6350,7 +6673,8 @@
       "lines": 72,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/20-late-join.ts",
@@ -6358,7 +6682,8 @@
       "lines": 100,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/21-subagent-foreground.ts",
@@ -6366,7 +6691,8 @@
       "lines": 136,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/22-subagent-background.ts",
@@ -6374,7 +6700,8 @@
       "lines": 364,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/23-child-tasks.ts",
@@ -6382,7 +6709,8 @@
       "lines": 146,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/24-compaction.ts",
@@ -6390,7 +6718,8 @@
       "lines": 123,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/25-coding-agent.ts",
@@ -6398,7 +6727,8 @@
       "lines": 81,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/26-plan-mode.ts",
@@ -6406,7 +6736,8 @@
       "lines": 116,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/27-reviewer.ts",
@@ -6416,7 +6747,8 @@
         "name"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/28-sandbox-per-conversation.ts",
@@ -6424,7 +6756,8 @@
       "lines": 83,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/29-tool-override.ts",
@@ -6432,7 +6765,8 @@
       "lines": 102,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/examples/30-reload-and-restart.ts",
@@ -6440,7 +6774,8 @@
       "lines": 90,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/fixtures/delete-buffer.ts",
@@ -6448,7 +6783,8 @@
       "lines": 2,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/fixtures/utf8-byte-length-without-buffer.ts",
@@ -6456,7 +6792,8 @@
       "lines": 11,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-blocked.test.ts",
@@ -6513,7 +6850,8 @@
           "line": 485,
           "name": "shows a task without a definition as blocked, and wakes the host once a registry change unblocks it"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-callers.test.ts",
@@ -6542,7 +6880,8 @@
           "line": 130,
           "name": "applies addTools to modelTools too, so the model is offered the added tools"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-cancellation-barrier.test.ts",
@@ -6567,7 +6906,8 @@
           "line": 198,
           "name": "marks a flagged task that holds its outcome, aborting its owned work, and keeps the outcome"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-compaction.test.ts",
@@ -6960,7 +7300,8 @@
           "line": 2442,
           "name": "applies the model's override when a compaction selects and sizes its summary"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-context.test.ts",
@@ -7057,7 +7398,8 @@
           "line": 941,
           "name": "drops a conversation's context read once idle with zero retention"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-conversations.test.ts",
@@ -7114,7 +7456,8 @@
           "line": 460,
           "name": "forwards generic Session document APIs"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-events.test.ts",
@@ -7179,7 +7522,8 @@
           "line": 599,
           "name": "starts a message at the first committed partial and ends it with the converted entry on abort"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-failed-run-inbox.test.ts",
@@ -7204,7 +7548,8 @@
           "line": 77,
           "name": "settle unanswered with run_failed with withdraw"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-generation-recovery.test.ts",
@@ -7245,7 +7590,8 @@
           "line": 334,
           "name": "runs a print-style turn and reads the durable answer after reopen"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-generation.test.ts",
@@ -7354,7 +7700,8 @@
           "line": 701,
           "name": "rejects a registry without the built-in tasks"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-host-inputs.test.ts",
@@ -7379,7 +7726,8 @@
           "line": 107,
           "name": "generation reads the current return value of a settings function"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-inbox.test.ts",
@@ -7516,7 +7864,8 @@
           "line": 910,
           "name": "records usage as numeric sets on the ledger in the entry's commit"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-input-entries.test.ts",
@@ -7569,7 +7918,8 @@
           "line": 418,
           "name": "appends a data-only write at once behind a non-empty inbox, and still queues writes with model or edits"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-inspect.test.ts",
@@ -7586,7 +7936,8 @@
           "line": 145,
           "name": "lists unsettled submissions"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-lifecycle.test.ts",
@@ -7651,7 +8002,8 @@
           "line": 575,
           "name": "runs what the registry holds at resume: a definition installed or replaced after open"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-live-deltas.test.ts",
@@ -7704,7 +8056,8 @@
           "line": 444,
           "name": "keeps a complete base exactly while nothing runs"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-nested-tools-restart.test.ts",
@@ -7757,7 +8110,8 @@
           "line": 669,
           "name": "leaves background work under an abandoned nested call running, and settles without it"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-nested-tools.test.ts",
@@ -7898,7 +8252,8 @@
           "line": 1327,
           "name": "migrates a version 1 task interrupted after intent and settles it interrupted"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-ownership.test.ts",
@@ -8055,7 +8410,8 @@
           "line": 1312,
           "name": "lets a background supervisor resubmit after a restart without submitting twice"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-prompt.test.ts",
@@ -8100,7 +8456,8 @@
           "line": 258,
           "name": "puts tool changes on the last section entry and re-declares every tool after a head cut"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-read-only.test.ts",
@@ -8125,7 +8482,8 @@
           "line": 127,
           "name": "leaves recovery to the next writable open"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-registry.test.ts",
@@ -8174,7 +8532,8 @@
           "line": 279,
           "name": "collects hooks of the selected extensions in extension order and applies field defaults"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-reports.test.ts",
@@ -8199,7 +8558,8 @@
           "line": 164,
           "name": "tell extension, listener, wake, and timer failures from a failed Session"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-scheduler-indexes.test.ts",
@@ -8228,7 +8588,8 @@
           "line": 244,
           "name": "rejects once its invocation has ended"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-scheduler-retention.test.ts",
@@ -8293,7 +8654,8 @@
           "line": 545,
           "name": "lets a task wait on a forgotten ended owner"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-sleep.test.ts",
@@ -8354,7 +8716,8 @@
           "line": 422,
           "name": "reports a throwing onWake and offers the same wake again at the next pass"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-storage-failure.test.ts",
@@ -8459,7 +8822,8 @@
           "line": 620,
           "name": "keeps working when onReport throws, and falls back to Date.now when the clock throws"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-structured-output.test.ts",
@@ -8508,7 +8872,8 @@
           "line": 370,
           "name": "gives callers of bash its retained output and exit code, also for a nonzero exit"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-structured.test.ts",
@@ -8741,7 +9106,8 @@
           "line": 1878,
           "name": "holds a faulted tool's slot and task_failed until the work it owns drained"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-submissions.test.ts",
@@ -8790,7 +9156,8 @@
           "line": 260,
           "name": "appends and reads typed entries through tokens"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-support.ts",
@@ -8811,7 +9178,8 @@
         "addSection"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-task-graph.test.ts",
@@ -8840,7 +9208,8 @@
           "line": 313,
           "name": "publishes no revision for a commit that changes no node, and shares one mount between observers"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-tasks-recovery.test.ts",
@@ -8945,7 +9314,8 @@
           "line": 861,
           "name": "releases its registry subscription and closes the Session when open fails"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-tasks.test.ts",
@@ -9098,7 +9468,8 @@
           "line": 1346,
           "name": "joins a reservation that settles while closing without starting its handler"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-telemetry-options.test.ts",
@@ -9111,7 +9482,8 @@
           "line": 6,
           "name": "accepts one adapter with optional propagation and metrics capabilities"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-telemetry.test.ts",
@@ -9204,7 +9576,8 @@
           "line": 927,
           "name": "emits replay for a codemode journal result without rerunning its nested tool"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-tools-recovery.test.ts",
@@ -9249,7 +9622,8 @@
           "line": 366,
           "name": "clears the interrupted attempt's progress before a safe rerun"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-tools.test.ts",
@@ -9414,7 +9788,8 @@
           "line": 1188,
           "name": "answers an aborted tool with only its durable output, discarding buffered output"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/harness-view.test.ts",
@@ -9479,7 +9854,8 @@
           "line": 324,
           "name": "publishes one frame for a commit that appends several entries and edits a document"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/heap-retained.ts",
@@ -9489,7 +9865,8 @@
         "retainedBytes"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/images-wasm-module.test.ts",
@@ -9502,7 +9879,8 @@
           "line": 8,
           "name": "createPhotonImages takes a compiled WebAssembly module, as Cloudflare Workers pass it"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/indexeddb-storage.test.ts",
@@ -9527,7 +9905,8 @@
           "line": 244,
           "name": "keeps one readwrite transaction active through many mixed writes"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/jsonl-storage.test.ts",
@@ -9628,7 +10007,8 @@
           "line": 1177,
           "name": "rejects malformed complete main and sidecar lines"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/memory-storage.test.ts",
@@ -9641,7 +10021,8 @@
           "line": 10,
           "name": "does not expose retained state through a prepared commit"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/nested-images-bench.ts",
@@ -9649,7 +10030,8 @@
       "lines": 304,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/nested-tools-bench.ts",
@@ -9657,7 +10039,8 @@
       "lines": 253,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/provider-session-cache-e2e.test.ts",
@@ -9665,7 +10048,8 @@
       "lines": 124,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/scheduler-fanout-bench.ts",
@@ -9673,7 +10057,8 @@
       "lines": 74,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/scheduler-memory-bench.ts",
@@ -9681,7 +10066,8 @@
       "lines": 130,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-adoption.test.ts",
@@ -9710,7 +10096,8 @@
           "line": 100,
           "name": "fails the Session when Storage resolves without adopting"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-checkpoints-migrations.test.ts",
@@ -9799,7 +10186,8 @@
           "line": 853,
           "name": "serves an older token from Storage after a newer token migrated only in memory"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-definitions.test.ts",
@@ -9824,7 +10212,8 @@
           "line": 158,
           "name": "types historical reads, states, watches, and typed entries"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-document-cache-bench.ts",
@@ -9832,7 +10221,8 @@
       "lines": 105,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-document-retention.test.ts",
@@ -9925,7 +10315,8 @@
           "line": 579,
           "name": "queues one sweep job, not one per document, while a commit holds the line"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-documents.test.ts",
@@ -10042,7 +10433,8 @@
           "line": 639,
           "name": "settles admitted commits before close and rejects later admission"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-forks.test.ts",
@@ -10107,7 +10499,8 @@
           "line": 689,
           "name": "copies every family member across storage scan pages"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-support.ts",
@@ -10124,7 +10517,8 @@
         "flush"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-tables.test.ts",
@@ -10181,7 +10575,8 @@
           "line": 454,
           "name": "validates document owners"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/session-watches.test.ts",
@@ -10278,7 +10673,8 @@
           "line": 510,
           "name": "retains neither its Session nor its listener once stopped, while still referenced"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/setup-document-retention.ts",
@@ -10286,7 +10682,8 @@
       "lines": 7,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/spec-usage.test.ts",
@@ -10299,7 +10696,8 @@
           "line": 379,
           "name": "compiles the spec's usage examples"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/sqlite-cloudflare.test.ts",
@@ -10324,7 +10722,8 @@
           "line": 73,
           "name": "rejects invalid and reserved prefixes"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/sqlite-facade.test.ts",
@@ -10357,7 +10756,8 @@
           "line": 223,
           "name": "reads a document from one committed state while a commit replaces its base"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/sqlite-migrations.test.ts",
@@ -10382,7 +10782,8 @@
           "line": 115,
           "name": "rolls a failed migration back and preserves stored data for a successful retry"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/sqlite-storage.test.ts",
@@ -10443,7 +10844,8 @@
           "line": 633,
           "name": "keeps representative row and document storage bounded"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/storage-memory.ts",
@@ -10451,7 +10853,8 @@
       "lines": 238,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/storage-runtime-boundary.test.ts",
@@ -10476,7 +10879,8 @@
           "line": 43,
           "name": "keeps the portable JSONL subpath free of Node imports"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/storage.bench.ts",
@@ -10484,7 +10888,8 @@
       "lines": 191,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/system-order-cache-e2e.test.ts",
@@ -10492,7 +10897,8 @@
       "lines": 144,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/task-support.ts",
@@ -10510,7 +10916,8 @@
         "countingReader"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/tool-output-bench.ts",
@@ -10518,7 +10925,8 @@
       "lines": 301,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/tool-search.test.ts",
@@ -10551,7 +10959,8 @@
           "line": 195,
           "name": "finds nothing for an unrelated query and loads nothing"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/tools-images.test.ts",
@@ -10668,7 +11077,8 @@
           "line": 552,
           "name": "prepares concurrent images, and starts a new worker after the idle one exited"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/tools-read-differential.test.ts",
@@ -10685,7 +11095,8 @@
           "line": 174,
           "name": "detects animated PNGs whose acTL chunk lies far beyond the header"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/tools.test.ts",
@@ -10822,7 +11233,8 @@
           "line": 745,
           "name": "does not spill output within the limits"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test/types.test.ts",
@@ -10843,7 +11255,8 @@
           "line": 256,
           "name": "types submissions, task waits, compaction, and tasks erased into extensions"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test-workers/cloudflare.d.ts",
@@ -10861,7 +11274,8 @@
         "evictDurableObject"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test-workers/storage.test.ts",
@@ -10874,7 +11288,8 @@
           "line": 21,
           "name": "migrates a version 1 schema to admit sleeping tasks, keeping tasks and indexes"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test-workers/vitest.config.ts",
@@ -10882,7 +11297,8 @@
       "lines": 24,
       "declarations": [],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test-workers/wake.test.ts",
@@ -10903,7 +11319,8 @@
           "line": 90,
           "name": "can evict an object whose Harness keeps idle documents and contexts in memory"
         }
-      ]
+      ],
+      "runnerCases": []
     },
     {
       "path": "packages/durable/test-workers/worker.ts",
@@ -10915,7 +11332,8 @@
         "TestSession"
       ],
       "reexports": [],
-      "cases": []
+      "cases": [],
+      "runnerCases": []
     }
   ]
 }

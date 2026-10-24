@@ -96,39 +96,73 @@
     },
     {
       "reference": "packages/chord/src/sqlite/cloudflare.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/cloudflare.rs",
+        "crates/pi-chord/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/sqlite/database.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/mod.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/sqlite/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/mod.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/sqlite/migrations.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/mod.rs",
+        "crates/pi-chord/tests/sqlite.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/sqlite/node.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/native.rs",
+        "crates/pi-chord/tests/sqlite.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/sqlite/schema.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/sqlite/mod.rs",
+        "crates/pi-chord/tests/sqlite.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/src/watch.ts",
@@ -204,21 +238,36 @@
     },
     {
       "reference": "packages/chord/test/sqlite/cloudflare.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-chord/tests/sqlite_cloudflare.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/test/sqlite/migrations.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-chord/tests/sqlite.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/test/sqlite/node.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-chord/tests/sqlite.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/chord/test/watch.test.ts",
@@ -258,15 +307,27 @@
     },
     {
       "reference": "packages/durable/src/documents.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/documents.rs",
+        "crates/pi-durable/tests/documents.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/entries.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/entries.rs",
+        "crates/pi-durable/tests/wire.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/env/decode.ts",
@@ -300,9 +361,14 @@
     },
     {
       "reference": "packages/durable/src/errors.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/errors.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/agent.ts",
@@ -438,9 +504,15 @@
     },
     {
       "reference": "packages/durable/src/ids.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/types.rs",
+        "crates/pi-durable/tests/wire.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/images/cloudflare.ts",
@@ -534,15 +606,28 @@
     },
     {
       "reference": "packages/durable/src/storage/memory.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/memory.rs",
+        "crates/pi-durable/tests/storage_conformance.rs",
+        "crates/pi-durable/tests/memory_transactions.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/scan.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/scan.rs",
+        "crates/pi-durable/tests/storage_conformance.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/sqlite/cloudflare.ts",
@@ -624,9 +709,17 @@
     },
     {
       "reference": "packages/durable/src/testing/storage-conformance.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/testing/mod.rs",
+        "crates/pi-durable/tests/storage_conformance.rs",
+        "crates/pi-durable/tests/fixtures/storage_cases.rs",
+        "crates/pi-durable/examples/storage_conformance.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/testing/types.ts",
@@ -726,9 +819,17 @@
     },
     {
       "reference": "packages/durable/src/types.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/types.rs",
+        "crates/pi-durable/src/storage/mod.rs",
+        "crates/pi-durable/src/documents.rs",
+        "crates/pi-durable/tests/wire.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/chat-support.ts",
@@ -1260,9 +1361,15 @@
     },
     {
       "reference": "packages/durable/test/memory-storage.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/tests/storage_conformance.rs",
+        "crates/pi-durable/tests/memory_transactions.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/nested-images-bench.ts",
@@ -1308,9 +1415,15 @@
     },
     {
       "reference": "packages/durable/test/session-definitions.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/documents.rs",
+        "crates/pi-durable/tests/documents.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/session-document-cache-bench.ts",

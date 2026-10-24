@@ -16,6 +16,7 @@ parking_lot.workspace = true
 pi-json.workspace = true
 pi-telemetry.workspace = true
 indexmap.workspace = true
+rusqlite.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
