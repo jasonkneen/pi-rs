@@ -2930,6 +2930,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-chord"
+version = "1.3.0"
+dependencies = [
+ "futures",
+ "indexmap",
+ "parking_lot",
+ "pi-json",
+ "pi-telemetry",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "pi-codemode"
 version = "1.3.0"
 dependencies = [

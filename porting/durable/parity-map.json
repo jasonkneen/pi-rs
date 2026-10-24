@@ -1,0 +1,1490 @@
+{
+  "reference": "5e63241d0294ed3fcfc4388c737a8ea27e09c74e",
+  "items": [
+    {
+      "reference": "packages/chord/src/context/index.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/context.rs",
+        "crates/pi-chord/tests/context.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/delta/apply-immutable-trusted.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/delta/diff.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/delta/diff.rs",
+        "crates/pi-chord/tests/tracker.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/delta/draft.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/delta/index.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/delta.rs",
+        "crates/pi-chord/tests/delta.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/delta/revision-validator.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/delta/tracker.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/delta/tracker.rs",
+        "crates/pi-chord/tests/tracker.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/json.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/json.rs",
+        "crates/pi-chord/src/lib.rs",
+        "crates/pi-chord/tests/json.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/output.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/output.rs",
+        "crates/pi-chord/tests/output.rs",
+        "crates/pi-chord/src/output/progress.rs",
+        "crates/pi-chord/tests/progress.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/src/sqlite/cloudflare.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/sqlite/database.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/sqlite/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/sqlite/migrations.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/sqlite/node.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/sqlite/schema.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/src/watch.ts",
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/watch.rs",
+        "crates/pi-chord/tests/watch.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-chord",
+        "porting/durable/STATUS.md"
+      ]
+    },
+    {
+      "reference": "packages/chord/test/context.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta-apply-immutable.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta-clone.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta-diff.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta-tracker/retention.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta-tracker/tracker.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/delta.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/json.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/output-skip.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/output.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/sqlite/cloudflare.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/sqlite/migrations.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/sqlite/node.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/chord/test/watch.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/codemode/codemode.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/codemode/describe.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/codemode/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/codemode/models.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/codemode/output.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/documents.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/entries.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/env/decode.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/env/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/env/line-scan.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/env/node-watch.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/env/node.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/errors.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/agent.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/compaction.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/context.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/define.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/events.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/generation.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/harness.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/inbox.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/json.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/live.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/prompt.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/provider.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/registry.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/scheduler.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/submissions.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/task-graph.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/telemetry.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/tool.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/types.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/usage.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/util.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/harness/view.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/ids.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/cloudflare.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/exif.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/node-worker.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/node.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/images/photon-wasm.d.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/search.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/session/forks.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/session/session.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/session/transaction.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/indexeddb.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/jsonl/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/jsonl/node.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/jsonl/storage.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/memory.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/scan.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/cloudflare.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/database.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/migrations.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/node.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/schema.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/storage/sqlite/storage.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tasks.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/assertions.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/env-conformance.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/runner.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/storage-benchmark.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/storage-conformance.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/testing/types.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/timers.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tool-search/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tool-search/tool-search.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/bash.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/edit-diff.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/edit.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/env.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/file-mutation-queue.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/image-processor.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/image.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/index.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/path-utils.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/read.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/tools/write.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/truncate.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/src/types.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/chat-support.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/codemode-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/codemode-checkpoints.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/codemode-describe.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/codemode-models.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/codemode.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/document-append-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/env-line-scan.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/env-node-conformance.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/env-node-spill.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/env-node.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/env-truncate.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/00-conversation.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/01-documents.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/02-forks.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/03-owned-conversations.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/04-watches.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/05-harness.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/06-configuration.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/07-harness-conversations.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/08-context.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/09-registry-reload.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/10-extension-state.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/11-tasks.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/12-recovery.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/13-chat.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/14-system-prompt.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/15-real-model.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/16-coding-tools.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/17-print.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/18-json.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/19-inbox.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/20-late-join.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/21-subagent-foreground.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/22-subagent-background.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/23-child-tasks.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/24-compaction.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/25-coding-agent.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/26-plan-mode.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/27-reviewer.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/28-sandbox-per-conversation.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/29-tool-override.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/examples/30-reload-and-restart.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/fixtures/delete-buffer.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/fixtures/utf8-byte-length-without-buffer.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-blocked.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-callers.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-cancellation-barrier.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-compaction.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-context.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-conversations.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-events.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-failed-run-inbox.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-generation-recovery.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-generation.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-host-inputs.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-inbox.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-input-entries.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-inspect.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-lifecycle.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-live-deltas.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-nested-tools-restart.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-nested-tools.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-ownership.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-prompt.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-read-only.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-registry.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-reports.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-scheduler-indexes.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-scheduler-retention.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-sleep.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-storage-failure.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-structured-output.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-structured.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-submissions.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-support.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-task-graph.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-tasks-recovery.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-tasks.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-telemetry-options.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-telemetry.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-tools-recovery.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-tools.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/harness-view.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/heap-retained.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/images-wasm-module.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/indexeddb-storage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/jsonl-storage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/memory-storage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/nested-images-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/nested-tools-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/provider-session-cache-e2e.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/scheduler-fanout-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/scheduler-memory-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-adoption.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-checkpoints-migrations.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-definitions.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-document-cache-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-document-retention.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-documents.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-forks.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-support.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-tables.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/session-watches.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/setup-document-retention.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/spec-usage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/sqlite-cloudflare.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/sqlite-facade.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/sqlite-migrations.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/sqlite-storage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/storage-memory.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/storage-runtime-boundary.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/storage.bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/system-order-cache-e2e.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/task-support.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/tool-output-bench.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/tool-search.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/tools-images.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/tools-read-differential.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/tools.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test/types.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test-workers/cloudflare.d.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test-workers/storage.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test-workers/vitest.config.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test-workers/wake.test.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    },
+    {
+      "reference": "packages/durable/test-workers/worker.ts",
+      "status": "pending",
+      "rust": [],
+      "evidence": []
+    }
+  ]
+}

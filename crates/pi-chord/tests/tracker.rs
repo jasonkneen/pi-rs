@@ -1,0 +1,216 @@
+use pi_chord::delta::*;
+use pi_chord::{
+    JsonValue,
+    json::{parse, to_value},
+};
+use std::sync::Arc;
+fn value(s: &str) -> JsonValue {
+    parse(s).unwrap()
+}
+
+#[tokio::test]
+async fn drafts_survive_await_and_authority_changes_only_after_adoption() {
+    let initial = Arc::new(value(r#"{"count":1,"nested":{"text":"a"},"values":[1]}"#));
+    let mut tracker = Tracker::new(initial.clone());
+    let mut change = tracker.begin_change();
+    *change.state().unwrap() = value(r#"{"count":2,"nested":{"text":"ab"},"values":[1,2]}"#);
+    tokio::task::yield_now().await;
+    assert!(Arc::ptr_eq(tracker.value(), &initial));
+    let prepared = change.prepare().unwrap();
+    assert_eq!(
+        to_value(prepared.ops()).unwrap(),
+        value(r#"[["s",["count"],2],["a",["nested","text"],"b"],["p",["values"],1,0,[2]]]"#)
+    );
+    assert!(change.state().is_err());
+    assert!(Arc::ptr_eq(prepared.base(), tracker.value()));
+    assert_eq!(
+        apply_immutable(Some(prepared.base()), prepared.ops()).unwrap(),
+        **prepared.value()
+    );
+    tracker.adopt(&prepared).unwrap();
+    assert!(Arc::ptr_eq(prepared.value(), tracker.value()));
+    assert_eq!(tracker.revision(), 1);
+}
+
+#[test]
+fn failed_persistence_can_abort_candidate_without_publishing_it() {
+    let initial = Arc::new(value(r#"{"value":1}"#));
+    let mut tracker = Tracker::new(initial.clone());
+    let mut change = tracker.begin_change();
+    *change.state().unwrap() = value(r#"{"value":2}"#);
+    let candidate = change.prepare().unwrap();
+    change.abort();
+    change.abort();
+    assert!(
+        tracker
+            .adopt(&candidate)
+            .unwrap_err()
+            .to_string()
+            .contains("aborted")
+    );
+    assert!(Arc::ptr_eq(tracker.value(), &initial));
+    assert_eq!(tracker.revision(), 0);
+    assert_eq!(**candidate.value(), value(r#"{"value":2}"#));
+}
+
+#[test]
+fn foreign_stale_reused_and_aborted_candidates_are_rejected() {
+    let mut first = track(value(r#"{"value":0}"#));
+    let mut second = track(value(r#"{"value":0}"#));
+    let mut change = first.begin_change();
+    let mut competing = first.begin_change();
+    let mut open_competing = first.begin_change();
+    *change.state().unwrap() = value(r#"{"value":1}"#);
+    *competing.state().unwrap() = value(r#"{"value":2}"#);
+    let winner = change.prepare().unwrap();
+    let loser = competing.prepare().unwrap();
+    assert!(
+        second
+            .adopt(&winner)
+            .unwrap_err()
+            .to_string()
+            .contains("different tracker")
+    );
+    first.adopt(&winner).unwrap();
+    assert!(
+        first
+            .adopt(&winner)
+            .unwrap_err()
+            .to_string()
+            .contains("already been used")
+    );
+    for _ in 0..2 {
+        assert!(
+            first
+                .adopt(&loser)
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
+    }
+    assert!(open_competing.state().is_err());
+    assert!(open_competing.prepare().is_err());
+    let aborted = first.prepare_replace(Arc::new(value(r#"{"value":3}"#)));
+    aborted.abort();
+    assert!(
+        first
+            .adopt(&aborted)
+            .unwrap_err()
+            .to_string()
+            .contains("aborted")
+    );
+}
+
+#[test]
+fn no_op_adoption_retains_identity_and_stales_competitors() {
+    let initial = Arc::new(value(r#"{"nested":{"a":1,"b":2}}"#));
+    let mut tracker = Tracker::new(initial.clone());
+    let mut change = tracker.begin_change();
+    *change.state().unwrap() = value(r#"{"nested":{"b":2,"a":1}}"#);
+    let first = change.prepare().unwrap();
+    let competitor = tracker.prepare_replace(initial.clone());
+    assert!(first.ops().is_empty());
+    assert!(Arc::ptr_eq(first.value(), &initial));
+    tracker.adopt(&first).unwrap();
+    assert!(Arc::ptr_eq(tracker.value(), &initial));
+    assert_eq!(tracker.revision(), 1);
+    assert!(
+        tracker
+            .adopt(&competitor)
+            .unwrap_err()
+            .to_string()
+            .contains("stale")
+    );
+}
+
+#[test]
+fn replacement_is_a_base_and_takes_candidate_ownership() {
+    let mut tracker = track(value(r#"{"value":1}"#));
+    let replacement = Arc::new(value(r#"{"value":2}"#));
+    let candidate = tracker.prepare_replace(replacement.clone());
+    assert!(Arc::ptr_eq(candidate.value(), &replacement));
+    assert!(is_base(candidate.ops()));
+    assert_eq!(candidate.base_revision(), 0);
+    tracker.adopt(&candidate).unwrap();
+    let no_op = tracker.prepare_replace(Arc::new(value(r#"{"value":2}"#)));
+    assert!(no_op.ops().is_empty());
+    assert!(Arc::ptr_eq(no_op.base(), no_op.value()));
+}
+
+#[test]
+fn revision_diff_matches_pinned_reference_cases_and_replays_both_directions() {
+    let fixture: JsonValue = serde_json::from_str(include_str!("fixtures/delta.json")).unwrap();
+    for row in fixture["diffs"].as_array().unwrap() {
+        let native = diff_revisions(&row["before"], &row["after"]);
+        assert_eq!(to_value(&native).unwrap(), row["ops"]);
+        assert_eq!(
+            apply_immutable(Some(&row["before"]), &native).unwrap(),
+            row["after"]
+        );
+        let reference: Vec<Op> = serde_json::from_str(&row["ops"].to_string()).unwrap();
+        assert_eq!(
+            apply_immutable(Some(&row["before"]), &reference).unwrap(),
+            row["after"]
+        );
+    }
+}
+
+#[test]
+fn large_array_edits_remain_narrow_and_rotation_is_payload_free() {
+    let a: Vec<_> = (0..40000)
+        .map(|i| {
+            JsonValue::Object(
+                [
+                    (String::from("value").into(), JsonValue::from(i)),
+                    (
+                        String::from("stable").into(),
+                        JsonValue::from("retained row payload"),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            )
+        })
+        .collect();
+    let mut b = a.clone();
+    b[20000] = JsonValue::Null;
+    let ops = diff_revisions(&JsonValue::Array(a.clone()), &JsonValue::Array(b.clone()));
+    assert_eq!(ops.len(), 1);
+    assert!(matches!(ops[0], Op::Set(..)));
+    assert_eq!(
+        apply(JsonValue::Array(a.clone()), &ops).unwrap(),
+        JsonValue::Array(b)
+    );
+    let mut rotated = a.clone();
+    rotated.rotate_left(1000);
+    let ops = diff_revisions(
+        &JsonValue::Array(a.clone()),
+        &JsonValue::Array(rotated.clone()),
+    );
+    assert!(matches!(&ops[..], [Op::Move(..)]));
+    assert_eq!(
+        apply(JsonValue::Array(a), &ops).unwrap(),
+        JsonValue::Array(rotated)
+    );
+}
+
+#[test]
+fn wide_changes_fall_back_to_one_base_and_reserved_paths_are_folded() {
+    let before = JsonValue::Object(
+        (0..10000)
+            .map(|i| (format!("key{i}").into(), JsonValue::from(i)))
+            .collect(),
+    );
+    let after = JsonValue::Object(
+        (0..10000)
+            .map(|i| (format!("key{i}").into(), JsonValue::Null))
+            .collect(),
+    );
+    let ops = diff_revisions(&before, &after);
+    assert_eq!(ops, vec![Op::Replace(after)]);
+    let before = value(r#"{"safe":{"__proto__":{"a":1}}}"#);
+    let after = value(r#"{"safe":{"__proto__":{"a":2}}}"#);
+    let ops = diff_revisions(&before, &after);
+    assert!(matches!(&ops[..],[Op::Set(path,_)] if path==&vec![Seg::from("safe")]));
+    assert_eq!(apply(before, &ops).unwrap(), after);
+}

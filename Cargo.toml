@@ -10,6 +10,7 @@ license = "MIT"
 repository = "https://github.com/lassejlv/pi-rs"
 
 [workspace.dependencies]
+pi-chord = { path = "crates/pi-chord" }
 pi-ai = { path = "crates/pi-ai" }
 pi-agent = { path = "crates/pi-agent" }
 pi-tui = { path = "crates/pi-tui" }

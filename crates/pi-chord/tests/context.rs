@@ -1,0 +1,139 @@
+use pi_chord::context::*;
+use pi_telemetry::{InMemoryTelemetryContext, SpanOptions, TelemetryContextExt};
+use std::sync::Arc;
+
+#[test]
+fn roots_and_typed_value_layers_are_distinct_and_immutable() {
+    let first = create_context_key::<String>("first");
+    let same_name = create_context_key::<String>("first");
+    let second = create_context_key::<u64>("second");
+    let one = with_context_value(&first, "one".into(), &BACKGROUND_CONTEXT);
+    let two = with_context_value(&second, 2, &one);
+    let replaced = with_context_value(&first, "updated".into(), &two);
+    assert!(BACKGROUND_CONTEXT.value(&first).is_none());
+    assert!(one.value(&same_name).is_none());
+    assert!(one.value(&second).is_none());
+    assert_eq!(&*two.value(&first).unwrap(), "one");
+    assert_eq!(*two.value(&second).unwrap(), 2);
+    assert_eq!(&*replaced.value(&first).unwrap(), "updated");
+    assert_eq!(
+        replaced.to_string(),
+        "[Context BACKGROUND_CONTEXT].WithValue(first).WithValue(second).WithValue(first)"
+    );
+    assert_eq!(TODO_CONTEXT.to_string(), "[Context TODO_CONTEXT]");
+    assert!(TODO_CONTEXT.abort_signal().is_none());
+    assert!(!Arc::ptr_eq(
+        &one.value(&first).unwrap(),
+        &replaced.value(&first).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn cancellation_is_inherited_and_child_abort_does_not_affect_siblings() {
+    let (parent, parent_controller) = with_cancel(&BACKGROUND_CONTEXT);
+    let (child, child_controller) = with_cancel(&parent);
+    let (sibling, _) = with_cancel(&parent);
+    child_controller.abort_with_reason(AbortReason::Error(AbortError::new("child")));
+    assert_eq!(child.check().unwrap_err().message, "child");
+    assert!(parent.check().is_ok());
+    assert!(sibling.check().is_ok());
+    parent_controller.abort_with_reason(AbortReason::Error(AbortError::new("parent")));
+    sibling.abort_signal().unwrap().cancelled().await;
+    assert_eq!(sibling.check().unwrap_err().message, "parent");
+    assert_eq!(child.check().unwrap_err().message, "child");
+    child_controller.abort();
+    assert_eq!(child.check().unwrap_err().message, "child");
+}
+
+#[tokio::test]
+async fn composite_signal_keeps_the_first_abort_in_time() {
+    let first = AbortController::new();
+    let second = AbortController::new();
+    let combined = AbortSignal::any([first.signal(), second.signal()]);
+    second.abort_with_reason(AbortReason::Error(AbortError::new("second")));
+    first.abort();
+    combined.cancelled().await;
+    assert_eq!(combined.check().unwrap_err().message, "second");
+}
+
+#[test]
+fn cleanup_masks_cancellation_without_losing_values_or_telemetry() {
+    let (parent, controller) = with_cancel(&BACKGROUND_CONTEXT);
+    let key = create_context_key::<String>("value");
+    let parent = with_context_value(&key, "preserved".into(), &parent);
+    let cleanup = without_abort_signal(&parent);
+    controller.abort();
+    assert!(parent.check().is_err());
+    assert!(cleanup.abort_signal().is_none());
+    assert_eq!(&*cleanup.value(&key).unwrap(), "preserved");
+    assert!(Arc::ptr_eq(cleanup.telemetry(), parent.telemetry()));
+}
+
+#[tokio::test]
+async fn cancelled_waiter_does_not_cancel_underlying_work() {
+    let (context, controller) = with_cancel(&BACKGROUND_CONTEXT);
+    let (release, gate) = tokio::sync::oneshot::channel();
+    let (finished, finish) = tokio::sync::oneshot::channel();
+    let waiter = tokio::spawn(async move {
+        await_with_context(
+            async move {
+                gate.await.unwrap();
+                finished.send(42).unwrap();
+            },
+            &context,
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    controller.abort_with_reason(AbortReason::Error(AbortError::new("cancelled")));
+    assert_eq!(waiter.await.unwrap().unwrap_err().to_string(), "cancelled");
+    release.send(()).unwrap();
+    assert_eq!(finish.await.unwrap(), 42);
+    assert_eq!(
+        await_with_context(async { 42 }, &BACKGROUND_CONTEXT)
+            .await
+            .unwrap(),
+        42
+    );
+}
+
+#[tokio::test]
+async fn non_error_abort_reason_is_preserved_but_waiter_gets_abort_error() {
+    let (context, controller) = with_cancel(&BACKGROUND_CONTEXT);
+    let value = pi_chord::json::parse(r#""raw reason""#).unwrap();
+    controller.abort_with_reason(AbortReason::Value(value.clone()));
+    assert_eq!(
+        context.abort_signal().unwrap().reason(),
+        Some(AbortReason::Value(value))
+    );
+    assert_eq!(
+        context.check().unwrap_err().message,
+        "The operation was aborted"
+    );
+}
+
+#[tokio::test]
+async fn trace_in_preserves_values_and_creates_explicit_parent_chain() {
+    let telemetry = Arc::new(InMemoryTelemetryContext::new());
+    let key = create_context_key::<u64>("owner");
+    let base = with_context_value(&key, 42, &BACKGROUND_CONTEXT);
+    telemetry
+        .start_span(SpanOptions::new("caller"), |span| async move {
+            let context = with_telemetry(span, &base);
+            let result = trace_in(
+                "outer",
+                |child| async move {
+                    assert_eq!(*child.value(&key).unwrap(), 42);
+                    trace_in("inner", |_| async { 123 }, &child).await
+                },
+                &context,
+            )
+            .await;
+            assert_eq!(result, 123);
+        })
+        .await;
+    let spans = telemetry.get_spans();
+    assert_eq!(spans.len(), 3);
+    assert_eq!(spans[1].parent_id, Some(spans[0].id));
+    assert_eq!(spans[2].parent_id, Some(spans[1].id));
+}
