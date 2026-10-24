@@ -91,7 +91,7 @@ impl<H: Send + Sync + 'static> HookRunner<H> {
                     if driver.signal().aborted() {
                         return Err(error);
                     }
-                    driver.report_extension(error, hook.extension.clone());
+                    driver.report_extension(error, Some(hook.extension.clone()));
                 }
             }
             Ok(())

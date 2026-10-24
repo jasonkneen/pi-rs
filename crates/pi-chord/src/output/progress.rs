@@ -4,10 +4,10 @@ use parking_lot::Mutex;
 use std::{future::Future, pin::Pin, sync::Arc};
 
 type CancelTimer = Box<dyn FnOnce() + Send>;
-type Write =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send>> + Send + Sync>;
-pub type ProgressWaiter = tokio::sync::oneshot::Receiver<Result<(), String>>;
-pub type ProgressCompletion = tokio::sync::oneshot::Sender<Result<(), String>>;
+type Write<E> =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<usize, E>> + Send>> + Send + Sync>;
+pub type ProgressWaiter<E = String> = tokio::sync::oneshot::Receiver<Result<(), E>>;
+pub type ProgressCompletion<E = String> = tokio::sync::oneshot::Sender<Result<(), E>>;
 
 pub trait ProgressClock: Send + Sync {
     fn now(&self) -> f64;
@@ -34,8 +34,8 @@ impl ProgressClock for SystemProgressClock {
     }
 }
 
-struct State {
-    waiters: Vec<ProgressCompletion>,
+struct State<E> {
+    waiters: Vec<ProgressCompletion<E>>,
     timer: Option<(u64, CancelTimer)>,
     timer_generation: Option<u64>,
     next_generation: u64,
@@ -44,10 +44,10 @@ struct State {
     dirty: bool,
     stopped: bool,
 }
-struct Inner {
-    state: Mutex<State>,
-    write: Write,
-    on_error: Arc<dyn Fn(String) + Send + Sync>,
+struct Inner<E> {
+    state: Mutex<State<E>>,
+    write: Write<E>,
+    on_error: Arc<dyn Fn(E) + Send + Sync>,
     min_interval_ms: f64,
     clock: Arc<dyn ProgressClock>,
     settled: tokio::sync::watch::Sender<u64>,
@@ -56,18 +56,19 @@ struct Inner {
 /// One progress commit at a time, paced by interval and the previous write's size.
 /// Changes during a commit coalesce into the following commit.
 #[derive(Clone)]
-pub struct Progress {
-    inner: Arc<Inner>,
+pub struct ProgressWithError<E> {
+    inner: Arc<Inner<E>>,
 }
-impl Progress {
+pub type Progress = ProgressWithError<String>;
+impl<E: Clone + From<String> + Send + Sync + 'static> ProgressWithError<E> {
     pub fn new<F, Fut>(
         write: F,
-        on_error: impl Fn(String) + Send + Sync + 'static,
+        on_error: impl Fn(E) + Send + Sync + 'static,
         min_interval_ms: f64,
     ) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<usize, String>> + Send + 'static,
+        Fut: Future<Output = Result<usize, E>> + Send + 'static,
     {
         Self::with_clock(
             write,
@@ -78,13 +79,13 @@ impl Progress {
     }
     pub fn with_clock<F, Fut>(
         write: F,
-        on_error: impl Fn(String) + Send + Sync + 'static,
+        on_error: impl Fn(E) + Send + Sync + 'static,
         min_interval_ms: f64,
         clock: Arc<dyn ProgressClock>,
     ) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<usize, String>> + Send + 'static,
+        Fut: Future<Output = Result<usize, E>> + Send + 'static,
     {
         let (settled, _) = tokio::sync::watch::channel(0);
         Self {
@@ -113,7 +114,7 @@ impl Progress {
     }
     /// The receiver completes with the commit containing this mark. A stop returns
     /// unsent completion handles to the caller for its final durable write.
-    pub fn mark_and_wait(&self) -> ProgressWaiter {
+    pub fn mark_and_wait(&self) -> ProgressWaiter<E> {
         let (send, receive) = tokio::sync::oneshot::channel();
         {
             let mut state = self.inner.state.lock();
@@ -125,10 +126,10 @@ impl Progress {
     }
     fn schedule(&self) {
         let now = self.inner.clock.now();
-        enum Action {
+        enum Action<E> {
             None,
             Timer(u64, f64),
-            Write(Vec<ProgressCompletion>),
+            Write(Vec<ProgressCompletion<E>>),
         }
         let action = {
             let mut state = self.inner.state.lock();
@@ -165,7 +166,7 @@ impl Progress {
                             state.timer.take()
                         };
                         drop(timer);
-                        Progress { inner }.schedule();
+                        ProgressWithError { inner }.schedule();
                     }),
                     delay,
                 );
@@ -184,17 +185,23 @@ impl Progress {
             }
             Action::Write(waiters) => {
                 let inner = self.inner.clone();
+                let started =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (inner.write)()));
                 tokio::spawn(async move {
-                    let result = std::panic::AssertUnwindSafe(async { (inner.write)().await })
-                        .catch_unwind()
-                        .await;
+                    let result = match started {
+                        Ok(operation) => {
+                            std::panic::AssertUnwindSafe(operation).catch_unwind().await
+                        }
+                        Err(panic) => Err(panic),
+                    };
                     let result = match result {
                         Ok(result) => result,
                         Err(panic) => Err(panic
                             .downcast_ref::<String>()
                             .cloned()
                             .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).into()))
-                            .unwrap_or_else(|| "Progress write panicked".into())),
+                            .unwrap_or_else(|| "Progress write panicked".into())
+                            .into()),
                     };
                     let interval = match &result {
                         Ok(bytes) => inner
@@ -218,13 +225,13 @@ impl Progress {
                     };
                     inner.settled.send_modify(|generation| *generation += 1);
                     if dirty {
-                        Progress { inner }.schedule();
+                        ProgressWithError { inner }.schedule();
                     }
                 });
             }
         }
     }
-    pub async fn stop(&self) -> Vec<ProgressCompletion> {
+    pub async fn stop(&self) -> Vec<ProgressCompletion<E>> {
         let mut settled = self.inner.settled.subscribe();
         let timer = {
             let mut state = self.inner.state.lock();

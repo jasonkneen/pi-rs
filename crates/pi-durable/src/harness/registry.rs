@@ -19,6 +19,9 @@ pub trait RegisteredTool: Send + Sync + 'static {
     fn name(&self) -> &JsonString;
     fn callers(&self) -> Option<&[ToolCaller]>;
     fn deferred(&self) -> bool;
+    fn executable(self: Arc<Self>) -> Option<Arc<dyn super::tool::ExecutableTool>> {
+        None
+    }
 }
 pub trait RegisteredSection: Send + Sync + 'static {
     fn key(&self) -> &JsonString;

@@ -20,6 +20,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-s
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-submissions.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-prompt.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-compaction.mjs "$reference" --check
+node --conditions=source --experimental-strip-types scripts/golden/gen-durable-tool-results.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange

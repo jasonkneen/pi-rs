@@ -343,12 +343,14 @@
       "reference": "packages/durable/src/env/index.ts",
       "status": "partial",
       "rust": [
-        "crates/pi-durable/src/env/filesystem.rs"
+        "crates/pi-durable/src/env/filesystem.rs",
+        "crates/pi-durable/src/env/shell.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Portable shell/environment capability and execution-error types now accompany the storage filesystem subset. Native process execution and the complete environment API remain pending"
       ]
     },
     {
@@ -399,7 +401,8 @@
         "Native agent document, configuration, owner copies, fork history, tool edits, resolution, hook and code-owner ordering",
         "scripts/run-stock-durable-registry.mjs: all 10 unmodified cases in both retention modes",
         "Full native tool/section types, embedded undefined policy values and JS bindings pending",
-        "Native lazy committed agent resolution against a retained typed phase snapshot, shared success/error identity and typed hook membership"
+        "Native lazy committed agent resolution against a retained typed phase snapshot, shared success/error identity and typed hook membership",
+        "Resolved native agent views now expose executable tool selection and ownership while retaining the existing metadata-only registry contract"
       ]
     },
     {
@@ -499,9 +502,16 @@
     },
     {
       "reference": "packages/durable/src/harness/json.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/json.rs",
+        "crates/pi-durable/tests/tool_results.rs",
+        "scripts/golden/gen-durable-tool-results.mjs"
+      ],
+      "evidence": [
+        "Leaf-wise native assignment with record removals, string deltas, growing arrays and shrinking-array replacement; ten independent source observations replay to matching values",
+        "Used by native tool progress to avoid replacing complete live slots/details; complete source proxy operation-shape parity remains open"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/live.ts",
@@ -640,9 +650,24 @@
     },
     {
       "reference": "packages/durable/src/harness/tool.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/tool.rs",
+        "crates/pi-durable/src/harness/tool/types.rs",
+        "crates/pi-durable/src/harness/tool/registration.rs",
+        "crates/pi-durable/src/harness/tool/api.rs",
+        "crates/pi-durable/src/harness/tool/task.rs",
+        "crates/pi-durable/src/harness/tool/progress.rs",
+        "crates/pi-durable/src/harness/tool/result.rs",
+        "crates/pi-durable/tests/tool_runtime.rs",
+        "crates/pi-durable/tests/tool_results.rs",
+        "scripts/golden/gen-durable-tool-results.mjs"
+      ],
+      "evidence": [
+        "Native pi.tool v2 call/execute/abort phases, v1 migration, argument validation/coercion, before/after hooks, durable execution intent, dual-safe replay, throttled progress, nested admission and replay by key, receipts/usage and sibling cancellation before settlement",
+        "Twelve native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
+        "Stock harness-tools, recovery, nested-tool and structured-output execution suites are not yet mapped to the native implementation; native full Harness/generation, embedded JS registration bindings and complete lossless SDK validation and tool phase telemetry remain open"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/types.ts",
@@ -656,13 +681,17 @@
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/src/harness/types.rs",
         "crates/pi-durable/src/harness/live.rs",
-        "crates/pi-durable/src/harness/inbox.rs"
+        "crates/pi-durable/src/harness/inbox.rs",
+        "crates/pi-durable/src/harness/conversation.rs",
+        "crates/pi-durable/src/harness/tool/types.rs",
+        "crates/pi-durable/src/harness/tool/api.rs"
       ],
       "evidence": [
         "RegistryReader and typed-retaining RegistryView capabilities; native runtime agent/settings and typed hook runner implemented; model/environment/conversation and remaining contracts pending",
         "Native inspection and graph types; the full Harness, executable generation and other services remain pending",
         "Submission drafts/receipts, queue modes, live presentation, slot and compaction types now have native counterparts; provider message content remains lossless JSON at this boundary",
-        "Native typed ModelRef and executable compaction input/checkpoint/result/hooks; persisted model references and checkpoints preserve UTF16 through raw codecs"
+        "Native typed ModelRef and executable compaction input/checkpoint/result/hooks; persisted model references and checkpoints preserve UTF16 through raw codecs",
+        "Native lossless tool call/result/control and typed executable API; host environment resolver and invocation-bound conversation/submission service handles are present. Full Harness bindings and stock execution coverage remain pending"
       ]
     },
     {

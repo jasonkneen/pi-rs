@@ -18,6 +18,10 @@ pub enum ErrorKind {
     Aborted(pi_chord::context::AbortError),
     Delta(pi_chord::delta::Error),
     Message(String),
+    Host {
+        name: String,
+        message: crate::JsonString,
+    },
     StorageRequest(String),
     ReadAfterWrite(String),
     SessionFailed {
@@ -52,6 +56,18 @@ impl Error {
     pub fn message(message: impl Into<String>) -> Self {
         Self(Arc::new(ErrorKind::Message(message.into())))
     }
+    pub fn host(name: impl Into<String>, message: crate::JsonString) -> Self {
+        Self(Arc::new(ErrorKind::Host {
+            name: name.into(),
+            message,
+        }))
+    }
+    pub fn message_text(&self) -> crate::JsonString {
+        match self.kind() {
+            ErrorKind::Host { message, .. } => message.clone(),
+            _ => self.to_string().into(),
+        }
+    }
     pub fn request(message: impl Into<String>) -> Self {
         Self(Arc::new(ErrorKind::StorageRequest(message.into())))
     }
@@ -73,8 +89,9 @@ impl Error {
     pub fn kind(&self) -> &ErrorKind {
         &self.0
     }
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self.kind() {
+            ErrorKind::Host { name, .. } => name,
             ErrorKind::JsonlCorruption { .. } => "JsonlCorruptionError",
             ErrorKind::JsonlPoisoned { .. } => "JsonlStoragePoisonedError",
             ErrorKind::Aborted(_) => "AbortError",
@@ -108,6 +125,7 @@ impl std::fmt::Display for Error {
             ErrorKind::Aborted(error) => error.fmt(f),
             ErrorKind::Delta(error) => error.fmt(f),
             ErrorKind::Message(m) | ErrorKind::StorageRequest(m) => f.write_str(m),
+            ErrorKind::Host { message, .. } => f.write_str(&message.to_string_lossy()),
             ErrorKind::ReadAfterWrite(method) => write!(
                 f,
                 "Tx.{method}() cannot read tables after the first table write"
@@ -160,5 +178,11 @@ impl From<pi_chord::delta::Error> for Error {
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
         Self::message(error.to_string())
+    }
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self::message(message)
     }
 }

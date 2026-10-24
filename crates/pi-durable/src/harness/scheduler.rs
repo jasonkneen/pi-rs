@@ -73,10 +73,17 @@ pub enum AbortResult {
 type SettleOutcome =
     Arc<dyn Fn(Transaction, TaskRecord, TaskOutcome) -> StorageFuture<()> + Send + Sync>;
 type WithdrawInputs = Arc<dyn Fn(Transaction, ConversationId) -> StorageFuture<()> + Send + Sync>;
+pub type EnvironmentResolver = Arc<
+    dyn Fn(ConversationId, Context) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>>
+        + Send
+        + Sync,
+>;
 #[derive(Clone)]
 pub struct SchedulerOptions {
     pub settings: SettingsReader,
     pub models: super::models::ModelsReader,
+    pub env: EnvironmentResolver,
+    pub conversation: Option<super::conversation::ConversationResolver>,
     pub agent: AgentResolver,
     pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
@@ -88,6 +95,8 @@ impl Default for SchedulerOptions {
         let models = pi_ai::models::Models::default();
         Self {
             models: Arc::new(move || Ok(models.clone())),
+            env: Arc::new(|_, _| ready(Ok(None))),
+            conversation: None,
             settings: Arc::new(|| Ok(resolve_settings(Default::default()))),
             agent: Arc::new(resolve_agent_in),
             on_report: Arc::new(|_, _| {}),
@@ -425,10 +434,11 @@ impl TaskScheduler {
     fn report_extension(
         &self,
         error: Error,
-        extension: JsonString,
+        extension: impl Into<Option<JsonString>>,
         conversation: ConversationId,
         task: Option<TaskId>,
     ) {
+        let extension = extension.into();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.on_report)(
                 error,
@@ -437,7 +447,7 @@ impl TaskScheduler {
                     task,
                     reason: None,
                     callback: None,
-                    extension: Some(extension),
+                    extension,
                     conversation: Some(conversation),
                 },
             )
@@ -1503,7 +1513,7 @@ impl TaskScheduler {
                                 &current,
                                 TaskOutcome::Faulted {
                                     error: TaskOutcomeError {
-                                        message: error.to_string().into(),
+                                        message: error.message_text(),
                                         detail: None,
                                     },
                                 },
@@ -2310,7 +2320,47 @@ impl TaskDriver for Driver {
     fn models(&self) -> Result<pi_ai::models::Models> {
         super::models::read_models(&self.scheduler.inner.options.models)
     }
-    fn report_extension(&self, error: Error, extension: JsonString) {
+    fn env(&self, context: &Context) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>> {
+        let resolve = self.scheduler.inner.options.env.clone();
+        let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve(self.invocation.conversation, context.clone())
+        }));
+        match call {
+            Err(panic) => ready(Err(crate::session::panic_error(panic))),
+            Ok(operation) => eager(async move {
+                std::panic::AssertUnwindSafe(operation)
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)))
+            }),
+        }
+    }
+    fn conversation(
+        &self,
+        id: ConversationId,
+        context: &Context,
+    ) -> StorageFuture<Option<super::conversation::ConversationHandle>> {
+        let Some(resolve) = &self.scheduler.inner.options.conversation else {
+            return ready(Err(Error::message("Conversation services are unavailable")));
+        };
+        let invocation = self.invocation.clone();
+        let binding = super::conversation::InvocationBinding::new(self.signal(), move || {
+            if invocation.ended.load(Ordering::Acquire) {
+                Err(invocation.ended_error())
+            } else {
+                Ok(())
+            }
+        });
+        let context = context.clone();
+        let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            resolve(id, binding, context)
+        }));
+        match call {
+            Ok(operation) => operation,
+            Err(panic) => ready(Err(crate::session::panic_error(panic))),
+        }
+    }
+    fn report_extension(&self, error: Error, extension: Option<JsonString>) {
         self.scheduler.report_extension(
             error,
             extension,

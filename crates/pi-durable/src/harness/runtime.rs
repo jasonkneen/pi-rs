@@ -24,6 +24,12 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn agent(&self, context: &Context) -> StorageFuture<super::agent::AgentView>;
     fn settings(&self) -> Result<super::settings::Settings>;
     fn models(&self) -> Result<pi_ai::models::Models>;
+    fn env(&self, context: &Context) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>>;
+    fn conversation(
+        &self,
+        id: ConversationId,
+        context: &Context,
+    ) -> StorageFuture<Option<super::conversation::ConversationHandle>>;
     fn current(&self) -> Option<Arc<TaskRecord>>;
     fn commit(&self, change: Change, context: &Context) -> StorageFuture<()>;
     fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord>;
@@ -39,7 +45,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn now(&self) -> f64;
     fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> DisarmTimer;
     fn report(&self, error: Error);
-    fn report_extension(&self, error: Error, extension: JsonString);
+    fn report_extension(&self, error: Error, extension: Option<JsonString>);
 }
 
 pub struct TaskRuntime<I = JsonValue, S = JsonValue, R = JsonValue, H = ()> {
@@ -88,6 +94,19 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     pub fn models(&self) -> Result<pi_ai::models::Models> {
         self.driver.models()
     }
+    pub fn env(
+        &self,
+        context: &Context,
+    ) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>> {
+        self.read(|| self.driver.env(context))
+    }
+    pub fn conversation(
+        &self,
+        id: ConversationId,
+        context: &Context,
+    ) -> StorageFuture<Option<super::conversation::ConversationHandle>> {
+        self.read(|| self.driver.conversation(id, context))
+    }
     pub fn hooks(&self) -> super::hooks::HookRunner<H>
     where
         H: Send + Sync + 'static,
@@ -108,6 +127,11 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     pub fn report(&self, error: Error) -> Result<()> {
         self.driver.check()?;
         self.driver.report(error);
+        Ok(())
+    }
+    pub fn report_extension(&self, error: Error, extension: Option<JsonString>) -> Result<()> {
+        self.driver.check()?;
+        self.driver.report_extension(error, extension);
         Ok(())
     }
     fn read<T: Send + 'static>(&self, read: impl FnOnce() -> StorageFuture<T>) -> StorageFuture<T> {

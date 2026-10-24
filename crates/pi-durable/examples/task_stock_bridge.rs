@@ -60,7 +60,7 @@ fn field<T: DeserializeOwned>(value: &JsonValue, key: &str) -> Result<T> {
 fn error_value(error: &Error) -> JsonValue {
     let mut value = object([
         ("name", encode(&error.name())),
-        ("message", encode(&error.to_string())),
+        ("message", encode(&error.message_text())),
     ]);
     if let ErrorKind::SessionFailed { cause } | ErrorKind::DocumentCopy { cause, .. } = error.kind()
     {
@@ -179,7 +179,15 @@ impl Hub {
         let id: u64 = field(&value, "id").unwrap();
         self.host_pending.lock().remove(&id);
         let result = if value["error"].is_object() {
-            Err(Error::message(value["error"]["message"].to_utf8().unwrap()))
+            Err(Error::host(
+                value["error"]["name"]
+                    .to_utf8()
+                    .unwrap_or_else(|| "Error".into()),
+                value["error"]["message"]
+                    .as_string()
+                    .cloned()
+                    .unwrap_or_else(|| "undefined".into()),
+            ))
         } else if value["missing"].as_bool() == Some(true) {
             Ok(None)
         } else {

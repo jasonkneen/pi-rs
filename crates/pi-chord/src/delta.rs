@@ -363,6 +363,16 @@ pub fn apply_immutable_batches<'a>(
 pub fn overlap(a: &str, b: &str, scan: usize, probe: usize, max_candidates: usize) -> usize {
     let a: Vec<_> = a.encode_utf16().collect();
     let b: Vec<_> = b.encode_utf16().collect();
+    overlap_units(&a, &b, scan, probe, max_candidates)
+}
+/// Lossless counterpart for strings that contain arbitrary UTF16 code units.
+pub fn overlap_units(
+    a: &[u16],
+    b: &[u16],
+    scan: usize,
+    probe: usize,
+    max_candidates: usize,
+) -> usize {
     if a.is_empty() || b.is_empty() || scan == 0 {
         return 0;
     }

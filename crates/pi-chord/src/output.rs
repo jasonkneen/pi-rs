@@ -2,7 +2,8 @@
 
 mod progress;
 pub use progress::{
-    Progress, ProgressClock, ProgressCompletion, ProgressWaiter, SystemProgressClock,
+    Progress, ProgressClock, ProgressCompletion, ProgressWaiter, ProgressWithError,
+    SystemProgressClock,
 };
 
 use crate::JsonString;

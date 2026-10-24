@@ -233,8 +233,24 @@ pub struct AgentView {
     hooks: Arc<Vec<AgentHook>>,
     model: Option<JsonValue>,
     thinking_level: JsonString,
+    tool: Arc<
+        dyn Fn(&JsonString, bool) -> Result<Option<Arc<dyn super::tool::ExecutableTool>>>
+            + Send
+            + Sync,
+    >,
+    tool_extension: Arc<dyn Fn(&JsonString) -> Option<JsonString> + Send + Sync>,
 }
 impl AgentView {
+    pub fn tool(
+        &self,
+        name: &JsonString,
+        nested: bool,
+    ) -> Result<Option<Arc<dyn super::tool::ExecutableTool>>> {
+        (self.tool)(name, nested)
+    }
+    pub fn tool_extension(&self, name: &JsonString) -> Option<JsonString> {
+        (self.tool_extension)(name)
+    }
     pub fn model(&self) -> Option<&JsonValue> {
         self.model.as_ref()
     }
@@ -267,7 +283,26 @@ impl<T: RegisteredTool, S: RegisteredSection> From<Arc<Agent<T, S>>> for AgentVi
                 })
             })
             .collect();
+        let selected = agent.clone();
+        let owner = agent.clone();
         Self {
+            tool: Arc::new(move |name, nested| {
+                let tools = if nested {
+                    &selected.callable
+                } else {
+                    &selected.tools
+                };
+                tools
+                    .iter()
+                    .find(|tool| tool.name() == name)
+                    .map(|tool| {
+                        tool.clone().executable().ok_or_else(|| {
+                            Error::message(format!("Tool {name} has no executable capability"))
+                        })
+                    })
+                    .transpose()
+            }),
+            tool_extension: Arc::new(move |name| tool_extension(&owner, name)),
             model: agent.model.clone(),
             thinking_level: agent.thinking_level.clone(),
             value: agent,
