@@ -275,7 +275,7 @@ pub fn observe_model_request_with_clock(
         "api" => requested_model.api.as_str(),
         "reasoning" => scalar_reasoning(options),
     };
-    let parent = telemetry.unwrap_or_else(noop_telemetry_context);
+    let parent = telemetry.unwrap_or_else(|| noop_telemetry_context());
     let starter = create_typed_span_starter(parent, &[&AI_TELEMETRY_SCHEMA]);
     let name = if poll { "pi.ai.poll" } else { "pi.ai.request" };
     let span = starter.context().begin_span(SpanOptions::new(name).attributes(start_attributes));

@@ -213,8 +213,8 @@ pub enum DeferredOption {
 #[derive(Clone, Default)]
 pub struct StreamOptions {
     pub signal: Option<CancellationToken>,
-    /// Explicit parent span for telemetry produced by this logical request.
-    pub telemetry: Option<pi_telemetry::SpanRef>,
+    /// Explicit parent context for telemetry produced by this logical request.
+    pub telemetry: Option<pi_telemetry::ContextRef>,
     pub api_key: Option<String>,
     /// Custom HTTP client (the `fetch` option equivalent).
     pub http_client: Option<reqwest::Client>,

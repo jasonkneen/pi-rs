@@ -231,8 +231,16 @@ pub struct AgentHook {
 pub struct AgentView {
     value: Arc<dyn Any + Send + Sync>,
     hooks: Arc<Vec<AgentHook>>,
+    model: Option<JsonValue>,
+    thinking_level: JsonString,
 }
 impl AgentView {
+    pub fn model(&self) -> Option<&JsonValue> {
+        self.model.as_ref()
+    }
+    pub fn thinking_level(&self) -> &JsonString {
+        &self.thinking_level
+    }
     pub fn typed<T: RegisteredTool, S: RegisteredSection>(&self) -> Result<Arc<Agent<T, S>>> {
         self.value
             .clone()
@@ -260,6 +268,8 @@ impl<T: RegisteredTool, S: RegisteredSection> From<Arc<Agent<T, S>>> for AgentVi
             })
             .collect();
         Self {
+            model: agent.model.clone(),
+            thinking_level: agent.thinking_level.clone(),
             value: agent,
             hooks: Arc::new(hooks),
         }

@@ -404,9 +404,21 @@
     },
     {
       "reference": "packages/durable/src/harness/compaction.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/compaction.rs",
+        "crates/pi-durable/src/harness/compaction/task.rs",
+        "crates/pi-durable/tests/compaction_runtime.rs",
+        "crates/pi-durable/tests/compaction_reference.rs"
+      ],
+      "evidence": [
+        "cargo test -p pi-durable --test compaction_runtime --test compaction_reference --test models_runtime",
+        "node --conditions=source --experimental-strip-types scripts/golden/gen-durable-compaction.mjs /Users/jkneen/Documents/GitHub/pi-mono --check",
+        "Native select/summarize/retry/abort phases; pinned requests, beforeCompact decisions, usage, provider state, conversation-owned admission and owner-blocking placement",
+        "Ten independent source views, seventy cuts and three model policies; exact UTF16 serialization and message identity for measured usage",
+        "Stock gate verifies eleven original range/serialization cases per retention mode; ninety-seven execution cases remain unselected",
+        "Existing pi-ai provider boundary rejects unsupported UTF16 strings instead of replacing them; full SDK 1.4 alignment and generation/host integration remain pending"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/context.ts",
@@ -572,7 +584,9 @@
         "crates/pi-durable/tests/agent_runtime.rs",
         "crates/pi-durable/src/harness/inspect.rs",
         "crates/pi-durable/src/harness/task_graph.rs",
-        "crates/pi-durable/tests/task_graph.rs"
+        "crates/pi-durable/tests/task_graph.rs",
+        "crates/pi-durable/src/harness/models.rs",
+        "crates/pi-durable/tests/models_runtime.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -582,7 +596,8 @@
         "Native phase registry identity/refresh, idle wake without snapshot reads, conservative wake on registry failure, failure cleanup and subscription disposal",
         "Native shared agent resolution starts eagerly, survives dropped/cancelled waiters, caches errors and resets per phase and abort invocation; one live settings reader supplies runtime and scheduler policy",
         "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication",
-        "Native and stock regressions prove reentrant close during phase snapshot refresh prevents the next handler"
+        "Native and stock regressions prove reentrant close during phase snapshot refresh prevents the next handler",
+        "Runtime models resolve the live host getter at each access, including after invocation end/close; native compaction integration exercises them"
       ]
     },
     {
@@ -646,7 +661,8 @@
       "evidence": [
         "RegistryReader and typed-retaining RegistryView capabilities; native runtime agent/settings and typed hook runner implemented; model/environment/conversation and remaining contracts pending",
         "Native inspection and graph types; the full Harness, executable generation and other services remain pending",
-        "Submission drafts/receipts, queue modes, live presentation, slot and compaction types now have native counterparts; provider message content remains lossless JSON at this boundary"
+        "Submission drafts/receipts, queue modes, live presentation, slot and compaction types now have native counterparts; provider message content remains lossless JSON at this boundary",
+        "Native typed ModelRef and executable compaction input/checkpoint/result/hooks; persisted model references and checkpoints preserve UTF16 through raw codecs"
       ]
     },
     {
@@ -1421,9 +1437,19 @@
     },
     {
       "reference": "packages/durable/test/harness-compaction.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/compaction_runtime.rs",
+        "crates/pi-durable/tests/compaction_reference.rs",
+        "crates/pi-durable/examples/support/compaction_bridge.rs",
+        "scripts/stock/durable-compaction-adapter.mjs",
+        "scripts/run-stock-durable-compaction.mjs"
+      ],
+      "evidence": [
+        "node scripts/run-stock-durable-compaction.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-compaction-report.json",
+        "Eleven unchanged stock range-selection/serialization cases in both retention modes, native operation counters and source hash checked; ninety-seven execution cases not selected",
+        "Eight separate native execution tests cover summaries, pinned retries, hook decisions, missing models, empty ranges, failure spend/cleanup, late response after abort, task-owned direct placement and queued stale summaries"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-context.test.ts",

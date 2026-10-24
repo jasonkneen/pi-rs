@@ -76,6 +76,7 @@ type WithdrawInputs = Arc<dyn Fn(Transaction, ConversationId) -> StorageFuture<(
 #[derive(Clone)]
 pub struct SchedulerOptions {
     pub settings: SettingsReader,
+    pub models: super::models::ModelsReader,
     pub agent: AgentResolver,
     pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
@@ -84,7 +85,9 @@ pub struct SchedulerOptions {
 }
 impl Default for SchedulerOptions {
     fn default() -> Self {
+        let models = pi_ai::models::Models::default();
         Self {
+            models: Arc::new(move || Ok(models.clone())),
             settings: Arc::new(|| Ok(resolve_settings(Default::default()))),
             agent: Arc::new(resolve_agent_in),
             on_report: Arc::new(|_, _| {}),
@@ -2303,6 +2306,9 @@ impl TaskDriver for Driver {
     }
     fn settings(&self) -> Result<Settings> {
         self.scheduler.settings()
+    }
+    fn models(&self) -> Result<pi_ai::models::Models> {
+        super::models::read_models(&self.scheduler.inner.options.models)
     }
     fn report_extension(&self, error: Error, extension: JsonString) {
         self.scheduler.report_extension(

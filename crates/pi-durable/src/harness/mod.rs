@@ -1,6 +1,7 @@
 //! Durable task orchestration services and their derived live-state indexes.
 pub mod agent;
 pub mod catalog;
+pub mod compaction;
 pub mod context;
 pub mod declaration;
 pub mod generation;
@@ -8,6 +9,7 @@ pub mod hooks;
 pub mod inbox;
 pub mod inspect;
 pub mod live;
+pub mod models;
 pub mod ownership;
 pub mod prompt;
 pub mod provider;

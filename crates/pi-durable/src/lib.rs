@@ -15,18 +15,23 @@ mod wire;
 pub use documents::*;
 pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
+pub use harness::compaction::{
+    COMPACTION_TASK, CompactionCheckpoint, CompactionHooks, CompactionInput, CompactionResult,
+    compaction_task,
+};
 pub use harness::context::ContextView;
 pub use harness::inbox::{INBOX_DOC, InboxItem, InboxState, inbox_doc};
 pub use harness::inspect::{HarnessInspection, Scheduling, TaskInspection, TaskInspectionState};
 pub use harness::live::{LIVE_DOC, LiveState, live_doc};
+pub use harness::prompt::{PromptInput, PromptSection};
 pub use harness::provider::{PROVIDER_DOC, ProviderState, provider_doc};
 pub use harness::submissions::{Submission, SubmissionAbort, Submissions, SubmissionsOptions};
 pub use harness::task_graph::{
     TaskGraph, TaskGraphNode, TaskGraphOutcome, TaskGraphState, TaskGraphWatch,
 };
 pub use harness::types::{
-    InputEntry, QueueMode, QueueModes, SettledSubmissionRecord, SubmissionDraft, UserInput,
-    WhenBusy,
+    InputEntry, ModelRef, QueueMode, QueueModes, SettledSubmissionRecord, SubmissionDraft,
+    UserInput, WhenBusy,
 };
 pub use harness::usage::{USAGE_DOC, UsageState, usage_doc};
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};

@@ -22,6 +22,8 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+#[path = "support/compaction_bridge.rs"]
+mod compaction_bridge;
 #[path = "support/context_bridge.rs"]
 mod context_bridge;
 #[path = "support/document_bridge.rs"]
@@ -92,6 +94,7 @@ struct Hub {
     phases: AtomicU64,
     commits: AtomicU64,
     context_reads: AtomicU64,
+    compaction_reads: AtomicU64,
     registry_reads: AtomicU64,
     agent_reads: AtomicU64,
     agent_resolutions: AtomicU64,
@@ -353,6 +356,10 @@ impl Hub {
         }
         if method.starts_with("graph.") {
             return self.graph_request(&method, request, context);
+        }
+        if method.starts_with("compaction.") {
+            let value = self.compaction_request(&request);
+            return Ok(Box::pin(async move { value }));
         }
         if method.starts_with("prompt.") {
             return self.prompt_request(&method, request, context);
@@ -784,7 +791,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -845,6 +852,7 @@ async fn main() {
         phases: AtomicU64::new(0),
         commits: AtomicU64::new(0),
         context_reads: AtomicU64::new(0),
+        compaction_reads: AtomicU64::new(0),
         registry_reads: AtomicU64::new(0),
         agent_reads: AtomicU64::new(0),
         agent_resolutions: AtomicU64::new(0),

@@ -23,6 +23,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn registry(&self) -> super::reader::RegistryView;
     fn agent(&self, context: &Context) -> StorageFuture<super::agent::AgentView>;
     fn settings(&self) -> Result<super::settings::Settings>;
+    fn models(&self) -> Result<pi_ai::models::Models>;
     fn current(&self) -> Option<Arc<TaskRecord>>;
     fn commit(&self, change: Change, context: &Context) -> StorageFuture<()>;
     fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord>;
@@ -82,6 +83,10 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     }
     pub fn settings(&self) -> Result<super::settings::Settings> {
         self.driver.settings()
+    }
+    /// Read the current host collection, including through a retained runtime.
+    pub fn models(&self) -> Result<pi_ai::models::Models> {
+        self.driver.models()
     }
     pub fn hooks(&self) -> super::hooks::HookRunner<H>
     where
