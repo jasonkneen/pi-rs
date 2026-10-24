@@ -2,7 +2,8 @@
 // Optionally run the same assertions against a native Rust backend over JSON lines.
 import assert from "node:assert/strict";
 import {spawn,execFileSync} from "node:child_process";
-import {readFile,writeFile,mkdir} from "node:fs/promises";
+import {readFile,writeFile,mkdir,mkdtemp,rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
 import {resolve,dirname} from "node:path";
 import {pathToFileURL,fileURLToPath} from "node:url";
 import {createInterface} from "node:readline";
@@ -13,6 +14,12 @@ if(execFileSync("git",["rev-parse","HEAD"],{cwd:reference,encoding:"utf8"}).trim
 const {MemoryStorage}=await import(pathToFileURL(resolve(reference,"packages/durable/src/storage/memory.ts")));
 const {createStorageConformance}=await import(pathToFileURL(resolve(reference,"packages/durable/src/testing/storage-conformance.ts")));
 const {BACKGROUND_CONTEXT}=await import(pathToFileURL(resolve(reference,"packages/chord/src/context/index.ts")));
+const jsonl=process.argv.includes("--jsonl");
+const reopen=process.argv.includes("--reopen");
+if(reopen&&!jsonl)throw new Error("--reopen requires --jsonl");
+const backendName=jsonl?`jsonl${reopen?"-reopen":""}`:"memory";
+let JsonlStorage,NodeExecutionEnv;
+if(jsonl){({JsonlStorage}=await import(pathToFileURL(resolve(reference,"packages/durable/src/storage/jsonl/storage.ts"))));({NodeExecutionEnv}=await import(pathToFileURL(resolve(reference,"packages/durable/src/env/node.ts"))));}
 const assertions={
  ok:assert.ok,strictEqual:assert.strictEqual,deepEqual:assert.deepStrictEqual,partialDeepEqual:assert.partialDeepStrictEqual,
  greaterThan(actual,expected){assert.ok(actual>expected,`${actual} should exceed ${expected}`);},
@@ -36,21 +43,30 @@ function instrument(storage){return new Proxy(storage,{get(target,name){
  };
 }});}
 const referenceCases=createStorageConformance({assertions,withStorage:async use=>{
- const storage=new MemoryStorage();await use(instrument(storage));await storage.close(BACKGROUND_CONTEXT);
+ if(!jsonl){const storage=new MemoryStorage();await use(instrument(storage));await storage.close(BACKGROUND_CONTEXT);return;}
+ const directory=await mkdtemp(resolve(tmpdir(),"pi-durable-jsonl-reference-"));
+ const fs=new NodeExecutionEnv({cwd:directory});let current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);let closed=false;
+ const storage=reopen?new Proxy({}, {get(_,name){return async (...args)=>{
+  if(name==="close"){closed=true;return current.close(...args);}
+  if(name!=="commit"||closed)return current[name](...args);
+  try{return await current.commit(...args);}finally{await current.close(BACKGROUND_CONTEXT);current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);}
+ };}}):current;
+ try{await use(instrument(storage));}finally{await current.close(BACKGROUND_CONTEXT);await rm(directory,{recursive:true,force:true});}
 }});
 for(const test of referenceCases){current=[];await test.run();records.push({name:test.name,requests:current});}
-const target=fileURLToPath(new URL("../../crates/pi-durable/tests/fixtures/storage.json",import.meta.url));
+const fixtureName=jsonl?`storage-${backendName}`:"storage";
+const target=fileURLToPath(new URL(`../../crates/pi-durable/tests/fixtures/${fixtureName}.json`,import.meta.url));
 const output=JSON.stringify({reference:pin,cases:records},null,2)+"\n";
 if(process.argv.includes("--check")){assert.equal(await readFile(target,"utf8"),output,"Storage traces differ from reference");}
 else {await mkdir(dirname(target),{recursive:true});await writeFile(target,output);}
 const rustTests=records.map((test,index)=>`storage_case!(${test.name.toLowerCase().replaceAll(/[^a-z0-9]+/g,"_").replaceAll(/^_|_$/g,"")}, ${index});`).join("\n")+"\n";
-const rustTarget=fileURLToPath(new URL("../../crates/pi-durable/tests/fixtures/storage_cases.rs",import.meta.url));
+const rustTarget=fileURLToPath(new URL(`../../crates/pi-durable/tests/fixtures/${jsonl?`storage_${backendName.replaceAll("-","_")}_cases`:"storage_cases"}.rs`,import.meta.url));
 if(process.argv.includes("--check")){assert.equal(await readFile(rustTarget,"utf8"),rustTests,"Rust conformance case map differs");}else await writeFile(rustTarget,rustTests);
-console.log(`Reference passed ${records.length} storage conformance cases with ${records.reduce((n,c)=>n+c.requests.length,0)} recorded operations`);
+console.log(`Reference ${backendName} passed ${records.length} storage conformance cases with ${records.reduce((n,c)=>n+c.requests.length,0)} recorded operations`);
 
-if(process.argv.includes("--native")){
+if(process.argv.includes("--native")||process.argv.includes("--interchange")){
  const root=fileURLToPath(new URL("../../",import.meta.url));
- const child=spawn("cargo",["run","--locked","-q","-p","pi-durable","--example","storage_conformance"],{cwd:root,stdio:["pipe","pipe","inherit"]});
+ const child=spawn("cargo",["run","--locked","-q","-p","pi-durable","--example","storage_conformance","--",...(jsonl?["--jsonl"]:[]),...(reopen?["--reopen"]:[])],{cwd:root,stdio:["pipe","pipe","inherit"]});
  const pending=new Map();let next=0;let stderrError;let closing=false;
  const exited=new Promise(resolve=>{child.once("exit",resolve);child.once("error",()=>resolve(1));});
  const lines=createInterface({input:child.stdout});
@@ -70,6 +86,28 @@ if(process.argv.includes("--native")){
  });
  const storage=new Proxy({}, {get(_,name){return(...args)=>call(name,args.slice(0,name==="entry"?args.length-1:arities[name]),name==="commit"?args[1]:undefined);}});
  const cases=createStorageConformance({assertions,withStorage:async use=>{await call("reset",[]);await use(storage);}});
- try {for(const test of cases){await test.run();console.log(`Native: ${test.name}`);}console.log(`Native passed all ${cases.length} reference storage cases`);}
+ try {
+  if(process.argv.includes("--native")){for(const test of cases){await test.run();console.log(`Native: ${test.name}`);}console.log(`Native passed all ${cases.length} reference storage cases`);}
+  if(process.argv.includes("--interchange")){
+   if(!jsonl||reopen)throw new Error("--interchange requires --jsonl without --reopen");
+   const hybridCases=createStorageConformance({assertions,withStorage:async use=>{
+    await call("reset",[]);const directory=await call("directory",[]);const fs=new NodeExecutionEnv({cwd:directory});
+    let current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);let native=false;let closed=false;
+    const hybrid=new Proxy({}, {get(_,name){return async (...args)=>{
+     if(name==="close"){closed=true;return native?storage.close(...args):current.close(...args);}
+     if(name!=="commit"||closed)return native?storage[name](...args):current[name](...args);
+     try{return await (native?storage.commit(...args):current.commit(...args));}
+     finally{
+      if(native)current=await JsonlStorage.open(directory,fs,BACKGROUND_CONTEXT);
+      else {await current.close(BACKGROUND_CONTEXT);await call("reopen",[]);}
+      native=!native;
+     }
+    };}});
+    try{await use(hybrid);}finally{await current.close(BACKGROUND_CONTEXT);await storage.close(BACKGROUND_CONTEXT);}
+   }});
+   for(const test of hybridCases){await test.run();console.log(`Interchange: ${test.name}`);}
+   console.log(`Rust/TypeScript alternating commits passed all ${hybridCases.length} reference storage cases`);
+  }
+ }
  finally {closing=true;child.stdin.end();const code=await exited;lines.close();if(code!==0)throw new Error(`Native conformance driver exited ${code}`);}
 }

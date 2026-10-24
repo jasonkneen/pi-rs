@@ -13,16 +13,57 @@ fn write(output: &Arc<Mutex<std::io::Stdout>>, value: serde_json::Value) {
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let output = Arc::new(Mutex::new(std::io::stdout()));
-    let mut storage: Arc<dyn Storage> = Arc::new(MemoryStorage::new());
+    let jsonl = std::env::args().any(|a| a == "--jsonl");
+    let reopen = std::env::args().any(|a| a == "--reopen");
+    let directory = tempfile::tempdir()?;
+    let mut generation = 0;
+    let mut closed = false;
+    let mut path = directory.path().join(generation.to_string());
+    let mut storage: Arc<dyn Storage> = if jsonl {
+        Arc::new(
+            JsonlStorage::open_native(&path, &Context::default(), JsonlStorageOptions::default())
+                .await?,
+        )
+    } else {
+        Arc::new(MemoryStorage::new())
+    };
     for line in std::io::stdin().lock().lines() {
         let request: JsonValue = serde_json::from_str(&line?)?;
         let id = request["id"].as_u64().unwrap();
         let method = request["method"].to_utf8().unwrap();
-        let result = if method == "reset" {
+        let result = if method == "reopen" && jsonl {
+            storage.close(&Context::default()).await?;
+            storage = Arc::new(
+                JsonlStorage::open_native(
+                    &path,
+                    &Context::default(),
+                    JsonlStorageOptions::default(),
+                )
+                .await?,
+            );
+            closed = false;
+            Ok(None)
+        } else if method == "directory" && jsonl {
+            Ok(Some(JsonValue::from(path.to_string_lossy().as_ref())))
+        } else if method == "reset" {
             storage
                 .close(&pi_chord::context::BACKGROUND_CONTEXT)
                 .await?;
-            storage = Arc::new(MemoryStorage::new());
+            generation += 1;
+            path = directory.path().join(generation.to_string());
+            closed = false;
+            storage = if jsonl {
+                Arc::new(
+                    JsonlStorage::open_native(
+                        &path,
+                        &Context::default(),
+                        JsonlStorageOptions::default(),
+                    )
+                    .await?,
+                )
+            } else {
+                Arc::new(MemoryStorage::new())
+            };
             Ok(None)
         } else {
             storage_request(
@@ -41,6 +82,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             )
             .await
         };
+        if method == "close" {
+            closed = true;
+        }
+        if reopen && method == "commit" && !closed {
+            storage.close(&Context::default()).await?;
+            storage = Arc::new(
+                JsonlStorage::open_native(
+                    &path,
+                    &Context::default(),
+                    JsonlStorageOptions::default(),
+                )
+                .await?,
+            );
+        }
         let mut response = serde_json::Map::new();
         response.insert("id".into(), id.into());
         match result {

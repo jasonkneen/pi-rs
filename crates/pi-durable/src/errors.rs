@@ -3,6 +3,17 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum ErrorKind {
+    JsonlCorruption {
+        message: String,
+        cause: Option<Error>,
+    },
+    JsonlPoisoned {
+        cause: Error,
+    },
+    JsonlIo {
+        action: String,
+        cause: crate::env::FileError,
+    },
     Aborted(pi_chord::context::AbortError),
     Delta(pi_chord::delta::Error),
     Message(String),
@@ -22,6 +33,21 @@ pub enum ErrorKind {
 pub struct Error(Arc<ErrorKind>);
 pub type Result<T> = std::result::Result<T, Error>;
 impl Error {
+    pub fn jsonl_corruption(message: impl Into<String>, cause: Option<Error>) -> Self {
+        Self(Arc::new(ErrorKind::JsonlCorruption {
+            message: message.into(),
+            cause,
+        }))
+    }
+    pub fn jsonl_poisoned(cause: Error) -> Self {
+        Self(Arc::new(ErrorKind::JsonlPoisoned { cause }))
+    }
+    pub fn jsonl_io(action: impl Into<String>, cause: crate::env::FileError) -> Self {
+        Self(Arc::new(ErrorKind::JsonlIo {
+            action: action.into(),
+            cause,
+        }))
+    }
     pub fn message(message: impl Into<String>) -> Self {
         Self(Arc::new(ErrorKind::Message(message.into())))
     }
@@ -48,6 +74,8 @@ impl Error {
     }
     pub fn name(&self) -> &'static str {
         match self.kind() {
+            ErrorKind::JsonlCorruption { .. } => "JsonlCorruptionError",
+            ErrorKind::JsonlPoisoned { .. } => "JsonlStoragePoisonedError",
             ErrorKind::Aborted(_) => "AbortError",
             ErrorKind::StorageRequest(_) => "StorageRequestError",
             ErrorKind::ReadAfterWrite(_) => "ReadAfterWrite",
@@ -70,6 +98,11 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
+            ErrorKind::JsonlCorruption { message, .. } => f.write_str(message),
+            ErrorKind::JsonlPoisoned { .. } => {
+                f.write_str("JSONL storage is poisoned and must be reopened")
+            }
+            ErrorKind::JsonlIo { action, cause } => write!(f, "JSONL {action} failed: {cause}"),
             ErrorKind::Aborted(error) => error.fmt(f),
             ErrorKind::Delta(error) => error.fmt(f),
             ErrorKind::Message(m) | ErrorKind::StorageRequest(m) => f.write_str(m),
@@ -89,6 +122,9 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self.kind() {
+            ErrorKind::JsonlCorruption { cause, .. } => cause.as_ref().map(|e| e as _),
+            ErrorKind::JsonlPoisoned { cause } => Some(cause),
+            ErrorKind::JsonlIo { cause, .. } => Some(cause),
             ErrorKind::Aborted(error) => Some(error),
             ErrorKind::Delta(error) => Some(error),
             ErrorKind::SessionFailed { cause } | ErrorKind::DocumentCopy { cause, .. } => {

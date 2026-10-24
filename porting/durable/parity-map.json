@@ -337,9 +337,15 @@
     },
     {
       "reference": "packages/durable/src/env/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/env/filesystem.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/env/line-scan.ts",
@@ -355,9 +361,15 @@
     },
     {
       "reference": "packages/durable/src/env/node.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/env/native.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/errors.ts",
@@ -611,21 +623,45 @@
     },
     {
       "reference": "packages/durable/src/storage/jsonl/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/jsonl/mod.rs",
+        "crates/pi-durable/src/errors.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/jsonl/node.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/jsonl/mod.rs",
+        "crates/pi-durable/src/env/native.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/jsonl/storage.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/storage/jsonl/mod.rs",
+        "crates/pi-durable/src/storage/jsonl/format.rs",
+        "crates/pi-durable/src/storage/jsonl/recovery.rs",
+        "crates/pi-durable/tests/jsonl_crash.rs",
+        "scripts/run-stock-durable-jsonl.mjs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/storage/memory.ts",
@@ -1384,9 +1420,19 @@
     },
     {
       "reference": "packages/durable/test/jsonl-storage.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "scripts/run-stock-durable-jsonl.mjs",
+        "scripts/stock/durable-jsonl-adapter.mjs",
+        "crates/pi-durable/examples/jsonl_stock_bridge.rs",
+        "crates/pi-durable/tests/jsonl_conformance.rs",
+        "crates/pi-durable/tests/jsonl_crash.rs"
+      ],
+      "evidence": [
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/memory-storage.test.ts",

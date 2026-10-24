@@ -31,111 +31,91 @@ fn maybe<T: Serialize>(value: Option<T>) -> Result<Option<JsonValue>> {
         .map(|value| pi_chord::json::to_value(&value).map_err(Error::message))
         .transpose()
 }
-pub async fn storage_request(
+fn encoded_future<T: Serialize + Send + 'static>(
+    future: crate::storage::StorageFuture<T>,
+) -> crate::storage::StorageFuture<Option<JsonValue>> {
+    Box::pin(async move { encoded(future.await?) })
+}
+fn maybe_future<T: Serialize + Send + 'static>(
+    future: crate::storage::StorageFuture<Option<T>>,
+) -> crate::storage::StorageFuture<Option<JsonValue>> {
+    Box::pin(async move { maybe(future.await?) })
+}
+/// Invoke the backend at dispatch time, before returning its waiter. In particular,
+/// a read started by adoption must start before a later close request is admitted.
+pub fn storage_request(
     storage: &dyn Storage,
     method: &str,
     args: &[JsonValue],
     adopt: Adopt,
-) -> Result<Option<JsonValue>> {
+) -> crate::storage::StorageFuture<Option<JsonValue>> {
     let context = pi_chord::context::BACKGROUND_CONTEXT.clone();
-    match method {
-        "commit" => encoded(
-            storage
-                .commit(&arg::<Vec<StorageWrite>>(args, 0)?, adopt, &context)
-                .await?,
-        ),
-        "mintId" => encoded(storage.mint_id().await?),
-        "conversation" => maybe(storage.conversation(arg(args, 0)?, &context).await?),
-        "scanConversations" => encoded(
-            storage
-                .scan_conversations(
-                    &arg(args, 0)?,
-                    arg(args, 1)?,
-                    optional::<Cursor>(args, 2)?.as_ref(),
-                    &context,
-                )
-                .await?,
-        ),
-        "entry" => {
-            if args.len() == 1 {
-                maybe(storage.entry(arg(args, 0)?, &context).await?)
-            } else {
-                maybe(
-                    storage
-                        .entry_in(arg(args, 0)?, arg(args, 1)?, &context)
-                        .await?,
-                )
+    let begin = || -> Result<crate::storage::StorageFuture<Option<JsonValue>>> {
+        Ok(match method {
+            "commit" => {
+                encoded_future(storage.commit(&arg::<Vec<StorageWrite>>(args, 0)?, adopt, &context))
             }
-        }
-        "findLatestHeadMarker" => maybe(
-            storage
-                .find_latest_head_marker(arg(args, 0)?, optional(args, 1)?, &context)
-                .await?,
-        ),
-        "scanEntries" => encoded(
-            storage
-                .scan_entries(
-                    &arg(args, 0)?,
-                    arg(args, 1)?,
-                    optional::<Cursor>(args, 2)?.as_ref(),
-                    &context,
-                )
-                .await?,
-        ),
-        "task" => maybe(storage.task(arg(args, 0)?, &context).await?),
-        "scanTasks" => encoded(
-            storage
-                .scan_tasks(
-                    &arg(args, 0)?,
-                    arg(args, 1)?,
-                    optional::<Cursor>(args, 2)?.as_ref(),
-                    &context,
-                )
-                .await?,
-        ),
-        "submission" => maybe(storage.submission(arg(args, 0)?, &context).await?),
-        "scanSubmissions" => encoded(
-            storage
-                .scan_submissions(
-                    &arg(args, 0)?,
-                    arg(args, 1)?,
-                    optional::<Cursor>(args, 2)?.as_ref(),
-                    &context,
-                )
-                .await?,
-        ),
-        "submissionByRequest" => maybe(
-            storage
-                .submission_by_request(arg(args, 0)?, &arg(args, 1)?, &context)
-                .await?,
-        ),
-        "findDocument" => maybe(
-            storage
-                .find_document(&arg(args, 0)?, arg(args, 1)?, &context)
-                .await?,
-        ),
-        "document" => maybe(
-            storage
-                .document(arg(args, 0)?, arg(args, 1)?, &context)
-                .await?,
-        ),
-        "scanDocuments" => encoded(
-            storage
-                .scan_documents(
-                    &arg(args, 0)?,
-                    arg(args, 1)?,
-                    optional::<Cursor>(args, 2)?.as_ref(),
-                    &context,
-                )
-                .await?,
-        ),
-        "close" => {
-            storage.close(&context).await?;
-            Ok(None)
-        }
-        _ => Err(Error::request(format!("Unknown storage method {method}"))),
-    }
+            "mintId" => encoded_future(storage.mint_id()),
+            "conversation" => maybe_future(storage.conversation(arg(args, 0)?, &context)),
+            "scanConversations" => encoded_future(storage.scan_conversations(
+                &arg(args, 0)?,
+                arg(args, 1)?,
+                optional::<Cursor>(args, 2)?.as_ref(),
+                &context,
+            )),
+            "entry" if args.len() == 1 => maybe_future(storage.entry(arg(args, 0)?, &context)),
+            "entry" => maybe_future(storage.entry_in(arg(args, 0)?, arg(args, 1)?, &context)),
+            "findLatestHeadMarker" => maybe_future(storage.find_latest_head_marker(
+                arg(args, 0)?,
+                optional(args, 1)?,
+                &context,
+            )),
+            "scanEntries" => encoded_future(storage.scan_entries(
+                &arg(args, 0)?,
+                arg(args, 1)?,
+                optional::<Cursor>(args, 2)?.as_ref(),
+                &context,
+            )),
+            "task" => maybe_future(storage.task(arg(args, 0)?, &context)),
+            "scanTasks" => encoded_future(storage.scan_tasks(
+                &arg(args, 0)?,
+                arg(args, 1)?,
+                optional::<Cursor>(args, 2)?.as_ref(),
+                &context,
+            )),
+            "submission" => maybe_future(storage.submission(arg(args, 0)?, &context)),
+            "scanSubmissions" => encoded_future(storage.scan_submissions(
+                &arg(args, 0)?,
+                arg(args, 1)?,
+                optional::<Cursor>(args, 2)?.as_ref(),
+                &context,
+            )),
+            "submissionByRequest" => {
+                maybe_future(storage.submission_by_request(arg(args, 0)?, &arg(args, 1)?, &context))
+            }
+            "findDocument" => {
+                maybe_future(storage.find_document(&arg(args, 0)?, arg(args, 1)?, &context))
+            }
+            "document" => maybe_future(storage.document(arg(args, 0)?, arg(args, 1)?, &context)),
+            "scanDocuments" => encoded_future(storage.scan_documents(
+                &arg(args, 0)?,
+                arg(args, 1)?,
+                optional::<Cursor>(args, 2)?.as_ref(),
+                &context,
+            )),
+            "close" => {
+                let close = storage.close(&context);
+                Box::pin(async move {
+                    close.await?;
+                    Ok(None)
+                })
+            }
+            _ => return Err(Error::request(format!("Unknown storage method {method}"))),
+        })
+    };
+    begin().unwrap_or_else(|error| Box::pin(async { Err(error) }))
 }
+
 pub async fn replay_case(storage: Arc<dyn Storage>, case: &JsonValue) -> Result<()> {
     for (index, request) in case["requests"]
         .as_array()

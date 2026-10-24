@@ -1,7 +1,10 @@
 use crate::{Context, Result, types::*};
 use std::{future::Future, pin::Pin};
+pub mod jsonl;
+mod line;
 pub mod memory;
 pub mod scan;
+pub use jsonl::{JsonlStorage, JsonlStorageOptions};
 pub use memory::{MemoryStorage, PreparedMemoryCommit};
 
 pub type StorageFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;

@@ -2,6 +2,7 @@
 
 pub mod documents;
 pub mod entries;
+pub mod env;
 pub mod errors;
 pub mod session;
 pub mod storage;
@@ -14,5 +15,5 @@ pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
 pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
 pub use session::*;
-pub use storage::{MemoryStorage, Storage};
+pub use storage::{JsonlStorage, JsonlStorageOptions, MemoryStorage, Storage};
 pub use types::*;
