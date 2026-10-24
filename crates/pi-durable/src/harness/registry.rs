@@ -38,6 +38,12 @@ pub struct HookRegistration {
     pub handlers: Arc<dyn Any + Send + Sync>,
 }
 impl HookRegistration {
+    pub fn for_task<I, S, R, H: Send + Sync + 'static>(
+        task: &Task<I, S, R, H>,
+        handlers: Arc<H>,
+    ) -> Self {
+        Self::new(task.definition().name.clone(), handlers)
+    }
     pub fn new<H: Send + Sync + 'static>(task: impl Into<JsonString>, handlers: Arc<H>) -> Self {
         Self {
             task: task.into(),

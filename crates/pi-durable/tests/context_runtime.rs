@@ -152,7 +152,14 @@ async fn native_scheduler_keeps_busy_ranges_and_applies_idle_retention_across_ta
             storage,
             std::slice::from_ref(&probe),
             SchedulerOptions {
-                context_retention_ms: Arc::new(move || retention),
+                settings: Arc::new(move || {
+                    Ok(pi_durable::harness::settings::resolve_settings(
+                        pi_durable::harness::settings::HarnessSettings {
+                            context_retention_ms: Some(retention),
+                            ..Default::default()
+                        },
+                    ))
+                }),
                 ..Default::default()
             },
             SessionOptions {
@@ -255,7 +262,14 @@ async fn a_late_context_read_cannot_seed_the_next_invocation_cache() {
         storage.clone(),
         &[late.clone(), next.clone()],
         SchedulerOptions {
-            context_retention_ms: Arc::new(|| 0.0),
+            settings: Arc::new(|| {
+                Ok(pi_durable::harness::settings::resolve_settings(
+                    pi_durable::harness::settings::HarnessSettings {
+                        context_retention_ms: Some(0.0),
+                        ..Default::default()
+                    },
+                ))
+            }),
             ..Default::default()
         },
         Default::default(),
@@ -306,7 +320,14 @@ async fn a_background_timer_expires_idle_native_contexts_without_new_commits() {
         storage,
         std::slice::from_ref(&probe),
         SchedulerOptions {
-            context_retention_ms: Arc::new(|| 1_000.0),
+            settings: Arc::new(|| {
+                Ok(pi_durable::harness::settings::resolve_settings(
+                    pi_durable::harness::settings::HarnessSettings {
+                        context_retention_ms: Some(1_000.0),
+                        ..Default::default()
+                    },
+                ))
+            }),
             ..Default::default()
         },
         SessionOptions {

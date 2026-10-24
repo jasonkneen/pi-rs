@@ -1,13 +1,16 @@
 // One native process serves synchronous registry calls and asynchronous task
 // calls. A synchronous caller pumps frames so nested host callbacks can finish.
 import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
+import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve;
 const pending=new Map(),handlers=new Map(),events=new Map();
 let exited;
 export function failure(value){const error=new Error(value.message);error.name=value.name??"Error";return error;}
-function send(frame){port.postMessage(frame);}
+function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,error:!!frame.error})+"\n");}
+function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
+ trace("receive",frame);
  if(frame.type==="callback"){
   const handler=handlers.get(frame.method);
   const reply=value=>send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});
@@ -48,8 +51,8 @@ export const nativeTransport={
   start();const id=next++;
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
-   pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});send({id,method,...args});
-   if(signal?.aborted)abort();else signal?.addEventListener("abort",abort,{once:true});
+   pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});send({id,method,...args,...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});
+   if(!signal?.aborted)signal?.addEventListener("abort",abort,{once:true});
   });
   // Native close can reject several waits before the held commit's reply
   // crosses the pipe. Observe transport failures immediately; callers still

@@ -9,7 +9,7 @@ use pi_chord::{
     context::{AbortError, AbortReason as SignalReason, with_abort_signal},
 };
 use pi_durable::{
-    harness::{runtime::TaskRuntime, scheduler::*, state::NextTaskState},
+    harness::{runtime::TaskRuntime as NativeRuntime, scheduler::*, state::NextTaskState},
     storage::{Adopt, StorageFuture},
     *,
 };
@@ -19,7 +19,7 @@ use std::{
     io::{BufRead, Write},
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 #[path = "support/context_bridge.rs"]
@@ -47,7 +47,8 @@ fn decode<T: DeserializeOwned>(value: &JsonValue) -> Result<T> {
 fn field<T: DeserializeOwned>(value: &JsonValue, key: &str) -> Result<T> {
     decode(&value[key])
 }
-type JsonTask = Task<JsonValue, JsonValue, JsonValue>;
+type TaskRuntime = NativeRuntime<JsonValue, JsonValue, JsonValue, u64>;
+type JsonTask = Task<JsonValue, JsonValue, JsonValue, u64>;
 enum Pending {
     Async(tokio::sync::oneshot::Sender<Result<Option<JsonValue>>>),
     Sync(std::sync::mpsc::Sender<Result<Option<JsonValue>>>),
@@ -56,6 +57,7 @@ struct Hub {
     output: Mutex<std::io::Stdout>,
     next: AtomicU64,
     pending: Mutex<HashMap<u64, Pending>>,
+    input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
@@ -66,6 +68,9 @@ struct Hub {
     commits: AtomicU64,
     context_reads: AtomicU64,
     registry_reads: AtomicU64,
+    agent_reads: AtomicU64,
+    agent_resolutions: AtomicU64,
+    hook_calls: AtomicU64,
     registry: registry_bridge::RegistryBridge,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
 }
@@ -86,7 +91,13 @@ impl Hub {
     ) -> StorageFuture<Option<JsonValue>> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = tokio::sync::oneshot::channel();
-        self.pending.lock().insert(id, Pending::Async(send));
+        {
+            let mut pending = self.pending.lock();
+            if self.input_closed.load(Ordering::Acquire) {
+                return Box::pin(async { Err(Error::message("Test transport is closed")) });
+            }
+            pending.insert(id, Pending::Async(send));
+        }
         self.emit(object([
             ("type", encode(&"callback")),
             ("id", encode(&id)),
@@ -107,7 +118,13 @@ impl Hub {
     fn sync(&self, method: &str, args: JsonValue) -> Result<JsonValue> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (send, receive) = std::sync::mpsc::channel();
-        self.pending.lock().insert(id, Pending::Sync(send));
+        {
+            let mut pending = self.pending.lock();
+            if self.input_closed.load(Ordering::Acquire) {
+                return Err(Error::message("Test transport is closed"));
+            }
+            pending.insert(id, Pending::Sync(send));
+        }
         self.emit(object([
             ("type", encode(&"callback")),
             ("id", encode(&id)),
@@ -156,14 +173,14 @@ impl Hub {
                 phase,
                 Arc::new(move |task: RunningTask, runtime: TaskRuntime, _| {
                     hub.phase(id, name.clone(), task, runtime)
-                }) as PhaseHandler<JsonValue, JsonValue, JsonValue>,
+                }) as PhaseHandler<JsonValue, JsonValue, JsonValue, u64>,
             );
         }
         let hub = self.clone();
         let initial = Arc::new(move |input: &JsonValue| hub.sync("initial", encode(&(id, input))));
         let hub = self.clone();
         let abort = Arc::new(move |task, runtime, _| hub.phase(id, "$abort".into(), task, runtime))
-            as PhaseHandler<JsonValue, JsonValue, JsonValue>;
+            as PhaseHandler<JsonValue, JsonValue, JsonValue, u64>;
         let migrate = if description["migrate"].as_bool() == Some(true) {
             let hub = self.clone();
             Some(Arc::new(move |input, checkpoint, version| {
@@ -300,9 +317,13 @@ impl Hub {
                 let registry = self.registry_by_id(field(&request, "registry")?)?;
                 let report = self.clone();
                 let clock = self.clone();
+                let settings = self.clone();
+                let resolver = self.clone();
                 let scheduler=TaskScheduler::open(Arc::new(remote_storage::RemoteStorage{hub:self.clone(),handle}),registry,SchedulerOptions{
-                    on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback}})))),..Default::default()
-                },SessionOptions{now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
+                    settings:Arc::new(move ||registry_bridge::settings(&settings.sync("settings",encode(&harness))?)),
+                    agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
+                    on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}})))),..Default::default()
+                },SessionOptions{conversation_created:Some(Arc::new(|tx,record|pi_durable::harness::agent::create_agent(&tx,record))),now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
                 self.schedulers.lock().insert(harness, scheduler);
                 Ok(Some(encode(&harness)))
             }),
@@ -336,10 +357,11 @@ impl Hub {
                     &context,
                 ))
             }
-            "waitForIdle" => mapped(
-                self.scheduler(&request)?
-                    .wait_for_idle(field(&request, "conversation")?, &context),
-            ),
+            "waitForIdle" => {
+                let scheduler = self.scheduler(&request)?;
+                scheduler.resume()?;
+                mapped(scheduler.wait_for_idle(field(&request, "conversation")?, &context))
+            }
             "appendEntry" => {
                 let tx = self.transaction(&request)?;
                 let draft = &request["entry"];
@@ -368,6 +390,60 @@ impl Hub {
                 let operation = self.transaction(&request)?.entry(field(&request, "entry")?);
                 Box::pin(async move { Ok(operation.await?.map(|entry| encode(&entry))) })
             }
+            "runtimeAgent" => {
+                self.agent_reads.fetch_add(1, Ordering::Relaxed);
+                let operation = self.runtime(&request)?.agent(&context);
+                let hub = self.clone();
+                Box::pin(async move {
+                    let agent = operation
+                        .await?
+                        .typed::<registry_bridge::ToolHandle, registry_bridge::SectionHandle>()?;
+                    Ok(Some(hub.encode_agent(agent)))
+                })
+            }
+            "runtimeHooks" => {
+                let callback: u64 = field(&request, "callback")?;
+                let name: JsonString = field(&request, "name")?;
+                let lookup = self.clone();
+                let invoke = self.clone();
+                let key = pi_durable::harness::hooks::HookKey::try_new(
+                    name.clone(),
+                    move |handlers: Arc<u64>| {
+                        decode::<Option<u64>>(&lookup.sync(
+                            "hookMember",
+                            object([
+                                ("handlers", encode(handlers.as_ref())),
+                                ("name", encode(&name)),
+                            ]),
+                        )?)
+                    },
+                );
+                mapped(self.runtime(&request)?.hooks().each(&key, move |handler| {
+                    invoke.hook_calls.fetch_add(1, Ordering::Relaxed);
+                    let call = invoke.call(
+                        "hookInvoke",
+                        object([
+                            ("callback", encode(&callback)),
+                            ("handler", encode(&handler)),
+                        ]),
+                    );
+                    async move {
+                        call.await?;
+                        Ok(())
+                    }
+                }))
+            }
+            "configure" => {
+                let scheduler = self.scheduler(&request)?;
+                let conversation = field(&request, "conversation")?;
+                let change = field(&request, "change")?;
+                mapped(scheduler.session().commit(
+                    move |tx| async move {
+                        pi_durable::harness::agent::configure(&tx, conversation, change).await
+                    },
+                    &context,
+                ))
+            }
             "runtimeRegistry" => {
                 let snapshot = self.runtime_registry(&request)?;
                 Box::pin(async move { Ok(Some(encode(&snapshot))) })
@@ -389,10 +465,11 @@ impl Hub {
                 self.scheduler(&request)?
                     .abort(field(&request, "task")?, &context),
             ),
-            "waitForTask" => mapped(
-                self.scheduler(&request)?
-                    .wait_for_task(field(&request, "task")?, &context),
-            ),
+            "waitForTask" => {
+                let scheduler = self.scheduler(&request)?;
+                scheduler.resume()?;
+                mapped(scheduler.wait_for_task(field(&request, "task")?, &context))
+            }
             "runtimeGetTask" => {
                 let runtime = self.runtime(&request)?;
                 let operation = runtime.get_task(
@@ -485,7 +562,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -533,6 +610,7 @@ async fn main() {
         output: Mutex::new(std::io::stdout()),
         next: AtomicU64::new(1_000_000),
         pending: Mutex::new(HashMap::new()),
+        input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
@@ -543,27 +621,141 @@ async fn main() {
         commits: AtomicU64::new(0),
         context_reads: AtomicU64::new(0),
         registry_reads: AtomicU64::new(0),
+        agent_reads: AtomicU64::new(0),
+        agent_resolutions: AtomicU64::new(0),
+        hook_calls: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
         registry: registry_bridge::RegistryBridge::default(),
     });
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move||{
-        for line in std::io::stdin().lock().lines(){let value:JsonValue=serde_json::from_str(&line.unwrap()).unwrap();
-            match value["type"].to_utf8().as_deref(){
-                Some("callback.result")=>{hub.response(value);continue;}
-                Some("context.release")=>{hub.ranges.lock().remove(&field::<u64>(&value,"range").unwrap());continue;}
-                Some("storage.adopt")=>{let id=field::<u64>(&value,"id").unwrap();let adopt=hub.adoptions.lock().remove(&id);if let Some(adopt)=adopt{adopt(field(&value,"seq").unwrap());}continue;}
-                Some("abort")=>{if let Some(controller)=hub.contexts.lock().get(&field::<u64>(&value,"id").unwrap()){controller.abort_with_reason(SignalReason::Error(AbortError::new(value["message"].to_utf8().unwrap())));}continue;}
-                _=>{}
+    tokio::task::spawn_blocking(move || {
+        let (send, receive) = std::sync::mpsc::channel::<Work>();
+        let admission = hub.clone();
+        let handle = runtime.clone();
+        let lane = std::thread::spawn(move || {
+            let _entered = handle.enter();
+            for work in receive {
+                match work {
+                    Work::Request(value, context) => {
+                        begin_request(admission.clone(), &handle, value, context)
+                    }
+                    Work::Reply(value) => admission.response(value),
+                    Work::Adopt(id, seq) => {
+                        let adopt = admission.adoptions.lock().remove(&id);
+                        if let Some(adopt) = adopt {
+                            adopt(seq);
+                        }
+                    }
+                    Work::Release(range) => {
+                        admission.ranges.lock().remove(&range);
+                    }
+                }
             }
-            let call=hub.clone();let id=field::<u64>(&value,"id").unwrap();
-            let context=hub.context(id);
-            // Begin commands in input order before observing their futures. A close or
-            // abort received behind a held reservation must already be on the line.
-            let operation={let _entered=runtime.enter();call.clone().begin(value,context).unwrap_or_else(|error|Box::pin(async{Err(error)}))};
-            runtime.spawn(async move{let result=operation.await;call.contexts.lock().remove(&id);
-                call.emit(match result{Ok(Some(value))=>object([("id",encode(&id)),("value",value)]),Ok(None)=>object([("id",encode(&id)),("missing",encode(&true))]),Err(error)=>encode(&serde_json::json!({"id":id,"error":{"name":error.name(),"message":error.to_string()}}))});
-            });
+        });
+        for line in std::io::stdin().lock().lines() {
+            let value: JsonValue = serde_json::from_str(&line.unwrap()).unwrap();
+            match value["type"].to_utf8().as_deref() {
+                Some("callback.result") => {
+                    let id = field::<u64>(&value, "id").unwrap();
+                    let synchronous = matches!(hub.pending.lock().get(&id), Some(Pending::Sync(_)));
+                    if synchronous {
+                        hub.response(value);
+                    } else {
+                        send.send(Work::Reply(value)).unwrap();
+                    }
+                    continue;
+                }
+                Some("context.release") => {
+                    send.send(Work::Release(field(&value, "range").unwrap()))
+                        .unwrap();
+                    continue;
+                }
+                Some("storage.adopt") => {
+                    send.send(Work::Adopt(
+                        field(&value, "id").unwrap(),
+                        field(&value, "seq").unwrap(),
+                    ))
+                    .unwrap();
+                    continue;
+                }
+                Some("abort") => {
+                    if let Some(controller) = hub
+                        .contexts
+                        .lock()
+                        .get(&field::<u64>(&value, "id").unwrap())
+                    {
+                        controller.abort_with_reason(SignalReason::Error(AbortError::new(
+                            value["message"].to_utf8().unwrap(),
+                        )));
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            let id = field::<u64>(&value, "id").unwrap();
+            let context = hub.context(id);
+            if let Some(message) = value["abortInitially"].to_utf8() {
+                hub.contexts
+                    .lock()
+                    .get(&id)
+                    .unwrap()
+                    .abort_with_reason(SignalReason::Error(AbortError::new(message)));
+            }
+            // Registry operations are independent of the Session admission
+            // line and may be called by a synchronous host callback on it.
+            if value["method"].to_utf8().is_some_and(|method| {
+                method.starts_with("registry.") || method == "runtimeRegistry"
+            }) {
+                begin_request(hub.clone(), &runtime, value, context);
+            } else {
+                send.send(Work::Request(value, context)).unwrap();
+            }
         }
-    }).await.unwrap();
+        // Unblock callbacks before joining admission when the host disappears.
+        {
+            let mut pending = hub.pending.lock();
+            hub.input_closed.store(true, Ordering::Release);
+            for (_, waiter) in pending.drain() {
+                let error = Err(Error::message("Test transport is closed"));
+                match waiter {
+                    Pending::Sync(send) => {
+                        let _ = send.send(error);
+                    }
+                    Pending::Async(send) => {
+                        let _ = send.send(error);
+                    }
+                }
+            }
+        }
+        drop(send);
+        lane.join().unwrap();
+    })
+    .await
+    .unwrap();
+}
+enum Work {
+    Request(JsonValue, Context),
+    Reply(JsonValue),
+    Adopt(u64, Seq),
+    Release(u64),
+}
+fn begin_request(
+    hub: Arc<Hub>,
+    runtime: &tokio::runtime::Handle,
+    value: JsonValue,
+    context: Context,
+) {
+    let id = field::<u64>(&value, "id").unwrap();
+    // Begin Session operations in wire order before observing their futures.
+    // Adoption and backend completion use the same lane, while synchronous
+    // callback replies stay readable even if adoption calls the host clock.
+    let operation = {
+        let _entered = runtime.enter();
+        hub.clone()
+            .begin(value, context)
+            .unwrap_or_else(|error| Box::pin(async { Err(error) }))
+    };
+    runtime.spawn(async move {let result=operation.await;hub.contexts.lock().remove(&id);
+        hub.emit(match result {Ok(Some(value))=>object([("id",encode(&id)),("value",value)]),Ok(None)=>object([("id",encode(&id)),("missing",encode(&true))]),Err(error)=>encode(&serde_json::json!({"id":id,"error":{"name":error.name(),"message":error.to_string()}}))});
+    });
 }

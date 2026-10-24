@@ -2,7 +2,12 @@
 //! Infinity, because these policies are runtime values rather than stored JSON.
 use crate::*;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
+pub type SettingsReader = Arc<dyn Fn() -> Result<Settings> + Send + Sync>;
+pub fn read_settings(reader: &SettingsReader) -> Result<Settings> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader()))
+        .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)))
+}
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessSettings {

@@ -1,9 +1,11 @@
 //! Durable task scheduling. Reservations, state changes and decisions share the
 //! Session's mutation line. Handlers and joins always run outside it.
 use super::{
+    agent::{AgentRequest, AgentResolver, AgentView, resolve_agent_in},
     ownership::*,
     reader::*,
     runtime::{Change, TaskDriver},
+    settings::{Settings, SettingsReader, read_settings, resolve_settings},
     state::*,
     util::*,
 };
@@ -54,6 +56,8 @@ pub struct TaskReport {
     pub task: Option<TaskId>,
     pub reason: Option<&'static str>,
     pub callback: Option<&'static str>,
+    pub extension: Option<JsonString>,
+    pub conversation: Option<ConversationId>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Wake {
@@ -71,8 +75,8 @@ type SettleOutcome =
 type WithdrawInputs = Arc<dyn Fn(Transaction, ConversationId) -> StorageFuture<()> + Send + Sync>;
 #[derive(Clone)]
 pub struct SchedulerOptions {
-    pub context_retention_ms: Arc<dyn Fn() -> f64 + Send + Sync>,
-    pub restart_limit: Arc<dyn Fn() -> f64 + Send + Sync>,
+    pub settings: SettingsReader,
+    pub agent: AgentResolver,
     pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
     pub settle_outcome: SettleOutcome,
@@ -81,8 +85,8 @@ pub struct SchedulerOptions {
 impl Default for SchedulerOptions {
     fn default() -> Self {
         Self {
-            context_retention_ms: Arc::new(|| 600_000.0),
-            restart_limit: Arc::new(|| 5.0),
+            settings: Arc::new(|| Ok(resolve_settings(Default::default()))),
+            agent: Arc::new(resolve_agent_in),
             on_report: Arc::new(|_, _| {}),
             on_wake: None,
             settle_outcome: Arc::new(|_, _, _| ready(Ok(()))),
@@ -125,11 +129,13 @@ struct KeptContext {
 }
 struct Invocation {
     task: TaskId,
+    name: JsonString,
     conversation: ConversationId,
     mode: InvocationMode,
     controller: AbortController,
     context: Context,
     registry: Mutex<RegistryView>,
+    agent: Mutex<Option<futures::future::Shared<StorageFuture<AgentView>>>>,
     ended: AtomicBool,
     done: tokio::sync::watch::Sender<bool>,
     watches: Mutex<IndexMap<u64, Watch>>,
@@ -357,6 +363,8 @@ impl TaskScheduler {
                     task,
                     reason,
                     callback: None,
+                    extension: None,
+                    conversation: None,
                 },
             )
         }));
@@ -370,9 +378,35 @@ impl TaskScheduler {
                     task: None,
                     reason: None,
                     callback: Some(callback),
+                    extension: None,
+                    conversation: None,
                 },
             )
         }));
+    }
+    fn report_extension(
+        &self,
+        error: Error,
+        extension: JsonString,
+        conversation: ConversationId,
+        task: Option<TaskId>,
+    ) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (self.inner.options.on_report)(
+                error,
+                TaskReport {
+                    kind: "extension_error",
+                    task,
+                    reason: None,
+                    callback: None,
+                    extension: Some(extension),
+                    conversation: Some(conversation),
+                },
+            )
+        }));
+    }
+    fn settings(&self) -> Result<Settings> {
+        read_settings(&self.inner.options.settings)
     }
     fn fail(&self, error: Error) {
         if !self.inner.state.lock().closing {
@@ -380,14 +414,12 @@ impl TaskScheduler {
         }
     }
     fn restart_limit(&self) -> f64 {
-        let limit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (self.inner.options.restart_limit)()
-        }))
-        .unwrap_or_else(|error| {
-            self.report(crate::session::panic_error(error), "host_error", None, None);
-            5.0
-        });
-        if limit >= 1.0 { limit.floor() } else { 5.0 }
+        self.settings()
+            .map(|settings| settings.restart_limit)
+            .unwrap_or_else(|error| {
+                self.report_host(error, "settings");
+                super::settings::DEFAULT_RESTART_LIMIT
+            })
     }
     fn parked(&self, record: &TaskRecord) -> bool {
         !record.info.abort_requested
@@ -706,13 +738,12 @@ impl TaskScheduler {
         self.schedule_expiry();
     }
     fn context_retention(&self) -> f64 {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (self.inner.options.context_retention_ms)()
-        }))
-        .unwrap_or_else(|error| {
-            self.report(crate::session::panic_error(error), "host_error", None, None);
-            0.0
-        })
+        self.settings()
+            .map(|settings| settings.context_retention_ms)
+            .unwrap_or_else(|error| {
+                self.report_host(error, "settings");
+                0.0
+            })
     }
     fn schedule_expiry(&self) {
         let retention = self.context_retention();
@@ -997,7 +1028,7 @@ impl TaskScheduler {
                 if resolved != *record || record.state.status() != TaskStatus::Running { tx.set_task(with_state(resolved, TaskState::Running { checkpoint, memos: None }))?; }
                 let controller = AbortController::new();
                 let (done, _) = tokio::sync::watch::channel(false);
-                let invocation = Arc::new(Invocation { task: id, conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
+                let invocation = Arc::new(Invocation { task: id, name: task.name().clone(), conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), agent: Mutex::new(None), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
                 { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.invocations.insert(id, invocation.clone()); }
                 capture.lock().push(Reservation { invocation, task });
             }
@@ -1057,6 +1088,7 @@ impl TaskScheduler {
             else {
                 return;
             };
+            *invocation.agent.lock() = None;
             let checkpoint = current.state.checkpoint().unwrap().clone();
             let handler = if invocation.mode == InvocationMode::Abort {
                 Some(definition.0.abort.clone())
@@ -1987,6 +2019,9 @@ impl TaskDriver for Driver {
     fn task_id(&self) -> TaskId {
         self.invocation.task
     }
+    fn task_name(&self) -> JsonString {
+        self.invocation.name.clone()
+    }
     fn conversation_id(&self) -> ConversationId {
         self.invocation.conversation
     }
@@ -2001,6 +2036,55 @@ impl TaskDriver for Driver {
     }
     fn registry(&self) -> RegistryView {
         self.invocation.registry.lock().clone()
+    }
+    fn settings(&self) -> Result<Settings> {
+        self.scheduler.settings()
+    }
+    fn report_extension(&self, error: Error, extension: JsonString) {
+        self.scheduler.report_extension(
+            error,
+            extension,
+            self.invocation.conversation,
+            Some(self.invocation.task),
+        );
+    }
+    fn agent(&self, context: &Context) -> StorageFuture<AgentView> {
+        if let Err(error) = self.check() {
+            return ready(Err(error));
+        }
+        let shared = {
+            let mut current = self.invocation.agent.lock();
+            if let Some(shared) = current.as_ref() {
+                shared.clone()
+            } else {
+                let scheduler = self.scheduler.clone();
+                let conversation = self.invocation.conversation;
+                let request = AgentRequest {
+                    session: self.session(),
+                    conversation,
+                    snapshot: self.registry(),
+                    settings: self.scheduler.inner.options.settings.clone(),
+                    context: self.invocation.context.clone(),
+                    report: Arc::new(move |error, extension| {
+                        scheduler.report_extension(error, extension, conversation, None)
+                    }),
+                };
+                let resolve = self.scheduler.inner.options.agent.clone();
+                let shared = eager(async move { resolve(request).await }).shared();
+                *current = Some(shared.clone());
+                shared
+            }
+        };
+        let context = context.clone();
+        eager(async move {
+            match await_with_context(shared, &context).await {
+                Ok(result) => result,
+                Err(pi_chord::context::AwaitError::Aborted(error)) => Err(error.into()),
+                Err(pi_chord::context::AwaitError::Task(error)) => {
+                    Err(Error::message(error.to_string()))
+                }
+            }
+        })
     }
 
     fn current(&self) -> Option<Arc<TaskRecord>> {

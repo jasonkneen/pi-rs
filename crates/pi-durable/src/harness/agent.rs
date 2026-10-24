@@ -1,5 +1,9 @@
 //! Stored conversation choices and resolution against one immutable registry.
-use super::{registry::*, settings::Settings};
+use super::{
+    reader::RegistryView,
+    registry::*,
+    settings::{Settings, SettingsReader, read_settings},
+};
 use crate::{storage::StorageFuture, wire, *};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
@@ -214,6 +218,78 @@ pub struct Agent<T, S> {
     pub sections: Vec<AgentSection<S>>,
     pub instructions: Option<JsonString>,
     pub cwd: Option<JsonString>,
+}
+
+#[derive(Clone)]
+pub struct AgentHook {
+    pub extension: JsonString,
+    pub task: JsonString,
+    pub handlers: Arc<dyn Any + Send + Sync>,
+}
+/// One resolved agent identity, retaining the host's complete registration types.
+#[derive(Clone)]
+pub struct AgentView {
+    value: Arc<dyn Any + Send + Sync>,
+    hooks: Arc<Vec<AgentHook>>,
+}
+impl AgentView {
+    pub fn typed<T: RegisteredTool, S: RegisteredSection>(&self) -> Result<Arc<Agent<T, S>>> {
+        self.value
+            .clone()
+            .downcast::<Agent<T, S>>()
+            .map_err(|_| Error::message("Agent does not have the requested registration types"))
+    }
+    pub fn same_agent(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.value, &other.value)
+    }
+    pub fn hooks(&self, task: &JsonString) -> impl Iterator<Item = &AgentHook> {
+        self.hooks.iter().filter(move |hook| hook.task == *task)
+    }
+}
+impl<T: RegisteredTool, S: RegisteredSection> From<Arc<Agent<T, S>>> for AgentView {
+    fn from(agent: Arc<Agent<T, S>>) -> Self {
+        let hooks = agent
+            .extensions
+            .iter()
+            .flat_map(|extension| {
+                extension.hooks.iter().map(|hook| AgentHook {
+                    extension: extension.name.clone(),
+                    task: hook.task.clone(),
+                    handlers: hook.handlers.clone(),
+                })
+            })
+            .collect();
+        Self {
+            value: agent,
+            hooks: Arc::new(hooks),
+        }
+    }
+}
+pub struct AgentRequest {
+    pub session: Session,
+    pub conversation: ConversationId,
+    pub snapshot: RegistryView,
+    pub settings: SettingsReader,
+    pub report: Arc<dyn Fn(Error, JsonString) + Send + Sync>,
+    pub context: Context,
+}
+pub type AgentResolver = Arc<dyn Fn(AgentRequest) -> StorageFuture<AgentView> + Send + Sync>;
+/// Read committed state at first use, then read the current settings and compose
+/// against the phase's snapshot. The scheduler shares this operation per phase.
+pub fn resolve_agent_in(request: AgentRequest) -> StorageFuture<AgentView> {
+    Box::pin(async move {
+        let state = request
+            .session
+            .snapshot(&AGENT_DOC, request.conversation, &request.context)
+            .await?;
+        let settings = read_settings(&request.settings)?;
+        request
+            .snapshot
+            .resolve_agent(state.as_deref(), &settings, |error, extension| {
+                (request.report)(error, extension.clone());
+                Ok(())
+            })
+    })
 }
 pub fn resolve_agent<T: RegisteredTool, S: RegisteredSection>(
     state: Option<&AgentState>,

@@ -3,8 +3,9 @@
 import {writeFileSync} from "node:fs";
 import {GenerationTask,ToolTask,CompactionTask} from "@earendil-works/pi-durable";
 import {nativeTransport,failure} from "./durable-native-transport.mjs";
+import {captureSettings,settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {handle,objectFor,describeTask} from "./durable-native-handles.mjs";
-const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),registries=new WeakMap();
+const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),resolvedAgents=new Map(),registries=new WeakMap();
 const callbacks={listeners:0,wrappers:0,reports:0};
 const call=(method,args={})=>nativeTransport.sync(`registry.${method}`,args);
 function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true};}
@@ -38,19 +39,19 @@ export function snapshot(id){
  };
  snapshots.set(id,held);ids.set(held,id);return held;
 }
-function settingsInput(settings){return {...settings,...(settings?.extensions===undefined?{}:{extensions:settings.extensions.map(extension=>extension.name)})};}
 export function resolveSettings(settings){
- const result=call("settings",{settings:settingsInput(settings)});
- if(settings?.extensions!==undefined)result.extensions=settings.extensions;
- return result;
+ const {request,extensions}=captureSettings(settings);const result=hydrateSettings(call("settings",request));
+ if(extensions!==undefined)result.extensions=extensions;return result;
 }
 export function resolveAgent(state,snapshot,settings,report){
- const result=call("resolve",{snapshot:ids.get(snapshot),state:state??null,settings:settingsInput(settings),report:handle(report)});
- const {id,...fields}=result;
+ return hydrateAgent(call("resolve",{snapshot:ids.get(snapshot),state:state??null,...settingsRequest(settings),report:handle(report)}));
+}
+export function hydrateAgent(result){
+ const {id,...fields}=result;const held=resolvedAgents.get(id);if(held)return held;
  const agent={...fields,extensions:fields.extensions.map(id=>objectFor(id)),tools:fields.tools.map(id=>objectFor(id)),callable:fields.callable.map(id=>objectFor(id)),deferred:fields.deferred.map(id=>objectFor(id)),
   sections:fields.sections.map(section=>Object.hasOwn(section,"id")?objectFor(section.id):{key:"instructions",render:()=>section.instructions}),
  };
- agents.set(agent,id);return agent;
+ agents.set(agent,id);resolvedAgents.set(id,agent);return agent;
 }
 export function agentHooks(agent,task){return call("hooks",{agent:agents.get(agent),task}).map(hook=>({...hook,handlers:objectFor(hook.handlers)}));}
 export function sectionExtension(agent,key){return call("sectionExtension",{agent:agents.get(agent),key});}

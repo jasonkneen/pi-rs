@@ -15,11 +15,14 @@ pub(crate) type Change =
 pub(crate) trait TaskDriver: Send + Sync {
     fn check(&self) -> Result<()>;
     fn task_id(&self) -> TaskId;
+    fn task_name(&self) -> JsonString;
     fn conversation_id(&self) -> ConversationId;
     fn signal(&self) -> AbortSignal;
     fn mode(&self) -> super::state::InvocationMode;
     fn session(&self) -> Session;
     fn registry(&self) -> super::reader::RegistryView;
+    fn agent(&self, context: &Context) -> StorageFuture<super::agent::AgentView>;
+    fn settings(&self) -> Result<super::settings::Settings>;
     fn current(&self) -> Option<Arc<TaskRecord>>;
     fn commit(&self, change: Change, context: &Context) -> StorageFuture<()>;
     fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord>;
@@ -35,6 +38,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn now(&self) -> f64;
     fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> DisarmTimer;
     fn report(&self, error: Error);
+    fn report_extension(&self, error: Error, extension: JsonString);
 }
 
 pub struct TaskRuntime<I = JsonValue, S = JsonValue, R = JsonValue, H = ()> {
@@ -72,6 +76,18 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     /// It changes only at a durable phase boundary, never on a registry install.
     pub fn registry(&self) -> super::reader::RegistryView {
         self.driver.registry()
+    }
+    pub fn agent(&self, context: &Context) -> StorageFuture<super::agent::AgentView> {
+        self.read(|| self.driver.agent(context))
+    }
+    pub fn settings(&self) -> Result<super::settings::Settings> {
+        self.driver.settings()
+    }
+    pub fn hooks(&self) -> super::hooks::HookRunner<H>
+    where
+        H: Send + Sync + 'static,
+    {
+        super::hooks::HookRunner::new(self.driver.clone())
     }
     pub fn now(&self) -> Result<f64> {
         self.driver.check()?;

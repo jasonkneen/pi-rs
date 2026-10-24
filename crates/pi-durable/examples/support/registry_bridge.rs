@@ -66,6 +66,69 @@ impl Hub {
             .typed::<ToolHandle, SectionHandle>()?;
         Ok(self.snapshot_handle(snapshot))
     }
+    pub(super) fn encode_agent(&self, agent: Arc<ResolvedAgent>) -> JsonValue {
+        let existing = self
+            .registry
+            .agents
+            .lock()
+            .iter()
+            .find(|(_, held)| Arc::ptr_eq(held, &agent))
+            .map(|(id, _)| *id);
+        let id = existing.unwrap_or_else(|| self.next.fetch_add(1, Ordering::Relaxed));
+        let mut value = object([
+            ("id", encode(&id)),
+            ("thinkingLevel", encode(&agent.thinking_level)),
+            (
+                "extensions",
+                encode(
+                    &agent
+                        .extensions
+                        .iter()
+                        .map(|e| self.extension_id(e))
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            (
+                "tools",
+                encode(&agent.tools.iter().map(|t| t.id).collect::<Vec<_>>()),
+            ),
+            (
+                "callable",
+                encode(&agent.callable.iter().map(|t| t.id).collect::<Vec<_>>()),
+            ),
+            (
+                "deferred",
+                encode(&agent.deferred.iter().map(|t| t.id).collect::<Vec<_>>()),
+            ),
+            (
+                "sections",
+                encode(
+                    &agent
+                        .sections
+                        .iter()
+                        .map(|s| match s {
+                            AgentSection::Registered(s) => object([("id", encode(&s.id))]),
+                            AgentSection::Instructions(text) => {
+                                object([("instructions", encode(text))])
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+        ]);
+        let fields = value.as_object_mut().unwrap();
+        if let Some(model) = &agent.model {
+            fields.insert("model".into(), model.clone());
+        }
+        if let Some(instructions) = &agent.instructions {
+            fields.insert("instructions".into(), encode(instructions));
+        }
+        if let Some(cwd) = &agent.cwd {
+            fields.insert("cwd".into(), encode(cwd));
+        }
+        self.registry.agents.lock().insert(id, agent);
+        value
+    }
     fn extension_id(&self, extension: &Arc<Ext>) -> u64 {
         *self
             .registry
@@ -297,7 +360,7 @@ impl Hub {
                     )
                 }));
             }
-            "registry.settings" => encode(&settings(&request)?),
+            "registry.settings" => settings_value(&settings(&request)?),
             "registry.resolve" => {
                 self.registry.resolutions.fetch_add(1, Ordering::Relaxed);
                 let state: Option<AgentState> = field(&request, "state")?;
@@ -324,60 +387,7 @@ impl Hub {
                         Ok(())
                     },
                 )?;
-                let id = self.next.fetch_add(1, Ordering::Relaxed);
-                let mut value = object([
-                    ("id", encode(&id)),
-                    ("thinkingLevel", encode(&agent.thinking_level)),
-                    (
-                        "extensions",
-                        encode(
-                            &agent
-                                .extensions
-                                .iter()
-                                .map(|e| self.extension_id(e))
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                    (
-                        "tools",
-                        encode(&agent.tools.iter().map(|t| t.id).collect::<Vec<_>>()),
-                    ),
-                    (
-                        "callable",
-                        encode(&agent.callable.iter().map(|t| t.id).collect::<Vec<_>>()),
-                    ),
-                    (
-                        "deferred",
-                        encode(&agent.deferred.iter().map(|t| t.id).collect::<Vec<_>>()),
-                    ),
-                    (
-                        "sections",
-                        encode(
-                            &agent
-                                .sections
-                                .iter()
-                                .map(|s| match s {
-                                    AgentSection::Registered(s) => object([("id", encode(&s.id))]),
-                                    AgentSection::Instructions(text) => {
-                                        object([("instructions", encode(text))])
-                                    }
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                    ),
-                ]);
-                let fields = value.as_object_mut().unwrap();
-                if let Some(model) = &agent.model {
-                    fields.insert("model".into(), model.clone());
-                }
-                if let Some(instructions) = &agent.instructions {
-                    fields.insert("instructions".into(), encode(instructions));
-                }
-                if let Some(cwd) = &agent.cwd {
-                    fields.insert("cwd".into(), encode(cwd));
-                }
-                self.registry.agents.lock().insert(id, Arc::new(agent));
-                value
+                self.encode_agent(Arc::new(agent))
             }
             "registry.hooks" => encode(
                 &agent_hooks(agent()?.as_ref(), &field(&request, "task")?)
@@ -422,7 +432,79 @@ impl Hub {
         }))
     }
 }
-fn settings(request: &JsonValue) -> Result<Settings> {
-    let input: HarnessSettings = decode(&request["settings"])?;
+pub(super) fn settings(request: &JsonValue) -> Result<Settings> {
+    let mut input: HarnessSettings = decode(&request["settings"])?;
+    if let Some(numbers) = request["runtimeNumbers"].as_object() {
+        for (key, tag) in numbers {
+            let number = match tag.to_utf8().as_deref() {
+                Some("Infinity") => f64::INFINITY,
+                Some("-Infinity") => f64::NEG_INFINITY,
+                Some("NaN") => f64::NAN,
+                Some("-0") => -0.0,
+                _ => return Err(Error::message("Unknown runtime number")),
+            };
+            match key.to_string().as_str() {
+                "contextRetentionMs" => input.context_retention_ms = Some(number),
+                "documentRetentionMs" => input.document_retention_ms = Some(number),
+                "restartLimit" => input.restart_limit = Some(number),
+                "progress.partialIntervalMs" => {
+                    input
+                        .progress
+                        .get_or_insert_with(Default::default)
+                        .partial_interval_ms = Some(number)
+                }
+                "progress.outputIntervalMs" => {
+                    input
+                        .progress
+                        .get_or_insert_with(Default::default)
+                        .output_interval_ms = Some(number)
+                }
+                _ => return Err(Error::message("Unknown runtime number field")),
+            }
+        }
+    }
     Ok(resolve_settings(input))
+}
+pub(super) fn settings_value(settings: &Settings) -> JsonValue {
+    fn number(value: f64) -> JsonValue {
+        if value.is_finite() && !(value == 0.0 && value.is_sign_negative()) {
+            encode(&value)
+        } else {
+            object([(
+                "$nativeNumber",
+                encode(&if value == 0.0 {
+                    "-0"
+                } else if value.is_nan() {
+                    "NaN"
+                } else if value.is_sign_positive() {
+                    "Infinity"
+                } else {
+                    "-Infinity"
+                }),
+            )])
+        }
+    }
+    let mut value = encode(settings);
+    let fields = value.as_object_mut().unwrap();
+    for (key, number_value) in [
+        ("contextRetentionMs", settings.context_retention_ms),
+        ("documentRetentionMs", settings.document_retention_ms),
+        ("restartLimit", settings.restart_limit),
+    ] {
+        fields.insert(key.into(), number(number_value));
+    }
+    let progress = fields
+        .get_mut(&JsonString::from("progress"))
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    progress.insert(
+        "partialIntervalMs".into(),
+        number(settings.progress.partial_interval_ms),
+    );
+    progress.insert(
+        "outputIntervalMs".into(),
+        number(settings.progress.output_interval_ms),
+    );
+    value
 }

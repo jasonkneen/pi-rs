@@ -3,8 +3,9 @@
 import {writeFileSync} from "node:fs";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
-import {describeTask,objectFor} from "./durable-native-handles.mjs";
-import {nativeRegistryId,snapshot} from "./durable-registry-adapter.mjs";
+import {handle,describeTask,objectFor} from "./durable-native-handles.mjs";
+import {settingsRequest} from "./durable-settings-wire.mjs";
+import {nativeRegistryId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map();
 const stats={phases:0,commits:0,storageCalls:0};
@@ -13,6 +14,9 @@ const send=frame=>nativeTransport.notify(frame);
 nativeTransport.event("signal",frame=>runtime(frame.runtime).controller.abort(new Error(frame.message)));
 nativeTransport.event("report",frame=>harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info));
 nativeTransport.register("now",id=>harnesses.get(id)?.options.now?.()??Date.now());
+nativeTransport.register("settings",id=>{const input=harnesses.get(id)?.options.settings;return settingsRequest(typeof input==="function"?input():input);});
+nativeTransport.register("hookMember",({handlers,name})=>{const owner=objectFor(handlers),member=owner[name];return typeof member==="function"?handle(member.bind(owner)):null;});
+nativeTransport.register("hookInvoke",({callback,handler})=>objectFor(callback)(objectFor(handler)));
 for(const method of ["phase","change","storage"])nativeTransport.register(method,(args,context,frame)=>invoke(method,args,frame.abortable?(context??BACKGROUND_CONTEXT):withoutAbortSignal(context??BACKGROUND_CONTEXT)));
 function change(method,args,callback,context){const id=callbackNext++;callbacks.set(id,callback);const operation=call(method,{...args,callback:id},context).finally(()=>callbacks.delete(id));operation.catch(()=>{});return operation;}
 function transaction(id){return{
@@ -24,7 +28,7 @@ function transaction(id){return{
 function runtime(id){
  let held=runtimes.get(id);if(held)return held;
  const controller=new AbortController();
- held={controller,signal:controller.signal,get registry(){return snapshot(nativeTransport.sync("runtimeRegistry",{runtime:id}));},commit:(callback,context)=>change("commit",{runtime:id},callback,context),
+ held={controller,signal:controller.signal,agent:context=>call("runtimeAgent",{runtime:id},context).then(hydrateAgent),hooks:{each:(name,invoke)=>call("runtimeHooks",{runtime:id,name,callback:handle(invoke)})},get registry(){return snapshot(nativeTransport.sync("runtimeRegistry",{runtime:id}));},commit:(callback,context)=>change("commit",{runtime:id},callback,context),
   memo:(name,...args)=>args.length===1?call("memo",{runtime:id,name},args[0]):call("memo",{runtime:id,name,candidate:args[0]},args[1]),
   getTask:(task,context)=>call("runtimeGetTask",{runtime:id,task},context),
   outcomes:(tasks,context)=>call("outcomes",{runtime:id,tasks},context),
@@ -65,7 +69,7 @@ export const Harness={async open(storage,options,context){
   commit:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
   close:context=>call("close",{harness:id},context),
  };
- function conversation(conversationId){return{id:conversationId,waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
+ function conversation(conversationId){return{id:conversationId,configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
  harnesses.set(id,harness);return harness;
 }};
 const storageIds=new WeakMap();let shuttingDown=false;

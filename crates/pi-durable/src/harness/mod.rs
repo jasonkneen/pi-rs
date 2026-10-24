@@ -2,6 +2,7 @@
 pub mod agent;
 pub mod catalog;
 pub mod context;
+pub mod hooks;
 pub mod ownership;
 pub mod reader;
 pub mod registry;

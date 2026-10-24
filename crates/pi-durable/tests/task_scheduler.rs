@@ -633,7 +633,14 @@ async fn recovery_counts_crashes_parks_at_the_limit_and_retry_resets_the_count()
         storage,
         catalog(&[task]),
         SchedulerOptions {
-            restart_limit: Arc::new(|| 2.0),
+            settings: Arc::new(|| {
+                Ok(pi_durable::harness::settings::resolve_settings(
+                    pi_durable::harness::settings::HarnessSettings {
+                        restart_limit: Some(2.0),
+                        ..Default::default()
+                    },
+                ))
+            }),
             ..Default::default()
         },
         SessionOptions::default(),

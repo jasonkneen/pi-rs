@@ -1,7 +1,12 @@
 //! Read-only registry capabilities used by the scheduler. A view retains the
 //! full typed snapshot, so a phase can use application registrations without
 //! coupling task execution to one application's tool and section types.
-use super::{catalog::*, registry::*};
+use super::{
+    agent::{AgentState, AgentView, try_resolve_agent},
+    catalog::*,
+    registry::*,
+    settings::Settings,
+};
 use crate::*;
 use std::{any::Any, sync::Arc};
 
@@ -9,12 +14,23 @@ use std::{any::Any, sync::Arc};
 pub struct RegistryView {
     catalog: TaskCatalogSnapshot,
     snapshot: Option<Arc<dyn Any + Send + Sync>>,
+    resolve: Option<ResolveAgent>,
 }
+type ResolveAgent = Arc<
+    dyn Fn(
+            Option<&AgentState>,
+            &Settings,
+            &mut dyn FnMut(Error, &JsonString) -> Result<()>,
+        ) -> Result<AgentView>
+        + Send
+        + Sync,
+>;
 impl RegistryView {
     pub fn from_catalog(catalog: TaskCatalogSnapshot) -> Self {
         Self {
             catalog,
             snapshot: None,
+            resolve: None,
         }
     }
     pub fn typed<T: RegisteredTool, S: RegisteredSection>(&self) -> Result<RegistrySnapshot<T, S>> {
@@ -35,12 +51,28 @@ impl RegistryView {
     pub fn same_snapshot(&self, other: &Self) -> bool {
         self.catalog.same_snapshot(&other.catalog)
     }
+    pub fn resolve_agent(
+        &self,
+        state: Option<&AgentState>,
+        settings: &Settings,
+        mut report: impl FnMut(Error, &JsonString) -> Result<()>,
+    ) -> Result<AgentView> {
+        let resolve = self.resolve.as_ref().ok_or_else(|| {
+            Error::message("Registry snapshot does not carry extension registrations")
+        })?;
+        resolve(state, settings, &mut report)
+    }
 }
 impl<T: RegisteredTool, S: RegisteredSection> From<RegistrySnapshot<T, S>> for RegistryView {
     fn from(snapshot: RegistrySnapshot<T, S>) -> Self {
+        let resolve = snapshot.clone();
         Self {
             catalog: snapshot.task_catalog(),
             snapshot: Some(Arc::new(snapshot)),
+            resolve: Some(Arc::new(move |state, settings, report| {
+                try_resolve_agent(state, &resolve, settings, report)
+                    .map(|agent| Arc::new(agent).into())
+            })),
         }
     }
 }

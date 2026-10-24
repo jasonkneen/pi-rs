@@ -19,6 +19,7 @@ selected.push("starts no abort handler whose reservation settles while closing",
 selected.push("keeps one registry snapshot per phase and refreshes it at the phase boundary");
 selected.push("waits for Harness and conversation idleness, counting blocked work and ignoring background tasks","pages the newest tasks first without scanning older ones","rejects unknown tasks and reports terminal tasks","rejects task waits cancelled or closed while queued on the line, and pending waits on close");
 selected.push("orders runtime commits against the step: one queued before it lands, one after it rejects","writes no fault when close seals while the step after a failed phase is queued","rejects a runtime commit that was queued on the line when close sealed it");
+selected.push("resolves the agent at first use in a phase from its snapshot, keeps it for the phase, and anew at the next","rejects an agent() wait whose caller context is cancelled, without affecting the phase's resolution","observes a failed agent resolution whose only caller stopped waiting");
 execFileSync("cargo",["build","--locked","-q","-p","pi-durable","--example","task_stock_bridge"],{cwd:root,stdio:"inherit"});
 const target=process.env.CARGO_TARGET_DIR??JSON.parse(execFileSync("cargo",["metadata","--no-deps","--format-version","1"],{cwd:root,encoding:"utf8"})).target_directory;
 const temporary=await mkdtemp(join(tmpdir(),"pi-durable-stock-tasks-"));
@@ -39,11 +40,11 @@ const summaries=[];let passed=false;
 try{
  for(const retention of ["600000","0"]){
   const report=join(temporary,`report-${retention}.json`),stats=join(temporary,`native-${retention}.json`);
-  const code=await new Promise((done,reject)=>{const child=spawn(process.execPath,[join(reference,"node_modules/vitest/vitest.mjs"),"run","--config",config,"--root",join(reference,"packages/durable"),"--reporter=json",`--outputFile=${report}`,"-t",selected.join("|")],{cwd:join(reference,"packages/durable"),env:{...process.env,PI_DURABLE_NATIVE_TASK_BRIDGE:join(target,"debug/examples/task_stock_bridge"),PI_DURABLE_NATIVE_TASK_STATS:stats,PI_DURABLE_DOCUMENT_RETENTION_MS:retention},stdio:"inherit"});child.once("error",reject);child.once("exit",done);});
+  const code=await new Promise((done,reject)=>{const child=spawn(process.execPath,[join(reference,"node_modules/vitest/vitest.mjs"),"run","--config",config,"--root",join(reference,"packages/durable"),"--reporter=json",`--outputFile=${report}`,"-t",selected.map(name=>name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|")],{cwd:join(reference,"packages/durable"),env:{...process.env,PI_DURABLE_NATIVE_TASK_BRIDGE:join(target,"debug/examples/task_stock_bridge"),PI_DURABLE_NATIVE_TASK_STATS:stats,PI_DURABLE_DOCUMENT_RETENTION_MS:retention},stdio:"inherit"});child.once("error",reject);child.once("exit",done);});
   const result=JSON.parse(await readFile(report,"utf8"));
   if(code!==0||!result.success){for(const suite of result.testResults??[]){if(suite.message)console.error(suite.message);for(const test of suite.assertionResults??[])if(test.status==="failed")console.error(JSON.stringify(test,null,2));}throw new Error("Stock task tests failed against Rust");}
-  assert.equal(result.numPassedTests,selected.length);const native=JSON.parse(await readFile(stats,"utf8"));
-  assert.ok(native.phases>0&&native.commits>0&&native.storageCalls>0&&native.registryReads>0);
+  assert.equal(result.numPassedTests,selected.length);assert.deepEqual(result.testResults.flatMap(suite=>suite.assertionResults.filter(test=>test.status==="passed").map(test=>test.title)).sort(),[...selected].sort(),"Stock selection differs from its literal test names");const native=JSON.parse(await readFile(stats,"utf8"));
+  assert.ok(native.phases>0&&native.commits>0&&native.storageCalls>0&&native.registryReads>0&&native.agentReads>0&&native.agentResolutions>0&&native.hookCalls>0);
   console.log(`Stock harness-tasks.test.ts retention=${retention}: ${result.numPassedTests} selected cases passed, ${result.numPendingTests} remaining cases not selected; native=${JSON.stringify(native)}`);
   summaries.push({retention,passed:result.numPassedTests,notSelected:result.numPendingTests,native,tests:result.testResults.flatMap(suite=>suite.assertionResults.filter(test=>test.status!=="pending").map(test=>({name:test.fullName,status:test.status,durationMs:test.duration})))});
  }
