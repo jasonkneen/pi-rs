@@ -186,6 +186,20 @@ async fn closing_admission_before_scheduler_notification_does_not_fail_the_sessi
         )
         .await
         .unwrap();
+    // Startup reconciliation can still sweep and replace the timer after the
+    // document commit settles. Hold a read job on the mutation line so close
+    // disarms an already installed timer, rather than racing its registration.
+    let (line_entered, line_ready) = tokio::sync::oneshot::channel();
+    let (line_release, line_released) = tokio::sync::oneshot::channel();
+    let held_line = scheduler.session().read_on_line(move || async move {
+        line_entered.send(()).unwrap();
+        line_released.await.unwrap();
+        Ok(())
+    });
+    tokio::time::timeout(Duration::from_secs(3), line_ready)
+        .await
+        .unwrap()
+        .unwrap();
     let session = scheduler.session();
     let runtime = tokio::runtime::Handle::current();
     let closing = std::thread::Builder::new()
@@ -209,6 +223,8 @@ async fn closing_admission_before_scheduler_notification_does_not_fail_the_sessi
     finished.await.unwrap();
     let failure = scheduler.session().failure();
     release.send(()).unwrap();
+    line_release.send(()).unwrap();
+    held_line.await.unwrap();
     closing.join().unwrap().await.unwrap();
     assert!(
         failure.is_none(),
