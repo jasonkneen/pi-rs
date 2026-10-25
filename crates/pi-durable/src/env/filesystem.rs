@@ -115,6 +115,44 @@ pub struct DirPage {
     pub entries: Vec<FileInfo>,
     pub done: bool,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WatchMode {
+    Native,
+    Polling,
+}
+#[derive(Clone, Debug, Default)]
+pub struct WatchExclude {
+    pub hidden: bool,
+    pub names: Vec<OsString>,
+}
+#[derive(Clone, Debug)]
+pub struct WatchTarget {
+    pub path: PathBuf,
+    pub recursive: bool,
+    pub exclude: WatchExclude,
+}
+impl WatchTarget {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            recursive: false,
+            exclude: WatchExclude::default(),
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub enum WatchChange {
+    Paths(Vec<PathBuf>),
+    Overflow,
+    Error(FileError),
+}
+pub type WatchCallback = Arc<dyn Fn(WatchChange) + Send + Sync>;
+pub trait FileWatcher: Send + Sync {
+    fn mode(&self) -> WatchMode;
+    /// Seal delivery immediately and join any scan or callback already running.
+    fn close(&self, context: &Context) -> FileFuture<()>;
+}
 pub trait DirReader: Send + Sync {
     fn next(&self, max_entries: f64, context: &Context) -> FileFuture<DirPage>;
     fn close(&self, context: &Context) -> FileFuture<()>;
@@ -164,6 +202,14 @@ pub trait FileSystem: Send + Sync {
     fn absolute_path(&self, path: &Path, context: &Context) -> FileFuture<PathBuf>;
     fn join_path(&self, parts: &[PathBuf], context: &Context) -> FileFuture<PathBuf>;
     fn read_binary_file(&self, path: &Path, context: &Context) -> FileFuture<Vec<u8>>;
+    fn watch(
+        &self,
+        _targets: &[WatchTarget],
+        _on_change: WatchCallback,
+        _context: &Context,
+    ) -> FileFuture<Arc<dyn FileWatcher>> {
+        unsupported(None)
+    }
     fn read_text_file(&self, path: &Path, context: &Context) -> FileFuture<String> {
         let read = self.read_binary_file(path, context);
         file_job(async move { Ok(String::from_utf8_lossy(&read.await?).into_owned()) })

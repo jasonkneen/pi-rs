@@ -38,6 +38,16 @@ struct Hub {
     binary_reads: AtomicU64,
     shell_calls: AtomicU64,
     shell_outputs: AtomicU64,
+    watches: Mutex<HashMap<u64, Arc<Watched>>>,
+    watch_opens: AtomicU64,
+    native_watch_opens: AtomicU64,
+    polling_watch_opens: AtomicU64,
+    watch_frames: AtomicU64,
+    watch_closes: AtomicU64,
+}
+struct Watched {
+    watcher: Arc<dyn FileWatcher>,
+    closed: std::sync::atomic::AtomicBool,
 }
 fn code(value: FileErrorCode) -> &'static str {
     match value {
@@ -127,7 +137,7 @@ impl Hub {
         let method = request["method"].as_str().unwrap();
         if method == "stats" {
             return Ok(
-                json!({"opens":self.opens.load(Ordering::Relaxed),"calls":self.calls.load(Ordering::Relaxed),"textReads":self.text_reads.load(Ordering::Relaxed),"binaryReads":self.binary_reads.load(Ordering::Relaxed),"shellCalls":self.shell_calls.load(Ordering::Relaxed),"shellOutputs":self.shell_outputs.load(Ordering::Relaxed)}),
+                json!({"opens":self.opens.load(Ordering::Relaxed),"calls":self.calls.load(Ordering::Relaxed),"textReads":self.text_reads.load(Ordering::Relaxed),"binaryReads":self.binary_reads.load(Ordering::Relaxed),"shellCalls":self.shell_calls.load(Ordering::Relaxed),"shellOutputs":self.shell_outputs.load(Ordering::Relaxed),"watchOpens":self.watch_opens.load(Ordering::Relaxed),"nativeWatchOpens":self.native_watch_opens.load(Ordering::Relaxed),"pollingWatchOpens":self.polling_watch_opens.load(Ordering::Relaxed),"watchFrames":self.watch_frames.load(Ordering::Relaxed),"watchCloses":self.watch_closes.load(Ordering::Relaxed),"activeWatches":self.watches.lock().values().filter(|watch|!watch.closed.load(Ordering::Acquire)).count()}),
             );
         }
         if method == "fs.new" {
@@ -192,17 +202,57 @@ impl Hub {
                 },
                 ..Default::default()
             };
+            let watch = &request["watch"];
+            let watch_options = NativeWatchOptions {
+                mode: watch
+                    .get("mode")
+                    .filter(|value| !value.is_null())
+                    .map(|value| {
+                        serde_json::from_value(value.clone())
+                            .map_err(|error| failed(&error.to_string()))
+                    })
+                    .transpose()?,
+                poll_interval_ms: watch
+                    .get("pollIntervalMs")
+                    .filter(|value| !value.is_null())
+                    .map(number),
+                max_directories: watch
+                    .get("maxDirectories")
+                    .filter(|value| !value.is_null())
+                    .map(number),
+                ..Default::default()
+            };
             let filesystem = Arc::new(
                 (match opener {
                     Some(opener) => NativeFileSystem::with_file_opener(cwd, opener)?,
                     None => NativeFileSystem::new(cwd)?,
                 })
-                .with_shell_options(options),
+                .with_shell_options(options)
+                .with_watch_options(watch_options),
             );
             let value = json!({"id":id,"namespace":filesystem.id()});
             self.filesystems.lock().insert(id, filesystem);
             self.opens.fetch_add(1, Ordering::Relaxed);
             return Ok(value);
+        }
+        if method.starts_with("watch.") {
+            let watch = self
+                .watches
+                .lock()
+                .get(&request["watcher"].as_u64().unwrap())
+                .cloned()
+                .ok_or_else(|| failed("Unknown native watcher"))?;
+            return match method {
+                "watch.mode" => Ok(json!(watch.watcher.mode())),
+                "watch.close" => {
+                    watch.watcher.close(&context).await?;
+                    if !watch.closed.swap(true, Ordering::AcqRel) {
+                        self.watch_closes.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(Value::Null)
+                }
+                _ => Err(failed("Unknown native watcher operation")),
+            };
         }
         if method.starts_with("reader.") {
             let id = request["reader"].as_u64().unwrap();
@@ -275,6 +325,55 @@ impl Hub {
             .ok_or_else(|| failed("Unknown native filesystem"))?;
         let path = PathBuf::from(request["path"].as_str().unwrap_or(""));
         match method {
+            "fs.watch" => {
+                let targets = request["targets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|target| WatchTarget {
+                        path: target["path"].as_str().unwrap().into(),
+                        recursive: target["recursive"].as_bool().unwrap_or(false),
+                        exclude: WatchExclude {
+                            hidden: target["exclude"]["hidden"].as_bool().unwrap_or(false),
+                            names: target["exclude"]["names"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(|name| name.as_str().unwrap().into())
+                                .collect(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                let callback = request["callback"].as_u64().unwrap();
+                let weak = Arc::downgrade(&self);
+                let watcher=filesystem.watch(&targets,Arc::new(move|change|{
+                    let Some(hub)=weak.upgrade()else{return;};
+                    hub.watch_frames.fetch_add(1,Ordering::Relaxed);
+                    let change=match change{
+                        WatchChange::Paths(paths)=>json!({"paths":paths}),
+                        WatchChange::Overflow=>json!({"overflow":true}),
+                        WatchChange::Error(error)=>json!({"error":{"kind":"file","code":code(error.code()),"message":error.to_string(),"path":error.path()}})
+                    };
+                    let operation=hub.call("watch.change",json!({"callback":callback,"change":change}),&Context::default());
+                    let _=tokio::task::block_in_place(||tokio::runtime::Handle::current().block_on(operation));
+                }),&context).await?;
+                let mode = watcher.mode();
+                match mode {
+                    WatchMode::Native => &self.native_watch_opens,
+                    WatchMode::Polling => &self.polling_watch_opens,
+                }
+                .fetch_add(1, Ordering::Relaxed);
+                let id = self.next.fetch_add(1, Ordering::Relaxed);
+                self.watches.lock().insert(
+                    id,
+                    Arc::new(Watched {
+                        watcher,
+                        closed: std::sync::atomic::AtomicBool::new(false),
+                    }),
+                );
+                self.watch_opens.fetch_add(1, Ordering::Relaxed);
+                Ok(json!({"id":id,"mode":mode}))
+            }
             "fs.cwd" => {
                 filesystem.set_cwd(&path);
                 Ok(Value::Null)
@@ -591,6 +690,12 @@ async fn main() {
         binary_reads: AtomicU64::new(0),
         shell_calls: AtomicU64::new(0),
         shell_outputs: AtomicU64::new(0),
+        watches: Mutex::new(HashMap::new()),
+        watch_opens: AtomicU64::new(0),
+        native_watch_opens: AtomicU64::new(0),
+        polling_watch_opens: AtomicU64::new(0),
+        watch_frames: AtomicU64::new(0),
+        watch_closes: AtomicU64::new(0),
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move||{

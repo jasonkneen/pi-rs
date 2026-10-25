@@ -366,13 +366,14 @@
         "crates/pi-durable/src/env/readers.rs",
         "crates/pi-durable/src/env/line_scan.rs",
         "crates/pi-durable/src/env/native_shell.rs",
-        "crates/pi-durable/tests/native_shell.rs"
+        "crates/pi-durable/tests/native_shell.rs",
+        "crates/pi-durable/src/env/native_watch.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Portable filesystem and shell capabilities include opened readers, spill-stream I/O and native process execution; watch contracts and full environment/tool/binding integration remain open"
+        "Portable filesystem and shell capabilities include opened readers, spill-stream I/O, native process execution and typed watch targets/exclusions/changes/mode/close; full environment/tool/binding integration remains open"
       ]
     },
     {
@@ -389,9 +390,20 @@
     },
     {
       "reference": "packages/durable/src/env/node-watch.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/env/native_watch.rs",
+        "crates/pi-durable/src/env/native_watch/backend.rs",
+        "crates/pi-durable/src/env/native_watch/snapshot.rs",
+        "crates/pi-durable/src/env/native_watch/tests.rs"
+      ],
+      "evidence": [
+        "CARGO_TARGET_DIR=/Users/jkneen/Documents/GitHub/pi-rs/target node scripts/run-stock-durable-env.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=conformance",
+        "All 51 original unfiltered environment conformance cases pass in both retention modes, including 19 watch cases over native OS notifications and explicit polling",
+        "Five native tests cover identical-metadata content hashes, callback panic isolation, exhausted native coverage, close during scan, runtime shutdown and initial-error cleanup ordering",
+        "Default polling on Windows and unreliable Linux filesystems; native identity reconciliation, recursive coverage, exclusions, budgets, overflow fallback and UTF16 path sorting; physical Windows/Linux runtime audit and embedded exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/env/node.ts",
@@ -402,16 +414,20 @@
         "crates/pi-durable/tests/env.rs",
         "crates/pi-durable/examples/env_stock_bridge.rs",
         "crates/pi-durable/src/env/native_shell.rs",
-        "crates/pi-durable/tests/native_shell.rs"
+        "crates/pi-durable/tests/native_shell.rs",
+        "crates/pi-durable/src/env/native_watch.rs",
+        "crates/pi-durable/src/env/native_watch/backend.rs",
+        "crates/pi-durable/src/env/native_watch/snapshot.rs",
+        "crates/pi-durable/src/env/native_watch/tests.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
         "Native filesystem provides metadata, canonical/home/file URL paths, private temporary paths, descriptor-bound positional reads, bounded line scans, nonblocking regular-file admission and final-component no-follow checks",
-        "The complete unchanged env-node.test.ts passes 52 cases per mode with one original platform skip; env-node-spill.test.ts passes its delayed-write case in both modes; 32 original reader/shell conformance cases pass per mode over native file handles",
+        "The complete unchanged env-node.test.ts passes 52 cases per mode with one original platform skip; env-node-spill.test.ts passes its delayed-write case in both modes; all 51 original reader/shell/watch conformance cases pass per mode over native files, processes and watchers",
         "Native shell supports script/argv, bash/legacy WSL selection, live environment merging, timeout/abort/cleanup, stream-specific decoders, raw-byte spilling with bounded queues and post-exit stdio lifetime. Seven native tests cover cwd admission snapshots, process-tree cancellation, direct argv, numeric spill thresholds and delayed backpressure",
-        "File watching, native built-in tools, physical Windows execution and embedded exports remain open; five original Windows path-emulation cases execute native configuration policy on the local host"
+        "Native built-in tools, physical Windows execution and embedded exports remain open; five original Windows path-emulation cases execute native configuration policy on the local host"
       ]
     },
     {
@@ -1378,7 +1394,7 @@
     },
     {
       "reference": "packages/durable/test/env-node-conformance.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "scripts/run-stock-durable-env.mjs",
         "scripts/stock/durable-env-adapter.mjs",
@@ -1386,13 +1402,17 @@
         "crates/pi-durable/src/env/native.rs",
         "crates/pi-durable/src/env/readers.rs",
         "crates/pi-durable/src/env/native_shell.rs",
-        "crates/pi-durable/tests/native_shell.rs"
+        "crates/pi-durable/tests/native_shell.rs",
+        "crates/pi-durable/src/env/native_watch.rs",
+        "crates/pi-durable/src/env/native_watch/backend.rs",
+        "crates/pi-durable/src/env/native_watch/snapshot.rs",
+        "crates/pi-durable/src/env/native_watch/tests.rs"
       ],
       "evidence": [
-        "32 original cases pass per mode: binary/directory readers, argv safety, stream identity, cwd/exit/error behavior, output windows, timeout/abort and symlinks in both registrations, plus large reads and FIFO refusal",
-        "Each mode proves 32 native opens, 208 native operations, 26 binary reads and 20 shell calls, with zero host opened-file callbacks",
-        "Original runner-independent Source case bodies drive native handles and processes; native export of the conformance factory remains pending",
-        "The remaining 19 local watch cases remain unselected; physical Windows execution is unverified",
+        "The complete pinned file runs without a test-name filter: all 51 original cases pass in both retention modes on macOS, including native and explicit-polling registrations, directory-budget failure, large binary reads and FIFO refusal",
+        "Each mode proves 51 native environments, 375 native operations, 26 binary reads, 22 shell calls, 19 watch opens and closes, 37 watch frames and zero active watchers; ten OS-backed watchers and nine explicit polling watchers are recorded separately",
+        "Original conformance case bodies, registration factory, assertions, deadlines and source bytes are retained; native production export of the conformance factory remains pending",
+        "Physical Windows/Linux execution remains unverified; original platform skips remain intact",
         "porting/durable/STATUS.md"
       ]
     },

@@ -23,6 +23,11 @@ dirs.workspace = true
 url.workspace = true
 uuid.workspace = true
 libc.workspace = true
+notify.workspace = true
+sha2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true

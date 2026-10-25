@@ -33,7 +33,7 @@ node scripts/run-stock-durable-jsonl.mjs "$reference" --report=/tmp/pi-durable-s
 node scripts/run-stock-durable-codecs.mjs "$reference" --report=/tmp/pi-durable-stock-codecs-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=all --report=/tmp/pi-durable-stock-env-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=spill --report=/tmp/pi-durable-stock-env-spill-report.json
-node scripts/run-stock-durable-env.mjs "$reference" --suite=readers --report=/tmp/pi-durable-stock-env-readers-report.json
+node scripts/run-stock-durable-env.mjs "$reference" --suite=conformance --report=/tmp/pi-durable-stock-env-conformance-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=host-inputs --report=/tmp/pi-durable-stock-host-inputs-report.json

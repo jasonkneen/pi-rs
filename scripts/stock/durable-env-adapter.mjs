@@ -7,6 +7,7 @@ import {FileError,ExecutionError} from "@pi-durable-stock-env-contract";
 import {nativeTransport} from "./durable-native-transport.mjs";
 const files=new Map();let nextFile=1,hostCalls=0;
 const environments=new Map(),outputs=new Map();let nextOutput=1;
+const watchCallbacks=new Map();let nextWatchCallback=1;
 const spills=new Map();let nextSpill=1,spillCalls=0;
 function spillHost(method,callback){nativeTransport.register(method,async args=>{spillCalls++;try{return {ok:true,value:await callback(args)};}catch(error){return {ok:false,error:{code:"unknown",message:error.message}};}});}
 spillHost("spill.open",args=>{
@@ -42,11 +43,15 @@ nativeTransport.register("shell.output",(args,context)=>{
  try{outputs.get(args.callback)(args.text,context,{stream:args.stream});return {ok:true};}
  catch(error){return {ok:false,error:{code:"unknown",message:error.message}};}
 });
+nativeTransport.register("watch.change",args=>{
+ try{const change=args.change;watchCallbacks.get(args.callback)({...change,...(change.error?{error:new FileError(change.error.code,change.error.message,change.error.path??undefined)}:{})});return {ok:true};}
+ catch(error){return {ok:false,error:{message:error.message}};}
+});
 function call(method,args,context,convert=value=>value){return nativeTransport.request(method,args,context).then(value=>({ok:true,value:convert(value)}),error=>{if(!(error instanceof FileError))throw error;return {ok:false,error};});}
 const voidValue=()=>undefined;
 function reader(id,kind){const args={reader:id};return {close:context=>nativeTransport.request("reader.close",args,context).then(voidValue),...(kind==="text"?{readLine:context=>call("reader.line",args,context,value=>value??undefined)}:kind==="binary"?{info:context=>call("reader.info",args,context),read:(offset,length,context)=>call("reader.read",{...args,offset:scalar(offset),length:scalar(length)},context,value=>new Uint8Array(Buffer.from(value,"base64"))),scanLines:(options,context)=>call("reader.scan",{...args,start:scalar(options.startLine),...(options.endLine===undefined?{}:{end:scalar(options.endLine)})},context)}:{next:(max,context)=>call("reader.next",{...args,max:scalar(max)},context)})};}
 export class NodeExecutionEnv {
- constructor(options){const opened=nativeTransport.sync("fs.new",{cwd:options.cwd,shellPath:options.shellPath,shellEnv:options.shellEnv,hostIo:process.env.PI_DURABLE_NATIVE_ENV_HOST_IO==="1",hostSpill:process.env.PI_DURABLE_NATIVE_ENV_HOST_SPILL==="1"});this.native=opened.id;this.id=opened.namespace;this.directory=options.cwd;environments.set(this.native,this);}
+ constructor(options){const opened=nativeTransport.sync("fs.new",{cwd:options.cwd,shellPath:options.shellPath,shellEnv:options.shellEnv,watch:options.watch,hostIo:process.env.PI_DURABLE_NATIVE_ENV_HOST_IO==="1",hostSpill:process.env.PI_DURABLE_NATIVE_ENV_HOST_SPILL==="1"});this.native=opened.id;this.id=opened.namespace;this.directory=options.cwd;environments.set(this.native,this);}
  get cwd(){return this.directory;}
  set cwd(path){nativeTransport.sync("fs.cwd",{fs:this.native,path});this.directory=path;}
  invoke(method,args,context,convert){return call(method,{fs:this.native,...args},context,convert);}
@@ -71,6 +76,13 @@ export class NodeExecutionEnv {
  remove(path,options,context){return this.invoke("fs.remove",{path,...options},context,voidValue);}
  createTempDir(prefix,context){return this.invoke("fs.tempDir",{prefix},context);}
  createTempFile(options,context){return this.invoke("fs.tempFile",{...options},context);}
+ watch(targets,onChange,context){
+  const callback=nextWatchCallback++;watchCallbacks.set(callback,onChange);
+  return this.invoke("fs.watch",{targets,callback},context,value=>({
+   get mode(){return nativeTransport.sync("watch.mode",{watcher:value.id});},
+   close:context=>nativeTransport.request("watch.close",{watcher:value.id},context).finally(()=>watchCallbacks.delete(callback)),
+  })).then(result=>{if(!result.ok)watchCallbacks.delete(callback);return result;});
+ }
  exec(command,options,context){
   const callback=options?.onOutput===undefined?undefined:nextOutput++;if(callback!==undefined)outputs.set(callback,options.onOutput);
   return nativeTransport.request("fs.exec",{fs:this.native,command,options:{...options,onOutput:callback,...(options?.timeout===undefined?{}:{timeout:scalar(options.timeout)}),...(options?.spill===undefined?{}:{spill:{afterBytes:scalar(options.spill.afterBytes),afterLines:scalar(options.spill.afterLines)}})},host:{cwd:process.cwd(),platform:process.platform,env:{...process.env}}},context)
@@ -79,4 +91,4 @@ export class NodeExecutionEnv {
  }
  cleanup(context){return nativeTransport.request("fs.cleanup",{fs:this.native},context).then(voidValue);}
 }
-export async function shutdown(){if(process.env.PI_DURABLE_NATIVE_ENV_EMPTY_OK==="1"&&!nativeTransport.started)return {opens:0,calls:0,hostFileCalls:0,hostSpillCalls:0};const native=await nativeTransport.request("stats");if(native.opens===0||native.calls===0)throw new Error("Native filesystem was bypassed");if(spills.size)throw new Error("Host spill handles still open");if(files.size)throw new Error(`Host file handles still open: ${files.size}`);await nativeTransport.close();return {...native,hostFileCalls:hostCalls,hostSpillCalls:spillCalls};}
+export async function shutdown(){if(process.env.PI_DURABLE_NATIVE_ENV_EMPTY_OK==="1"&&!nativeTransport.started)return {opens:0,calls:0,hostFileCalls:0,hostSpillCalls:0};const native=await nativeTransport.request("stats");if(native.opens===0||native.calls===0)throw new Error("Native filesystem was bypassed");if(native.activeWatches)throw new Error("Native watchers still active");if(spills.size)throw new Error("Host spill handles still open");if(files.size)throw new Error(`Host file handles still open: ${files.size}`);await nativeTransport.close();return {...native,hostFileCalls:hostCalls,hostSpillCalls:spillCalls};}

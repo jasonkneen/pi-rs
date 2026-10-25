@@ -13,6 +13,7 @@ pub struct NativeFileSystem {
     cwd: std::sync::Arc<RwLock<PathBuf>>,
     opener: Option<FileOpener>,
     shell: super::native_shell::NativeShell,
+    watch: super::native_watch::NativeWatchOptions,
 }
 impl NativeFileSystem {
     pub fn new(cwd: impl Into<PathBuf>) -> FileResult<Self> {
@@ -28,6 +29,7 @@ impl NativeFileSystem {
             cwd: std::sync::Arc::new(RwLock::new(normalize(&cwd))),
             opener: None,
             shell: Default::default(),
+            watch: Default::default(),
         })
     }
     pub fn with_file_opener(cwd: impl Into<PathBuf>, opener: FileOpener) -> FileResult<Self> {
@@ -37,6 +39,10 @@ impl NativeFileSystem {
     }
     pub fn with_shell_options(mut self, options: super::native_shell::NativeShellOptions) -> Self {
         self.shell.options = options;
+        self
+    }
+    pub fn with_watch_options(mut self, options: super::native_watch::NativeWatchOptions) -> Self {
+        self.watch = options;
         self
     }
     pub fn with_shell_host(mut self, host: super::native_shell::ShellHost) -> Self {
@@ -178,6 +184,36 @@ fn normalize(path: &Path) -> PathBuf {
     result
 }
 impl FileSystem for NativeFileSystem {
+    fn watch(
+        &self,
+        targets: &[WatchTarget],
+        on_change: WatchCallback,
+        context: &Context,
+    ) -> FileFuture<std::sync::Arc<dyn FileWatcher>> {
+        if context.check().is_err() {
+            return Box::pin(async {
+                Err(FileError::new(FileErrorCode::Aborted, "aborted", None))
+            });
+        }
+        let targets = targets
+            .iter()
+            .map(|target| WatchTarget {
+                path: self.resolve(&target.path),
+                ..target.clone()
+            })
+            .collect();
+        let opened =
+            super::native_watch::NativeFileWatcher::open(targets, on_change, self.watch.clone());
+        let context = context.clone();
+        file_job(async move {
+            let watcher = opened.await?;
+            if context.check().is_err() {
+                watcher.close(&context).await?;
+                return Err(FileError::new(FileErrorCode::Aborted, "aborted", None));
+            }
+            Ok(watcher as std::sync::Arc<dyn FileWatcher>)
+        })
+    }
     fn id(&self) -> &str {
         "node:local"
     }

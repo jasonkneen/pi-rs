@@ -74,6 +74,7 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 unicode-normalization = "0.1"
 notify = "8"
+winapi-util = "0.1"
 ignore = "0.4"
 tempfile = "3"
 semver = "1"

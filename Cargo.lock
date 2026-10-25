@@ -3056,6 +3056,7 @@ dependencies = [
  "futures",
  "indexmap",
  "libc",
+ "notify",
  "parking_lot",
  "pi-ai",
  "pi-chord",
@@ -3064,12 +3065,14 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
  "url",
  "uuid",
+ "winapi-util",
 ]
 
 [[package]]
