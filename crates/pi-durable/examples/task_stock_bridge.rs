@@ -106,6 +106,12 @@ fn error_value(error: &Error) -> JsonValue {
             ("conversationId".into(), encode(conversation)),
         ]);
     }
+    if let ErrorKind::ReadOnly(operation) = error.kind() {
+        value.as_object_mut().unwrap().extend([
+            ("kind".into(), encode(&"readOnly")),
+            ("operation".into(), encode(operation)),
+        ]);
+    }
     value
 }
 type TaskRuntime = NativeRuntime<JsonValue, JsonValue, JsonValue, u64>;
@@ -518,7 +524,7 @@ impl Hub {
                     settings:Arc::new(move || if host_settings {registry_bridge::settings(&settings.sync("settings",encode(&harness))?)} else {Ok(pi_durable::harness::settings::resolve_settings(Default::default()))}),
                     settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
                     on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}})))),..Default::default()
-                },SessionOptions{report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||if host_clock {decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()} else {native_now()}),document_retention_ms:field(&request,"retention")?,..Default::default()},&with_context_value(&HARNESS_CONTEXT,harness,&context)).await?;
+                },SessionOptions{read_only:request["readOnly"].as_bool()==Some(true),report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||if host_clock {decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()} else {native_now()}),document_retention_ms:field(&request,"retention")?,..Default::default()},&with_context_value(&HARNESS_CONTEXT,harness,&context)).await?;
                 let resume = scheduler.clone();
                 let clock = self.clone();
                 let settings = self.clone();
@@ -647,11 +653,15 @@ impl Hub {
                         .commit(move |tx| async move { tx.conversation(id).await }, &context),
                 )
             }
-            "conversation.abort" => mapped(self.scheduler(&request)?.abort_conversation(
-                field(&request, "conversation")?,
-                request["background"].as_bool().unwrap_or(false),
-                &context,
-            )),
+            "conversation.abort" => {
+                let scheduler = self.scheduler(&request)?;
+                scheduler.resume()?;
+                mapped(scheduler.abort_conversation(
+                    field(&request, "conversation")?,
+                    request["background"].as_bool().unwrap_or(false),
+                    &context,
+                ))
+            }
             "tx.task" => {
                 let operation = self.transaction(&request)?.task(field(&request, "task")?);
                 Box::pin(async move { Ok(operation.await?.map(|task| encode(&task))) })

@@ -3,7 +3,7 @@
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
-import {ConversationBusy,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
+import {ConversationBusy,ReadOnlySession,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
 import {validateToolArguments} from "@earendil-works/pi-ai/utils/validation";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 import {copyJson} from "@earendil-works/chord";
@@ -13,6 +13,7 @@ import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-n
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,nativeSnapshotId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
+nativeTransport.error("readOnly",value=>new ReadOnlySession(value.operation));
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
 const drafts=new Map(),viewBindings=new WeakMap();
@@ -126,7 +127,7 @@ export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
- const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);

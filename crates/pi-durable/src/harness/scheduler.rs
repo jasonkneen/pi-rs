@@ -22,10 +22,7 @@ use indexmap::{IndexMap, IndexSet};
 use parking_lot::Mutex;
 use pi_chord::{
     AbortController, Watch,
-    context::{
-        AbortError, AbortReason as SignalReason, await_with_context, with_abort_signal,
-        without_abort_signal,
-    },
+    context::{AbortError, AbortReason as SignalReason, with_abort_signal, without_abort_signal},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -2007,7 +2004,9 @@ impl TaskScheduler {
                 let wait = async move {
                     tokio::select! { _ = invocation.finished() => Ok(()), failure = session.failed() => failure }
                 };
-                await_with_context(wait, &context)
+                // Both operations already run independently. Keep this join on
+                // the Session queue so the caller precedes a fresh abort phase.
+                crate::storage::line::observe(wait, &context)
                     .await
                     .map_err(|error| Error::message(error.to_string()))??;
             }
@@ -2144,8 +2143,7 @@ impl TaskScheduler {
             state.wake_pending = true;
         }
         let scheduler = self.clone();
-        tokio::spawn(async move {
-            tokio::task::yield_now().await;
+        self.inner.session.spawn(async move {
             {
                 let mut state = scheduler.inner.state.lock();
                 state.wake_pending = false;

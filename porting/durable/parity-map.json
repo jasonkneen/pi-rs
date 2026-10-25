@@ -646,7 +646,8 @@
         "scripts/stock/durable-memory-adapter.mjs",
         "crates/pi-durable/src/harness/models/collection.rs",
         "crates/pi-durable/src/harness/models/message.rs",
-        "crates/pi-durable/src/harness/scheduler/timer_tests.rs"
+        "crates/pi-durable/src/harness/scheduler/timer_tests.rs",
+        "scripts/stock/durable-native-transport.mjs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -664,6 +665,11 @@
         "Reservation and reconciliation loops run on the Session FIFO as deferred jobs, matching source queueMicrotask ordering without an extra Tokio yield",
         "Optional live model-collection capability preserves original host models and assistant objects, with the native pi-ai SDK as the default; arbitrary hosted values copy only at durable writers",
         "A red/green native timer regression proves registration cannot retain a callback that fired before the host returned; generation ownership also guards superseded callbacks and close. Three complete stock compaction repeats pass in both retention modes after the fix",
+        "Wake updates share the Session FIFO without an extra Tokio yield; an overdue-ready sleeping task in the unchanged stock compaction suite exposed the lost timer, and a deterministic red/green regression proves later Session continuations cannot overtake wake calculation",
+        "All three timer regressions pass: early callback registration, stale callback ownership and wake/Session ordering; the stock read-only file also exercises native recovery suppression and scheduler guards",
+        "Abort joins observe already-independent run/failure futures directly on the Session queue; the process pump defers later asynchronous callbacks until delivered response continuations can run; the original immediate-second-abort stock assertion passes forty focused zero-retention runs",
+        "Three complete stock task-file repeats pass under both retention settings after the join/IPC fixes (216 executions); full gate passes 480 Rust tests and 629 stock cases per retention mode",
+        "Five additional complete stock compaction runs pass in both retention modes after ordered wake calculation (1080 executions); all source assertions and deadlines unchanged",
         "Abort joins bind to the owning Session FIFO; process response observers use that same queue to preserve the caller-before-abort-handler order. Original stock assertion passes thirty focused repeats and three complete task-file repeats in both retention modes"
       ]
     },
@@ -1556,7 +1562,7 @@
         "node scripts/run-stock-durable-compaction.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-compaction-report.json",
         "All 108 unmodified cases pass in both retention modes with zero pending tests; source pin and bytes before/after verified; original assertions, timers and timeouts unchanged",
         "Native compaction/generation/tools, Session, scheduler, registry, memory, conversation views/events, hooks and model collection dispatch; original host model collections, callbacks, validators, environments and controlled/persistent storage retained",
-        "Per mode: 102 native complete calls, twelve native compaction hook calls, 368 native generation requests, 94 direct memory opens, 2266 memory commits, fifteen planning calls and zero source generation/compaction phases",
+        "Per mode: 102 native complete calls, twelve native compaction hook calls, 368 native generation requests, 94 direct memory opens, more than 2200 memory commits, fifteen planning calls and zero source generation/compaction phases",
         "Actual SQLite reopen, interrupted summary retry, overflow and threshold compaction, concurrent/stale placement, cancellation, failed commit atomicity and event ordering assertions run against native services",
         "Twelve native execution tests exercise the native SDK and hosted value boundaries independently; complete native Harness facade, embedded bindings and SDK 1.4 alignment remain open",
         "porting/durable/STATUS.md"
@@ -1780,9 +1786,24 @@
     },
     {
       "reference": "packages/durable/test/harness-read-only.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/session/mod.rs",
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "node scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=read-only --report=/tmp/pi-durable-stock-read-only-report.json",
+        "All four unmodified stock cases pass with retention=600000 and retention=0; pinned bytes, exact case inventory and zero pending cases verified",
+        "Native read-only Session admission, scheduler recovery suppression and wake state; writes/scheduling reject with the original public ReadOnlySession class while reads and empty commits remain healthy",
+        "Stock SQLite head checks prove no viewer commits; running records remain running and recovery occurs once on the next writable open; three native generation requests, two document reads and one inspection per mode",
+        "The process adapter now forwards readOnly and calls native resume before public Conversation.abort, matching the source facade; existing native admission/guard implementations are unchanged",
+        "Original model collections, SQLite backend capability and callbacks remain host-owned; complete native Harness facade, SDK 1.4 alignment and embedded exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-registry.test.ts",

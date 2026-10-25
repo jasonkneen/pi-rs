@@ -2,7 +2,7 @@
 // calls. A synchronous caller pumps frames so nested host callbacks can finish.
 import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
-let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve;
+let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
 const errors=new Map();
 let exited;
@@ -11,6 +11,9 @@ function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFil
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
+ // Preserve promise continuations when a synchronous call pumps several
+ // frames. Later asynchronous callbacks must wait for that call to return.
+ if(pumping&&frame.type==="callback"&&!frame.sync){queueMicrotask(()=>dispatch(frame));return;}
  trace("receive",frame);
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
@@ -43,7 +46,7 @@ function start(){
  worker=new Worker(new URL("./durable-sync-worker.mjs",import.meta.url),{workerData:{port:port2,signal:signal.buffer,binary},transferList:[port2]});
  port.on("message",dispatch);worker.on("error",fail);
 }
-function drain(){for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}
+function drain(){pumping++;try{for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}finally{pumping--;}}
 export const nativeTransport={
  error(kind,create){if(errors.has(kind))throw new Error(`Duplicate native error ${kind}`);errors.set(kind,create);},
  isCancellation:error=>cancellations.has(error),isAdmissionFailure:error=>admissionFailures.has(error),
