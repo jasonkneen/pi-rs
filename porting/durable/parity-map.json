@@ -313,9 +313,20 @@
     },
     {
       "reference": "packages/durable/src/codemode/output.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/output.rs",
+        "crates/pi-durable/tests/codemode_output.rs",
+        "crates/pi-durable/examples/support/codemode_bridge.rs"
+      ],
+      "evidence": [
+        "Native lossless result formatting, console layout, error summaries, bounded text spills and deduplicated parallel image writes match 112 independent pinned-source expectations and exact writes",
+        "All 41 original code-mode cases pass unfiltered per retention mode using the release bridge, with 30 native formatting calls, 146 native tool calls and 425 native document writes per mode; the original five-second deadline is unchanged",
+        "Original CodemodeCall durable replay driver, VM and globals remain host capabilities in this modular gate; full native code-mode execution and exports remain open",
+        "/tmp/pi-durable-stock-codemode-output-second.log",
+        "/tmp/pi-durable-codemode-output-native.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/documents.ts",
@@ -1531,9 +1542,20 @@
     },
     {
       "reference": "packages/durable/test/codemode.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/output.rs",
+        "crates/pi-durable/tests/codemode_output.rs",
+        "crates/pi-durable/examples/support/codemode_bridge.rs"
+      ],
+      "evidence": [
+        "Native lossless result formatting, console layout, error summaries, bounded text spills and deduplicated parallel image writes match 112 independent pinned-source expectations and exact writes",
+        "All 41 original code-mode cases pass unfiltered per retention mode using the release bridge, with 30 native formatting calls, 146 native tool calls and 425 native document writes per mode; the original five-second deadline is unchanged",
+        "Original CodemodeCall durable replay driver, VM and globals remain host capabilities in this modular gate; full native code-mode execution and exports remain open",
+        "/tmp/pi-durable-stock-codemode-output-second.log",
+        "/tmp/pi-durable-codemode-output-native.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/document-append-bench.ts",

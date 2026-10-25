@@ -26,6 +26,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-p
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-compaction.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-tool-results.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-edit.mjs "$reference" --check
+node --experimental-strip-types scripts/golden/gen-durable-codemode-output.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange
@@ -40,6 +41,7 @@ node scripts/run-stock-durable-builtins.mjs "$reference" --report=/tmp/pi-durabl
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=read-differential --report=/tmp/pi-durable-stock-read-differential-report.json
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=images --report=/tmp/pi-durable-stock-native-images-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-output --report=/tmp/pi-durable-stock-codemode-output-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=search --report=/tmp/pi-durable-stock-search-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=host-inputs --report=/tmp/pi-durable-stock-host-inputs-report.json

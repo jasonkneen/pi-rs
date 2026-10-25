@@ -10,6 +10,7 @@ pub(super) struct ToolBridge {
     apis: Mutex<HashMap<u64, ToolExecutionApi>>,
     pub executions: AtomicU64,
     pub searches: AtomicU64,
+    pub codemode_formats: AtomicU64,
     definitions: Mutex<HashMap<u64, AnyTask>>,
     contents: Mutex<HashMap<u64, ToolContent>>,
     content_hosts: Mutex<HashMap<u64, u64>>,

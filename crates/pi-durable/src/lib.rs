@@ -1,5 +1,6 @@
 //! Native port of pi-durable 1.4.0. Storage is independent of coding-agent sessions.
 
+pub mod codemode;
 pub mod documents;
 pub mod entries;
 pub mod env;

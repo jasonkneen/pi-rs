@@ -24,6 +24,8 @@ use std::{
 };
 #[path = "support/builtin_bridge.rs"]
 mod builtin_bridge;
+#[path = "support/codemode_bridge.rs"]
+mod codemode_bridge;
 #[path = "support/compaction_bridge.rs"]
 mod compaction_bridge;
 #[path = "support/context_bridge.rs"]
@@ -542,6 +544,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method == "codemode.format" {
+            return self.format_codemode(request);
+        }
         if method.starts_with("builtin.") {
             return self.builtin_request(&method, request, context);
         }
@@ -1311,6 +1316,10 @@ impl Hub {
                 value.as_object_mut().unwrap().insert(
                     "nativeSearchCalls".into(),
                     encode(&self.tool.searches.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeCodemodeFormats".into(),
+                    encode(&self.tool.codemode_formats.load(Ordering::Relaxed)),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
