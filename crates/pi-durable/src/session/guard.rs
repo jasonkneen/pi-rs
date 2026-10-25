@@ -60,18 +60,27 @@ impl GuardedStorage {
         })
     }
     pub fn fail(&self, error: Error) {
+        if let Some(notify) = self.latch_failure(error) {
+            notify();
+        }
+    }
+    /// Latch under admission's lock, then notify after releasing it: failure
+    /// callbacks can synchronously close the Session and acquire that lock.
+    pub(super) fn latch_failure(&self, error: Error) -> Option<impl FnOnce() + '_> {
         {
             let mut state = self.state.lock();
             if state.failure.is_some() {
-                return;
+                return None;
             }
             state.failure = Some(error.clone());
         }
-        self.failure_changed.send_replace(Some(error.clone()));
-        let callback = self.on_failure.lock().clone();
-        if let Some(callback) = callback {
-            callback(error);
-        }
+        Some(move || {
+            self.failure_changed.send_replace(Some(error.clone()));
+            let callback = self.on_failure.lock().clone();
+            if let Some(callback) = callback {
+                callback(error);
+            }
+        })
     }
     fn call<T, F, Fut>(self: &Arc<Self>, read: Option<Context>, operation: F) -> StorageFuture<T>
     where

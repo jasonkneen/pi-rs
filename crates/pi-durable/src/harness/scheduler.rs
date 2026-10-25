@@ -523,9 +523,7 @@ impl TaskScheduler {
         read_settings(&self.inner.options.settings)
     }
     fn fail(&self, error: Error) {
-        if !self.inner.state.lock().closing {
-            self.inner.session.fail(error);
-        }
+        self.inner.session.fail_if_open(error);
     }
     fn restart_limit(&self) -> f64 {
         self.settings()

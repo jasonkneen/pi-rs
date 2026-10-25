@@ -228,6 +228,21 @@ impl Session {
     pub fn fail(&self, error: Error) {
         self.inner.guard.fail(error);
     }
+    /// Scheduler decisions rejected by sealed admission must not turn an
+    /// orderly close into a storage failure, even before close listeners run.
+    pub(crate) fn fail_if_open(&self, error: Error) {
+        let notify = {
+            let state = self.inner.state.lock();
+            if state.closing {
+                None
+            } else {
+                self.inner.guard.latch_failure(error)
+            }
+        };
+        if let Some(notify) = notify {
+            notify();
+        }
+    }
     pub(crate) fn guarded_storage(&self) -> Arc<dyn Storage> {
         self.inner.storage.clone()
     }

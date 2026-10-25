@@ -130,6 +130,96 @@ async fn close(scheduler: &TaskScheduler) {
     .unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_admission_before_scheduler_notification_does_not_fail_the_session() {
+    #[derive(Clone, Serialize, Deserialize)]
+    struct Counter {
+        count: u32,
+    }
+    impl DocumentState for Counter {}
+    let document = define_doc(DocDefinition::new(
+        "close-window",
+        1,
+        SessionScope,
+        || Ok(Counter { count: 0 }),
+        |_, _, _| false,
+    ))
+    .unwrap();
+    let (entered, reached) = tokio::sync::oneshot::channel();
+    let entered = Arc::new(Mutex::new(Some(entered)));
+    let (release, released) = std::sync::mpsc::channel();
+    let released = Arc::new(Mutex::new(released));
+    let scheduler = TaskScheduler::open(
+        Arc::new(MemoryStorage::new()),
+        catalog(&[]),
+        SchedulerOptions::default(),
+        SessionOptions {
+            set_timer: Some(Arc::new(move |_, _, background| {
+                assert!(background);
+                let (entered, released) = (entered.clone(), released.clone());
+                Some(Box::new(move || {
+                    if std::thread::current().name() != Some("durable-close-probe") {
+                        return;
+                    }
+                    if let Some(entered) = entered.lock().take() {
+                        let _ = entered.send(());
+                        released.lock().recv().unwrap();
+                    }
+                }))
+            })),
+            ..Default::default()
+        },
+        &Context::default(),
+    )
+    .await
+    .unwrap();
+    scheduler
+        .session()
+        .commit(
+            move |tx| async move {
+                tx.doc(&document, ()).await?.update(|counter| {
+                    counter.count += 1;
+                    Ok(())
+                })
+            },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    let session = scheduler.session();
+    let runtime = tokio::runtime::Handle::current();
+    let closing = std::thread::Builder::new()
+        .name("durable-close-probe".into())
+        .spawn(move || {
+            let _entered = runtime.enter();
+            session.close(&Context::default())
+        })
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), reached)
+        .await
+        .unwrap()
+        .unwrap();
+    // Session close disarms its cache timer after sealing admission and before
+    // notifying the scheduler. Drive a reservation in that exact window.
+    scheduler.resume().unwrap();
+    let (polled, finished) = tokio::sync::oneshot::channel();
+    scheduler.session().spawn(async move {
+        let _ = polled.send(());
+    });
+    finished.await.unwrap();
+    let failure = scheduler.session().failure();
+    release.send(()).unwrap();
+    closing.join().unwrap().await.unwrap();
+    assert!(
+        failure.is_none(),
+        "ordinary close became a failure: {failure:?}"
+    );
+    assert!(matches!(
+        scheduler.session().closed().await,
+        SessionEnd::Closed
+    ));
+}
+
 #[tokio::test]
 async fn typed_task_progress_keeps_one_invocation_and_returns_a_typed_result() {
     #[derive(Clone, Serialize, Deserialize)]
