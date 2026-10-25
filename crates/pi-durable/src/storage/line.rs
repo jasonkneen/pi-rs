@@ -8,15 +8,33 @@ use std::future::Future;
 pub(crate) fn eager<T: Send + 'static>(
     operation: impl Future<Output = Result<T>> + Send + 'static,
 ) -> StorageFuture<T> {
+    let (job, result) = admitted(operation);
+    crate::session::executor::spawn(job);
+    result
+}
+pub(crate) fn eager_on<T: Send + 'static>(
+    session: &crate::Session,
+    operation: impl Future<Output = Result<T>> + Send + 'static,
+) -> StorageFuture<T> {
+    let (job, result) = admitted(operation);
+    session.spawn(job);
+    result
+}
+fn admitted<T: Send + 'static>(
+    operation: impl Future<Output = Result<T>> + Send + 'static,
+) -> (impl Future<Output = ()> + Send + 'static, StorageFuture<T>) {
     let (send, receive) = tokio::sync::oneshot::channel();
-    crate::session::executor::spawn(async move {
+    let job = async move {
         let result = std::panic::AssertUnwindSafe(operation)
             .catch_unwind()
             .await
             .unwrap_or_else(|p| Err(crate::session::panic_error(p)));
         let _ = send.send(result);
-    });
-    Box::pin(async move { receive.await.map_err(|e| Error::message(e.to_string()))? })
+    };
+    (
+        job,
+        Box::pin(async move { receive.await.map_err(|e| Error::message(e.to_string()))? }),
+    )
 }
 /// Enqueue at call time and keep running if the caller drops its waiter.
 pub(crate) struct MutationLine {

@@ -21,6 +21,78 @@ impl RegisteredSection for Section {
         panic!("no sections")
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn nested_calls_from_external_threads_keep_their_admission_order() {
+    for _ in 0..24 {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let child = native(
+            "child",
+            Arc::new(move |_, api, _| {
+                record.lock().push(api.call_id.clone());
+                Box::pin(async { Ok(ToolExecutionResult::default()) })
+            }),
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let send = Arc::new(Mutex::new(Some(send)));
+        let (release, released) = tokio::sync::oneshot::channel();
+        let released = Arc::new(Mutex::new(Some(released)));
+        let parent = native(
+            "parent",
+            Arc::new(move |_, api, _| {
+                send.lock()
+                    .take()
+                    .unwrap()
+                    .send(api)
+                    .unwrap_or_else(|_| panic!("API receiver dropped"));
+                let released = released.lock().take().unwrap();
+                Box::pin(async move {
+                    released.await.unwrap();
+                    Ok(ToolExecutionResult::default())
+                })
+            }),
+        );
+        let (scheduler, conversation) = open(vec![parent, child], vec![], Default::default()).await;
+        let parent = start(&scheduler, conversation, "parent", json(r#"{"n":1}"#), None).await;
+        scheduler.resume().unwrap();
+        // This test task runs outside the Session's executor. The public API is
+        // also used this way by host runtimes and extension callback threads.
+        let api = receive.await.unwrap();
+        let first = api.execute_tool(
+            "child",
+            object(r#"{"n":1}"#),
+            &Context::default(),
+            Default::default(),
+        );
+        let second = api.execute_tool(
+            "child",
+            object(r#"{"n":2}"#),
+            &Context::default(),
+            NestedCallOptions {
+                key: Some("named".into()),
+                ..Default::default()
+            },
+        );
+        let (a, b) = tokio::join!(first, second);
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(
+            *seen.lock(),
+            [JsonString::from("call/1"), JsonString::from("call/named")]
+        );
+        release.send(()).unwrap();
+        scheduler
+            .wait_for_task(parent, &Context::default())
+            .await
+            .unwrap();
+        scheduler
+            .session()
+            .close(&Context::default())
+            .await
+            .unwrap();
+    }
+}
 fn json(text: &str) -> JsonValue {
     pi_chord::json::parse(text).unwrap()
 }

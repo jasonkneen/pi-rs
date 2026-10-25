@@ -1,19 +1,20 @@
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
+import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
 import {DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
 import {validateToolArguments} from "@earendil-works/pi-ai/utils/validation";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 import {copyJson} from "@earendil-works/chord";
-import {track} from "@earendil-works/chord/delta";
+import {track,applyImmutable} from "@earendil-works/chord/delta";
 import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
 import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,nativeSnapshotId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
-const drafts=new Map();
+const drafts=new Map(),viewObservers=new Map(),viewBindings=new WeakMap();
 function graphValue(snapshot){if(!graphRevisions.has(snapshot.revision))graphRevisions.set(snapshot.revision,snapshot.value);return graphRevisions.get(snapshot.revision);}
 function watchValue(snapshot,document){const value=graphValue(snapshot);return document&&value===null?undefined:value;}
 nativeTransport.register("graphFrame",args=>objectFor(args.callback)(watchValue(args.snapshot,args.document),args.ops,BACKGROUND_CONTEXT));
@@ -55,6 +56,7 @@ function configuration(change){
  return result;
 }
 function transaction(id){return{
+ task:task=>call("tx.task",{tx:id,task}),setTask:record=>nativeTransport.sync("tx.setTask",{tx:id,record}),
  doc:async(token,...args)=>{const {index,...document}=docArguments(token,args);const acquired=await call("doc.acquire",{tx:id,...document,seed:token.definition.family?args[index]:undefined});let local=drafts.get(id);if(!local){local=new Map();drafts.set(id,local);}let held=local.get(acquired.draft);if(!held){const tracker=track(acquired.value);held={tracker,change:tracker.beginChange()};local.set(acquired.draft,held);}return held.change.state;},
  latestHeadMarker:conversation=>call("tx.latestHeadMarker",{tx:id,conversation}),
  createConversation:options=>call("tx.createConversation",{tx:id,options}),
@@ -112,13 +114,13 @@ async function invoke(method,args,context){
 export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
- const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport});
- const id=await call("open",{storage:storageId,registry,reader,environment:options.env!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
+ const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);
  const fixedModels=modelsOption&&typeof modelsOption!=="function"?withClientIdentity(modelsOption,identity):undefined;
- const harness={options,onReport:options.onReport,currentModels:()=>fixedModels??(typeof modelsOption==="function"?withClientIdentity(modelsOption(),identity):undefined),
+ const harness={subscribeCommits:callback=>{const subscription=nativeTransport.sync("view.subscribeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},options,onReport:options.onReport,storage,currentModels:()=>fixedModels??(typeof modelsOption==="function"?withClientIdentity(modelsOption(),identity):undefined),
   submission:(submission,context)=>call("submission.get",{harness:id,submission},context).then(submission=>submission===undefined?undefined:submissionHandle(submission)),
   abortSubmission:(submission,context,conversation)=>call("submission.abort",{harness:id,submission,conversation},context),
   inspect:context=>call("inspect",{harness:id},context).then(inspect),
@@ -137,8 +139,8 @@ export const Harness={async open(storage,options,context){
   closed,close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
  };
  function submissionHandle(submission){return {id:submission,status:context=>call("submission.status",{harness:id,submission},context),wait:context=>call("submission.wait",{harness:id,submission},context),abort:context=>call("submission.abort",{harness:id,submission,handle:true},context)};}
- function conversation(conversationId){return{id:conversationId,agent:context=>call("conversationAgent",{harness:id,conversation:conversationId},context).then(hydrateAgent),submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change:configuration(change)},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
- harnesses.set(id,harness);return harness;
+ function conversation(conversationId){return{id:conversationId,watch:context=>call("view.watch",{harness:id,conversation:conversationId},context).then(graphWatch),abort:(context,options)=>call("conversation.abort",{harness:id,conversation:conversationId,background:options?.background},context),agent:context=>call("conversationAgent",{harness:id,conversation:conversationId},context).then(hydrateAgent),submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change:configuration(change)},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
+ viewBindings.set(harness,id);harnesses.set(id,harness);return harness;
 }};
 const storageIds=new WeakMap();let shuttingDown=false;
 export const transport={request:call,storage(storage){let id=storageIds.get(storage);if(id===undefined){id=storageNext++;storageIds.set(storage,id);storages.set(id,storage);}return id;},release(range){if(!shuttingDown&&nativeTransport.started)send({type:"context.release",range});}};
@@ -218,3 +220,30 @@ nativeTransport.register("environment.call",async(args,context)=>{
 });
 
 nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
+
+// The source event translator consumes the same native view revisions and
+// publications as native watch clients. Only its observer callbacks stay in JS.
+export function conversationViews(harness){
+ const id=viewBindings.get(harness);if(id===undefined)throw new Error("Not a Harness");
+ return {report:failure=>harness.onReport?.(failure),attach:async(conversation,create,context)=>{
+  await call("view.attach",{harness:id,conversation,callback:handle(create)},context);
+ }};
+}
+nativeTransport.register("view.create",async(args,context)=>{
+ const value=graphValue(args.value),release=()=>{nativeTransport.sync("view.detach",{observer:args.observer});viewObservers.delete(args.observer);};
+ const observer=await objectFor(args.callback)(value,release,harnesses.get(args.harness).storage);
+ viewObservers.set(args.observer,{observer,value});return null;
+});
+nativeTransport.register("view.advance",args=>{
+ const held=viewObservers.get(args.observer),value=applyImmutable(held.value,args.ops);
+ graphRevisions.set(args.value.revision,value);held.value=value;
+ held.observer.advance?.(value,args.ops,BACKGROUND_CONTEXT);return null;
+});
+nativeTransport.register("view.publication",args=>{
+ const held=viewObservers.get(args.observer);
+ held.observer.publication?.(graphValue(args.before),graphValue(args.after),args.ops,args.publication,BACKGROUND_CONTEXT);return null;
+});
+nativeTransport.register("view.end",args=>{viewObservers.get(args.observer)?.observer.end(args.failure===null?undefined:{error:error(args.failure)});return null;});
+
+nativeTransport.register("view.discard",id=>{viewObservers.delete(id);return null;});
+nativeTransport.register("commit.publication",args=>{objectFor(args.callback)(args.publication,BACKGROUND_CONTEXT);return null;});

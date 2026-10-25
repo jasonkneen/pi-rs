@@ -598,7 +598,9 @@
         "crates/pi-durable/src/harness/models.rs",
         "crates/pi-durable/tests/models_runtime.rs",
         "crates/pi-durable/src/session/executor.rs",
-        "crates/pi-durable/src/storage/line.rs"
+        "crates/pi-durable/src/storage/line.rs",
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-memory-adapter.mjs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -610,7 +612,10 @@
         "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication",
         "Native and stock regressions prove reentrant close during phase snapshot refresh prevents the next handler",
         "Runtime models resolve the live host getter at each access, including after invocation end/close; native compaction integration exercises them",
-        "Per-Session FIFO polling preserves admission and wake ordering without blocking pending I/O; native executor regressions cover nested eager jobs and runtime shutdown before and after polling"
+        "Per-Session FIFO polling preserves admission and wake ordering without blocking pending I/O; native executor regressions cover nested eager jobs and runtime shutdown before and after polling",
+        "External callback nested admissions stay on the owning Session FIFO; graph and conversation observers recheck Session admission after hydration, including while an earlier close listener is blocked",
+        "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities",
+        "Reservation and reconciliation loops run on the Session FIFO as deferred jobs, matching source queueMicrotask ordering without an extra Tokio yield"
       ]
     },
     {
@@ -672,10 +677,12 @@
       ],
       "evidence": [
         "Native pi.tool v2 call/execute/abort phases, v1 migration, argument validation/coercion, before/after hooks, durable execution intent, dual-safe replay, throttled progress, nested admission and replay by key, receipts/usage and sibling cancellation before settlement",
-        "Sixteen native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
+        "Seventeen native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
         "All 39 unmodified harness-tools cases and all nine unmodified harness-tools-recovery cases run against native pi.tool under both retention modes; counters require native execute and tool hook calls",
         "Fallible hook-member lookup propagates outside invocation catches; host values remain available for afterTool repair before strict JSON settlement; erased runtime keeps the same invocation guards",
-        "Stock gates retain original JS generation handlers, provider/tool/schema/environment/backend capabilities. Nested-tool and structured-output stock files, full native Harness/generation, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open"
+        "Stock gates retain original JS generation handlers, provider/tool/schema/environment/backend capabilities. Structured-output stock files, full native Harness/generation, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open",
+        "Both nested-tool stock files now pass completely: 33 call cases and 11 restart cases per mode, including native pi.tool execution, owned work, document results and native conversation view publications; source event translation and one direct JS helper check remain explicit host scope",
+        "Nested memo/admission continuations use the owning Session FIFO even when called outside a phase poll; stock zero-retention ordering assertions exposed the old Tokio race"
       ]
     },
     {
@@ -733,9 +740,17 @@
     },
     {
       "reference": "packages/durable/src/harness/view.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/view.rs",
+        "crates/pi-durable/tests/conversation_view.rs",
+        "crates/pi-durable/examples/support/view_bridge.rs"
+      ],
+      "evidence": [
+        "Native shared mounts hydrate active entries and five built-in documents on the Session line, retain unchanged entry/document references, prefix exact document operations before entry splices, track incarnations and versions, publish every commit to adapters and contain observer failures",
+        "Seven native tests prove replay, shared mounts, head cuts, retirement/recreation, durable visibility with dropped waiters, cancellation and missing conversations, reentrant detach, observer errors and close admission behind a blocked close listener",
+        "All 33 stock nested-tool and 11 nested-restart cases run unmodified in both retention modes with native view mounts feeding the original source event translator; the dedicated 14-case stock view file and native event translation remain open"
+      ]
     },
     {
       "reference": "packages/durable/src/ids.ts",
@@ -1580,15 +1595,45 @@
     },
     {
       "reference": "packages/durable/test/harness-nested-tools-restart.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/tool/api.rs",
+        "crates/pi-durable/src/harness/tool/task.rs",
+        "crates/pi-durable/src/harness/view.rs",
+        "crates/pi-durable/tests/tool_runtime.rs",
+        "crates/pi-durable/tests/conversation_view.rs",
+        "crates/pi-durable/examples/support/view_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 11 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/publication counters are required",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; event translation remains source code",
+        "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
+        "porting/durable/STATUS.md",
+        "Real SQLite reopen tests prove restart abandonment, missing-definition wait and orphan behavior, replay reattachment, cleanup of earlier-attempt slots, child tasks and persistent background work"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-nested-tools.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/tool/api.rs",
+        "crates/pi-durable/src/harness/tool/task.rs",
+        "crates/pi-durable/src/harness/view.rs",
+        "crates/pi-durable/tests/tool_runtime.rs",
+        "crates/pi-durable/tests/conversation_view.rs",
+        "crates/pi-durable/examples/support/view_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 33 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/publication counters are required",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; event translation remains source code",
+        "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
+        "porting/durable/STATUS.md",
+        "Direct ToolTask.definition.migrate assertion remains the exported source helper; two SQLite restart migration cases exercise the native migration and phases"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-ownership.test.ts",
@@ -1741,7 +1786,9 @@
         "crates/pi-durable/tests/dynamic_documents.rs",
         "crates/pi-durable/examples/support/task_graph_bridge.rs",
         "crates/pi-durable/examples/support/registry_bridge.rs",
-        "crates/pi-durable/examples/support/submission_bridge.rs"
+        "crates/pi-durable/examples/support/submission_bridge.rs",
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-memory-adapter.mjs"
       ],
       "evidence": [
         "All 36 unmodified stock cases pass in both retention modes; no cases unselected",
@@ -1754,7 +1801,8 @@
         "Stock task document retirement, ended invocation observation/clock/report guards, historical runtime reads, late watch acquisition, close-before-signal watch disposal, fault-write failure/reopen and custom RegistryReader reentrant close cases run unchanged",
         "Native document/read/watch/context and custom reader counters required; JS only captures mutable proxy edits and runs original definitions/listeners/backend",
         "Phase-completion transport turn yields on invocation end, next phase, or a pending host promise; admitted close seals synchronously during nested registry callbacks",
-        "The reservation-failure/reopen case now uses the real native submission controller; later submission admission rejects the original Session failure"
+        "The reservation-failure/reopen case now uses the real native submission controller; later submission admission rejects the original Session failure",
+        "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities"
       ]
     },
     {

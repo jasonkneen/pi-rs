@@ -55,8 +55,7 @@ fn wall_now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs_f64()
-        * 1000.0
+        .as_millis() as f64
 }
 pub(crate) fn inject_trace(context: &Context) -> Result<Option<JsonObject>> {
     context
@@ -216,7 +215,7 @@ impl Session {
             read().await
         })
     }
-    fn usable(&self) -> Result<()> {
+    pub(crate) fn usable(&self) -> Result<()> {
         self.healthy()?;
         if self.inner.state.lock().closing {
             Err(Error::message("Session is closed"))
@@ -725,6 +724,24 @@ impl Session {
                 .await?
                 .map(|loaded| loaded.lock().tracker.lock().value().clone()))
         })
+    }
+    /// A component already holding the Session line may load a document without
+    /// queuing another operation behind itself. Keep incarnation and revision together.
+    pub(crate) async fn document_on_line(
+        &self,
+        definition: Arc<AnyDocDefinition>,
+        address: DocumentAddress,
+        context: &Context,
+    ) -> Result<Option<(DocumentRecord, u64, Arc<JsonValue>)>> {
+        definition.check_address(&address)?;
+        Ok(self
+            .load(definition, address, context.clone())
+            .await?
+            .map(|loaded| {
+                let loaded = loaded.lock();
+                let value = loaded.tracker.lock().value().clone();
+                (loaded.record.clone(), loaded.value_version, value)
+            }))
     }
     pub fn snapshot_as_of<T: DocumentState, S: RewindableScope>(
         &self,

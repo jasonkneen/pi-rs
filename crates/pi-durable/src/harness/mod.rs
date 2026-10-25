@@ -26,6 +26,7 @@ pub mod task_graph;
 pub mod tool;
 pub mod types;
 pub mod usage;
+pub mod view;
 
 /// Built-in documents are created before the host's conversation-created hook.
 pub async fn create_conversation_documents(

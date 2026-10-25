@@ -323,19 +323,20 @@ impl ToolExecutionApi {
             let weak = Arc::downgrade(&self.scope);
             let commit = self.runtime.store_memo(MADE_NESTED_CALLS, true, context);
             admissions.memo = Some(
-                eager(async move {
-                    let result = commit.await;
-                    if result.is_err()
-                        && let Some(scope) = weak.upgrade()
-                    {
-                        let mut calls = scope.admissions.lock();
-                        if calls.generation == generation {
-                            calls.memo = None;
+                self.runtime
+                    .eager(async move {
+                        let result = commit.await;
+                        if result.is_err()
+                            && let Some(scope) = weak.upgrade()
+                        {
+                            let mut calls = scope.admissions.lock();
+                            if calls.generation == generation {
+                                calls.memo = None;
+                            }
                         }
-                    }
-                    result
-                })
-                .shared(),
+                        result
+                    })
+                    .shared(),
             );
         }
         let memo = admissions.memo.clone().expect("memo installed");
@@ -345,23 +346,25 @@ impl ToolExecutionApi {
         let caller = context.clone();
         let call_key = key.clone();
         let resumes = self.resumes;
-        let admission = eager(async move {
-            memo.await?;
-            super::task::start_nested_call(
-                &runtime,
-                parent_call,
-                call_name,
-                arguments,
-                super::task::AdmissionOptions {
-                    key: call_key,
-                    progress: options.progress,
-                    abandon: !resumes,
-                },
-                &caller,
-            )
-            .await
-        })
-        .shared();
+        let admission = self
+            .runtime
+            .eager(async move {
+                memo.await?;
+                super::task::start_nested_call(
+                    &runtime,
+                    parent_call,
+                    call_name,
+                    arguments,
+                    super::task::AdmissionOptions {
+                        key: call_key,
+                        progress: options.progress,
+                        abandon: !resumes,
+                    },
+                    &caller,
+                )
+                .await
+            })
+            .shared();
         admissions.pending.push(admission.clone());
         drop(admissions);
         drop(lease);

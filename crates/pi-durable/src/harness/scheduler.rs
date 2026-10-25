@@ -867,8 +867,7 @@ impl TaskScheduler {
         };
         if spawn {
             let scheduler = self.clone();
-            tokio::spawn(async move {
-                tokio::task::yield_now().await;
+            self.inner.session.spawn(async move {
                 let _ = scheduler.drain().await;
             });
         }
@@ -1685,8 +1684,7 @@ impl TaskScheduler {
         };
         if spawn {
             let scheduler = self.clone();
-            tokio::spawn(async move {
-                tokio::task::yield_now().await;
+            self.inner.session.spawn(async move {
                 let _ = scheduler.reconcile().await;
             });
         }

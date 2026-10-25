@@ -19,36 +19,42 @@ struct Activity {
 pub(super) enum ValueWatch {
     Graph(TaskGraphWatch),
     Document(Watch),
+    Conversation(pi_durable::harness::view::ConversationViewWatch),
 }
 impl ValueWatch {
     async fn delivery_idle(&self) {
         match self {
             Self::Graph(watch) => watch.delivery_idle().await,
             Self::Document(watch) => watch.delivery_idle().await,
+            Self::Conversation(watch) => watch.delivery_idle().await,
         }
     }
     async fn closed(&self) -> WatchEnd {
         match self {
             Self::Graph(watch) => watch.closed().await,
             Self::Document(watch) => watch.closed().await,
+            Self::Conversation(watch) => watch.closed().await,
         }
     }
     fn stop(&self) -> WatchEnd {
         match self {
             Self::Graph(watch) => watch.stop(),
             Self::Document(watch) => watch.stop(),
+            Self::Conversation(watch) => watch.stop(),
         }
     }
     fn cancel(&self) -> WatchEnd {
         match self {
             Self::Graph(watch) => watch.cancel(),
             Self::Document(watch) => watch.cancel(),
+            Self::Conversation(watch) => watch.cancel(),
         }
     }
     fn value(&self, hub: &Hub) -> JsonValue {
         match self {
             Self::Graph(watch) => hub.revision(watch.value()),
             Self::Document(watch) => hub.revision(watch.value()),
+            Self::Conversation(watch) => hub.revision(watch.value()),
         }
     }
 }
@@ -207,6 +213,9 @@ impl Hub {
                     }
                     ValueWatch::Document(watch) => {
                         self.start_watch(watch, true, id, callback, observed.activity)?
+                    }
+                    ValueWatch::Conversation(watch) => {
+                        self.start_watch(watch, false, id, callback, observed.activity)?
                     }
                 }
                 None

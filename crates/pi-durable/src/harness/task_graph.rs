@@ -180,6 +180,7 @@ impl TaskGraphView {
                 |value| vec![Op::Replace(crate::wire::encode(value.as_ref()))],
             );
             let mut current = graph.inner.mount.lock();
+            graph.inner.session.usable()?;
             if graph.inner.closed.load(Ordering::Acquire) {
                 return Err(graph
                     .inner

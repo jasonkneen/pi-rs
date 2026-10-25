@@ -72,6 +72,13 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     pub fn erased(&self) -> TaskRuntime<JsonValue, JsonValue, JsonValue, ()> {
         TaskRuntime::new(self.driver.clone())
     }
+    /// Host callbacks may enter from any thread, outside the phase's poll scope.
+    pub(crate) fn eager<T: Send + 'static>(
+        &self,
+        operation: impl Future<Output = Result<T>> + Send + 'static,
+    ) -> StorageFuture<T> {
+        crate::storage::line::eager_on(&self.driver.session(), operation)
+    }
     pub fn task_id(&self) -> TypedTaskId<R> {
         TypedTaskId::from_untyped(self.driver.task_id())
     }
