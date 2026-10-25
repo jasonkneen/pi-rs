@@ -75,7 +75,7 @@ nativeTransport.register("disarmTimer",id=>{objectFor(id)();return null;});
 nativeTransport.register("tool.prepare",({tool,arguments:args})=>(objectFor(tool).prepareArguments===undefined?args:objectFor(tool).prepareArguments(args)));
 nativeTransport.register("tool.validate",({tool,call,arguments:args})=>validateToolArguments(objectFor(tool),{...call,arguments:args}));
 nativeTransport.register("tool.execute",async(args,context)=>{const api=toolApi(args);try{return packToolResult(await objectFor(args.tool).execute(args.arguments,api,withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT)));}finally{toolApiStates.get(api).ended=true;}});
-nativeTransport.register("onWake",({harness,wake})=>{harnesses.get(harness).options.onWake(wake);});
+nativeTransport.register("onWake",({harness,wake})=>{harnesses.get(harness).options.onWake(wake);return null;});
 nativeTransport.register("documentRetention",id=>{const input=harnesses.get(id)?.options.settings,settings=typeof input==="function"?input():input,value=settings?.documentRetentionMs;return typeof value!=="number"?null:Number.isFinite(value)?value:String(value);});
 nativeTransport.register("conversationCreated",args=>captureChange(args.tx,tx=>harnesses.get(args.harness).options.conversationCreated(tx,args.record)));
 nativeTransport.register("now",id=>harnesses.get(id)?.options.now?.()??Date.now());

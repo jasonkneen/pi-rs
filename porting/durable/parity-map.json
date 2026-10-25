@@ -1987,21 +1987,45 @@
     },
     {
       "reference": "packages/durable/test/harness-blocked.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-blocked.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-callers.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-callers-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-cancellation-barrier.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-cancellation-barrier-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-compaction.test.ts",
@@ -2078,9 +2102,17 @@
     },
     {
       "reference": "packages/durable/test/harness-failed-run-inbox.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-failed-run-inbox-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-generation-recovery.test.ts",
@@ -2148,15 +2180,31 @@
     },
     {
       "reference": "packages/durable/test/harness-inbox.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-inbox-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-input-entries.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-input-entries-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-inspect.test.ts",
@@ -2199,9 +2247,17 @@
     },
     {
       "reference": "packages/durable/test/harness-live-deltas.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-live-deltas-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-nested-tools-restart.test.ts",
@@ -2251,9 +2307,17 @@
     },
     {
       "reference": "packages/durable/test/harness-ownership.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-ownership.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-prompt.test.ts",
@@ -2335,27 +2399,59 @@
     },
     {
       "reference": "packages/durable/test/harness-scheduler-indexes.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-scheduler-indexes-final.log",
+        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
+        "Embedded package exports and complete portable target parity remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-scheduler-retention.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-scheduler-retention.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-sleep.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-sleep.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-storage-failure.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-storage-failure.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-structured-output.test.ts",
@@ -2447,9 +2543,17 @@
     },
     {
       "reference": "packages/durable/test/harness-tasks-recovery.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-tasks-recovery.log",
+        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
+        "Native-versus-transport causes must be separated before remediation or any parity claim"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-tasks.test.ts",

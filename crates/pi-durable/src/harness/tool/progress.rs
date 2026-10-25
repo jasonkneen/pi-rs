@@ -150,17 +150,18 @@ pub(crate) fn publish(
                                     if prior.is_none() {
                                         ops.push(Op::Set(
                                             diagnostics.clone(),
-                                            JsonValue::Array(vec![].into()),
+                                            wire::encode(&added),
                                         ));
-                                    }
-                                    let size = prior.map_or(0, Vec::len);
-                                    for (offset, diagnostic) in added.iter().enumerate() {
-                                        ops.push(Op::Splice(
-                                            diagnostics.clone(),
-                                            size + offset,
-                                            0,
-                                            vec![wire::encode(diagnostic)],
-                                        ));
+                                    } else {
+                                        let size = prior.map_or(0, Vec::len);
+                                        for (offset, diagnostic) in added.iter().enumerate() {
+                                            ops.push(Op::Splice(
+                                                diagnostics.clone(),
+                                                size + offset,
+                                                0,
+                                                vec![wire::encode(diagnostic)],
+                                            ));
+                                        }
                                     }
                                 }
                                 live.apply_ops(&ops)?;

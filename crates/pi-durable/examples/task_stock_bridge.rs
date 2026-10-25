@@ -1436,6 +1436,7 @@ impl Hub {
                     None
                 };
                 create.links = field(options, "links")?;
+                create.submission_ids = field(options, "submissionIds")?;
                 create.background = options["background"].as_bool().unwrap_or(false);
                 create.abandon_on_restart = options["abandonOnRestart"].as_bool().unwrap_or(false);
                 mapped(tx.create_erased_task(&task, request["input"].clone(), create))

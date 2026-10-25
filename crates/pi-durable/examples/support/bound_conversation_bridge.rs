@@ -63,7 +63,7 @@ impl Hub {
             .ok_or_else(|| Error::message("Unknown bound conversation"))?;
         Ok(match method {
             "bound.submit" => {
-                let draft: SubmissionDraft = field(&request, "draft")?;
+                let draft: SubmissionDraft = submission_bridge::decode_draft(&request["draft"])?;
                 let SubmissionDraft::Input {
                     request_id,
                     content,
