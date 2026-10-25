@@ -221,6 +221,10 @@ fn settled() -> Error {
     Error::message("Transaction has settled")
 }
 impl Transaction {
+    /// Check a retained handle before decoding an erased caller's next input.
+    pub fn check_active(&self) -> Result<()> {
+        self.assert_open()
+    }
     pub(crate) fn new(
         host: Arc<dyn TransactionHost>,
         context: Context,

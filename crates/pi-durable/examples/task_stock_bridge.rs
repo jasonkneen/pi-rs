@@ -48,6 +48,8 @@ mod prompt_bridge;
 mod registry_bridge;
 #[path = "support/task_remote_storage.rs"]
 mod remote_storage;
+#[path = "support/session_bridge.rs"]
+mod session_bridge;
 #[path = "support/submission_bridge.rs"]
 mod submission_bridge;
 #[path = "support/tool_bridge.rs"]
@@ -90,6 +92,8 @@ fn task_ownership(options: &JsonValue) -> Result<TaskOwnership> {
         _ => Err(Error::message("Task ownership is required")),
     }
 }
+static HOST_ERRORS: std::sync::LazyLock<Mutex<Vec<(Error, u64)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 fn error_value(error: &Error) -> JsonValue {
     let mut value = object([
         ("name", encode(&error.name())),
@@ -107,6 +111,22 @@ fn error_value(error: &Error) -> JsonValue {
             .as_object_mut()
             .unwrap()
             .insert("cause".into(), error_value(cause));
+    }
+    if let Some((_, id)) = HOST_ERRORS
+        .lock()
+        .iter()
+        .find(|(held, _)| held.same_error(error))
+    {
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("foreignId".into(), encode(id));
+    }
+    if let ErrorKind::ReadAfterWrite(method) = error.kind() {
+        value.as_object_mut().unwrap().extend([
+            ("kind".into(), encode(&"readAfterWrite")),
+            ("method".into(), encode(method)),
+        ]);
     }
     if let ErrorKind::ConversationBusy(conversation) = error.kind() {
         value.as_object_mut().unwrap().extend([
@@ -139,6 +159,7 @@ struct Hub {
     input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
+    sessions: Mutex<HashMap<u64, Session>>,
     harnesses: Mutex<HashMap<u64, pi_durable::Harness>>,
     harness_storage: Mutex<HashMap<u64, Arc<dyn Storage>>>,
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
@@ -246,7 +267,7 @@ impl Hub {
         let id: u64 = field(&value, "id").unwrap();
         self.host_pending.lock().remove(&id);
         let result = if value["error"].is_object() {
-            Err(Error::host(
+            let error = Error::host(
                 value["error"]["name"]
                     .to_utf8()
                     .unwrap_or_else(|| "Error".into()),
@@ -254,7 +275,11 @@ impl Hub {
                     .as_string()
                     .cloned()
                     .unwrap_or_else(|| "undefined".into()),
-            ))
+            );
+            if let Some(id) = value["error"]["foreignId"].as_u64() {
+                HOST_ERRORS.lock().push((error.clone(), id));
+            }
+            Err(error)
         } else if value["missing"].as_bool() == Some(true) {
             Ok(None)
         } else {
@@ -392,7 +417,8 @@ impl Hub {
         let hub = self.clone();
         Box::pin(async move {
             let result = operation.await;
-            hub.transactions.lock().remove(&id);
+            // Retained host Tx handles must reach the native settlement guard.
+            let _ = hub;
             result
         })
     }
@@ -485,12 +511,22 @@ impl Hub {
             .cloned()
             .ok_or_else(|| Error::message("Unknown test harness"))
     }
+    fn session(&self, request: &JsonValue) -> Result<Session> {
+        let id = field::<u64>(request, "harness")?;
+        if let Some(session) = self.sessions.lock().get(&id).cloned() {
+            return Ok(session);
+        }
+        Ok(self.scheduler(request)?.session())
+    }
     fn transaction(&self, request: &JsonValue) -> Result<Transaction> {
-        self.transactions
+        let transaction = self
+            .transactions
             .lock()
             .get(&field::<u64>(request, "tx")?)
             .cloned()
-            .ok_or_else(|| Error::message("Unknown transaction"))
+            .ok_or_else(|| Error::message("Unknown transaction"))?;
+        transaction.check_active()?;
+        Ok(transaction)
     }
     fn forward_runtime_signal(
         self: &Arc<Self>,
@@ -603,6 +639,9 @@ impl Hub {
                     .await
                     .map_err(|error| Error::message(error.to_string()))?
             }));
+        }
+        if method.starts_with("session.") {
+            return self.session_request(&method, request, context);
         }
         Ok(match method.as_str() {
             "open" => Box::pin(async move {
@@ -876,6 +915,15 @@ impl Hub {
                     .cloned();
                 mapped(tx.append_entry(field(&request, "conversation")?, entry))
             }
+            "tx.conversation" => mapped(
+                self.transaction(&request)?
+                    .conversation(field(&request, "conversation")?),
+            ),
+            "scanConversations" => mapped(self.transaction(&request)?.scan_conversations(
+                field(&request, "query")?,
+                field(&request, "limit")?,
+                field(&request, "cursor")?,
+            )),
             "scanTasks" => mapped(self.transaction(&request)?.scan_tasks(
                 field(&request, "query")?,
                 field(&request, "limit")?,
@@ -1170,10 +1218,10 @@ impl Hub {
                 self.scheduler(&request)?.resume()?;
                 Box::pin(async { Ok(None) })
             }
-            "close" => mapped(self.scheduler(&request)?.session().close(&context)),
-            "unloadDocuments" => mapped(self.facade(&request)?.unload_documents()),
+            "close" => mapped(self.session(&request)?.close(&context)),
+            "unloadDocuments" => mapped(self.session(&request)?.unload_documents()),
             "closed" => {
-                let session = self.scheduler(&request)?.session().clone();
+                let session = self.session(&request)?;
                 Box::pin(async move {
                     Ok(Some(match session.closed().await {
                         SessionEnd::Closed => object([("reason", encode(&"closed"))]),
@@ -1258,10 +1306,10 @@ impl Hub {
                         &context,
                     ))
                 } else {
-                    let scheduler = self.scheduler(&request)?;
+                    let session = self.session(&request)?;
                     let conversation = field(&request, "conversation")?;
                     let hub = self.clone();
-                    scheduler.session().commit_scoped(
+                    session.commit_scoped(
                         move |tx| async move { hub.callback(callback, tx, None, request_id).await },
                         &context,
                         TransactionScope {
@@ -1328,6 +1376,10 @@ impl Hub {
             "stats" => {
                 let mut value = encode(
                     &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelCompletions":self.models.completions.load(Ordering::Relaxed),"nativeCompactionHooks":self.models.compaction_hooks.load(Ordering::Relaxed),"sourceCompactionPhases":self.source_compaction_phases.load(Ordering::Relaxed),"nativeGenerationHooks":self.models.hook_calls.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"sourceGenerationPhases":self.source_generation_phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"nativeHarnessOpens":self.harness_opens.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeSessionOpens".into(),
+                    encode(&self.sessions.lock().len()),
                 );
                 value.as_object_mut().unwrap().insert(
                     "nativeSearchCalls".into(),
@@ -1432,6 +1484,7 @@ async fn main() {
         input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
+        sessions: Mutex::new(HashMap::new()),
         harnesses: Mutex::new(HashMap::new()),
         harness_storage: Mutex::new(HashMap::new()),
         readers: Mutex::new(HashMap::new()),
@@ -1616,13 +1669,14 @@ fn begin_request(
     let admit = value["admit"].as_bool() == Some(true);
     let owner = value["harness"]
         .as_u64()
-        .and_then(|id| hub.schedulers.lock().get(&id).map(TaskScheduler::session));
+        .and_then(|_| hub.session(&value).ok());
     // Begin Session operations in wire order before observing their futures.
     // Adoption and backend completion use the same lane, while synchronous
     // callback replies stay readable even if adoption calls the host clock.
     let boundary = value["method"].to_utf8().is_some_and(|method| {
         (method == "graph.start" || !method.starts_with("graph."))
             && method != "phase.turn"
+            && method != "change.turn"
             && !method.starts_with("registry.")
             && method != "runtimeRegistry"
     });

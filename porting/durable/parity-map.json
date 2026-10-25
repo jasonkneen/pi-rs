@@ -2624,7 +2624,8 @@
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Pure native Session stock attempt stalled and was stopped after two minutes; no passing stock coverage claimed. /tmp/pi-durable-stock-session-checkpoints-first.log"
       ]
     },
     {
@@ -2632,11 +2633,15 @@
       "status": "partial",
       "rust": [
         "crates/pi-durable/src/documents.rs",
-        "crates/pi-durable/tests/documents.rs"
+        "crates/pi-durable/tests/documents.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/examples/support/session_bridge.rs",
+        "scripts/stock/durable-session-adapter.mjs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 4 original cases pass unfiltered in both retention modes against a pure native Session; zero Harness opens/task phases. Original callbacks, controlled storage, JS strict input copying, proxy capture, callback result and table identities remain host capabilities; allocation parity is not claimed. /tmp/pi-durable-stock-session-verified.log"
       ]
     },
     {
@@ -2668,7 +2673,8 @@
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Whole stock file attempted: 23 of 27 pass at default retention; four original revision/base/operation/publication sharing assertions fail. Not a passing stock suite. /tmp/pi-durable-stock-session-documents-third.log"
       ]
     },
     {
@@ -2677,11 +2683,15 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/examples/support/session_bridge.rs",
+        "scripts/stock/durable-session-adapter.mjs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 14 original cases pass unfiltered in both retention modes against a pure native Session; zero Harness opens/task phases. Original callbacks, controlled storage, JS strict input copying, proxy capture, callback result and table identities remain host capabilities; allocation parity is not claimed. /tmp/pi-durable-stock-session-verified.log"
       ]
     },
     {
@@ -2696,11 +2706,15 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/examples/support/session_bridge.rs",
+        "scripts/stock/durable-session-adapter.mjs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 12 original cases pass unfiltered in both retention modes against a pure native Session; zero Harness opens/task phases. Original callbacks, controlled storage, JS strict input copying, proxy capture, callback result and table identities remain host capabilities; allocation parity is not claimed. /tmp/pi-durable-stock-session-verified.log"
       ]
     },
     {

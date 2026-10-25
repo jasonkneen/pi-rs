@@ -4,9 +4,10 @@ import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0,synchronousCallbacks=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
-const errors=new Map();
+const errors=new Map(),foreignErrors=new Map();let nextForeignError=1;
+function captureError(value){const id=nextForeignError++;foreignErrors.set(id,value);return id;}
 let exited;
-export function failure(value){const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
+export function failure(value){if(foreignErrors.has(value.foreignId))return foreignErrors.get(value.foreignId);const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
 function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({at:performance.now(),direction,type:frame.type,id:frame.id,method:frame.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n");}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
@@ -18,7 +19,7 @@ function dispatch(frame){
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
   const handler=handlers.get(frame.method);
-  const reject=error=>{send({type:"callback.result",id:frame.id,error:{name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}});completions.get(frame.method)?.(frame);};
+  const reject=error=>{send({type:"callback.result",id:frame.id,error:{foreignId:captureError(error),name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}});completions.get(frame.method)?.(frame);};
   const reply=value=>{try{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});}catch(error){reject(error);return;}completions.get(frame.method)?.(frame);};
   if(frame.sync)synchronousCallbacks++;
   try{

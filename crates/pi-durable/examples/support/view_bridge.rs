@@ -22,12 +22,23 @@ impl Hub {
                 .remove(&field(&request, "subscription")?);
             return Ok(Box::pin(async { Ok(None) }));
         }
+        if method == "view.subscribeClose" {
+            let callback: u64 = field(&request, "callback")?;
+            let weak = Arc::downgrade(self);
+            let subscription = self.session(&request)?.subscribe_close(move || {
+                if let Some(hub) = weak.upgrade() {
+                    let _ = hub.sync("session.closeListener", encode(&callback));
+                }
+            })?;
+            let id = self.next.fetch_add(1, Ordering::Relaxed);
+            self.views.subscriptions.lock().insert(id, subscription);
+            return Ok(Box::pin(async move { Ok(Some(encode(&id))) }));
+        }
         if method == "view.subscribeCommits" {
             let callback: u64 = field(&request, "callback")?;
             let weak = Arc::downgrade(self);
             let subscription =
-                self.scheduler(&request)?
-                    .session()
+                self.session(&request)?
                     .subscribe_commits(move |publication, _| {
                         if let Some(hub) = weak.upgrade() {
                             hub.sync(

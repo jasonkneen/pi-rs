@@ -158,8 +158,7 @@ impl Hub {
                 let acquisition = if let Some(runtime) = runtime {
                     runtime.watch_doc_raw(definition, address, &context)
                 } else {
-                    self.scheduler(&request)?
-                        .session()
+                    self.session(&request)?
                         .watch_raw(definition, address, &context)
                 };
                 let hub = self.clone();
@@ -176,15 +175,13 @@ impl Hub {
                     if let Some(runtime) = runtime {
                         runtime.snapshot_as_of_raw(definition, address, at, &context)
                     } else {
-                        self.scheduler(&request)?
-                            .session()
+                        self.session(&request)?
                             .snapshot_as_of_raw(definition, address, at, &context)
                     }
                 } else if let Some(runtime) = runtime {
                     runtime.snapshot_raw(definition, address, &context)
                 } else {
-                    self.scheduler(&request)?
-                        .session()
+                    self.session(&request)?
                         .snapshot_raw(definition, address, &context)
                 };
                 let hub = self.clone();

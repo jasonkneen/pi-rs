@@ -1,3 +1,4 @@
+import {copyJson} from "@earendil-works/chord";
 // Opaque capabilities carry original object identity across the test transport.
 import {nativeTransport} from "./durable-native-transport.mjs";
 let next=1;
@@ -12,6 +13,6 @@ export function describeTask(task){const {name,version,phases,migrate}=task.defi
 export function describeDoc(token){const {kind,version,scope,history,fork,family,migrate}=token.definition;return {id:handle(token),kind,version,scope,history,fork,family,migrate:migrate!==undefined};}
 nativeTransport.register("initial",([id,input])=>objectFor(id).definition.initial(input));
 nativeTransport.register("migrate",([id,input,checkpoint,version])=>objectFor(id).definition.migrate(input,checkpoint,version));
-nativeTransport.register("docInitial",({id,seed})=>objectFor(id).definition.initial(seed));
+nativeTransport.register("docInitial",({id,seed})=>copyJson(objectFor(id).definition.initial(seed)));
 nativeTransport.register("docMigrate",([id,value,version])=>objectFor(id).definition.migrate(value,version));
 nativeTransport.register("docCheckpoint",({id,value,ops,info})=>objectFor(id).definition.checkpointWhen(value,ops,info));

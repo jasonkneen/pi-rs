@@ -1,10 +1,11 @@
+import {installSessionBinding} from "./durable-session-adapter.mjs";
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
 import {environmentContext} from "./durable-env-signals.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
-import {ConversationBusy,ReadOnlySession,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
+import {ConversationBusy,ReadOnlySession,ReadAfterWrite,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
 import {validateToolArguments} from "@earendil-works/pi-ai/utils/validation";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 import {copyJson} from "@earendil-works/chord";
@@ -15,9 +16,15 @@ import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,lookupNativeSnapshot,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
 nativeTransport.error("readOnly",value=>new ReadOnlySession(value.operation));
+nativeTransport.error("readAfterWrite",value=>new ReadAfterWrite(value.method));
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
 const drafts=new Map(),viewBindings=new WeakMap();
+// Table identities cross this JSON-only test transport as record/revision identities.
+// This does not claim pointer or allocation parity for Rust's owned record types.
+const tableRecords=new Map(),tableWrites=new Map();
+function tableRecord(type,value){if(value===undefined)return value;const key=type+":"+value.id+":"+JSON.stringify(value);if(!tableRecords.has(key))tableRecords.set(key,value);return tableRecords.get(key);}
+function tableWrite(write){if(!["conversation","entry","task","submission"].includes(write.type))return write;const value=tableRecord(write.type,write.value),key=write.type+":"+value.id+":"+JSON.stringify(value);if(!tableWrites.has(key))tableWrites.set(key,{...write,value});return tableWrites.get(key);}
 const sharedNodes=new Map();
 function sharedValue(node){
  if("scalar" in node)return node.scalar;
@@ -83,14 +90,16 @@ function configuration(change){
  return result;
 }
 function transaction(id){return{
+ conversation:conversation=>call("tx.conversation",{tx:id,conversation}),
+ scanConversations:(query,limit,cursor)=>call("scanConversations",{tx:id,query,limit,cursor}),
  task:task=>call("tx.task",{tx:id,task}),setTask:record=>nativeTransport.sync("tx.setTask",{tx:id,record}),
  doc:async(token,...args)=>{const {index,...document}=docArguments(token,args);const acquired=await call("doc.acquire",{tx:id,...document,seed:token.definition.family?args[index]:undefined});let local=drafts.get(id);if(!local){local=new Map();drafts.set(id,local);}let held=local.get(acquired.draft);if(!held){const tracker=track(acquired.value);held={tracker,change:tracker.beginChange()};local.set(acquired.draft,held);}return held.change.state;},
  retireDoc:(token,...args)=>{const {index,...document}=docArguments(token,args);return call("doc.retire",{tx:id,...document});},
  latestHeadMarker:conversation=>call("tx.latestHeadMarker",{tx:id,conversation}),
- createConversation:options=>call("tx.createConversation",{tx:id,options}),
+ createConversation:options=>call("tx.createConversation",{tx:id,options}).then(value=>tableRecord("conversation",value)),
  forkConversation:(conversation,at,options)=>call("tx.forkConversation",{tx:id,conversation,at,options}),
  createTask:(task,input,options)=>call("createTask",{tx:id,definition:describeTask(task),input,options}),
- appendEntry:(first,second,third)=>typeof first==="number"?call("appendEntry",{tx:id,conversation:first,entry:second}):call("appendEntry",{tx:id,conversation:second,entry:{...third,kind:first.kind}}),
+ appendEntry:async(first,second,third)=>{const entry=copyJson(typeof first==="number"?second:{...third,kind:first.kind},{omitUndefinedProperties:true});return tableRecord("entry",await call("appendEntry",{tx:id,conversation:typeof first==="number"?first:second,entry}));},
  entry:(first,second)=>typeof first==="number"?call("entry",{tx:id,entry:first}):call("entry",{tx:id,kind:first.kind,entry:second}),
  createSubmission:record=>call("createSubmission",{tx:id,record}),
  placeSubmission:(submission,entry)=>call("placeSubmission",{tx:id,submission,entry}),
@@ -124,7 +133,7 @@ async function invoke(method,args,context){
  if(method==="storage"){
   stats.storageCalls++;const storage=storages.get(args.handle);let values=args.args;
   if(args.method==="commit"){
-   const[writes,adoption]=values;return storage.commit(writes,seq=>send({type:"storage.adopt",id:adoption,seq}),context);
+   const[writes,adoption]=values;return storage.commit(writes.map(tableWrite),seq=>send({type:"storage.adopt",id:adoption,seq}),context);
   }
   // JSON null is used only for omitted optional cursor/cutoff arguments here.
   if(args.method.startsWith("scan")||args.method==="findLatestHeadMarker")values=values.map(value=>value===null?undefined:value);
@@ -264,7 +273,7 @@ nativeTransport.register("environment.call",async(args,context)=>{
 
 nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
 
-nativeTransport.register("commit.publication",args=>{objectFor(args.callback)(args.publication,BACKGROUND_CONTEXT);return null;});
+nativeTransport.register("commit.publication",args=>{objectFor(args.callback)({...args.publication,changes:args.publication.changes.map(tableWrite)},BACKGROUND_CONTEXT);return null;});
 
 export async function watchEvents(harness,conversation,context){
  const id=viewBindings.get(harness);if(id===undefined)throw new Error("Not a Harness");
@@ -325,3 +334,33 @@ nativeTransport.register("compactionHook",async(args,context)=>{
  const result=await objectFor(args.callback)(compactionSources.get(api),api,withAbortSignal(api.signal,context??BACKGROUND_CONTEXT));
  return result===undefined?undefined:"decline" in result?{decline:true}:{summary:result.summary};
 });
+
+// Pure Session transport. It never creates a Harness or starts a scheduler.
+const sessions=new Map();
+nativeTransport.register("session.now",id=>sessions.get(id).now());
+nativeTransport.register("session.retention",id=>{const value=sessions.get(id).retention();return typeof value==="number"&&!Number.isFinite(value)?String(value):value??null;});
+nativeTransport.register("session.conversationCreated",args=>captureChange(args.tx,tx=>sessions.get(args.harness).session.conversationCreated(tx,args.record)));
+nativeTransport.register("session.closeListener",id=>{objectFor(id)();return null;});
+nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.beforeClose());
+installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
+ const storageId=storageNext++;storages.set(storageId,storage);
+ const expected=nativeTransport.nextId;sessions.set(expected,{session,now,retention,setTimer});
+ const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly});
+ let closed;
+ return {
+  ...documents({harness:id}),
+  commitWith:(callback,context,scope)=>change("commit",{harness:id,conversation:scope?.conversationId??null},async tx=>({hostResult:valueHandle(await callback(tx))}),context).then(result=>objectFor(result.hostResult)),
+  subscribeCommits:callback=>{const subscription=nativeTransport.sync("view.subscribeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},
+  subscribeClose:callback=>{const subscription=nativeTransport.sync("view.subscribeClose",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},
+  closed:()=>closed??=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end),
+  close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
+  unloadDocuments:()=>call("unloadDocuments",{harness:id}),
+  cache:()=>nativeTransport.sync("session.cache",{harness:id}),
+ };
+});
+export async function shutdownSessions(){
+ const native=await call("stats");
+ if(native.nativeSessionOpens===0||native.nativeHarnessOpens!==0||native.phases!==0)throw new Error("Stock Session tests bypassed the native kernel or created a Harness");
+ if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify({...stats,...native}));
+ await nativeTransport.close();
+}
