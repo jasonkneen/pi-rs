@@ -1,5 +1,8 @@
 //! Durable task scheduling. Reservations, state changes and decisions share the
 //! Session's mutation line. Handlers and joins always run outside it.
+#[cfg(test)]
+#[path = "scheduler/timer_tests.rs"]
+mod timer_tests;
 use super::{
     agent::{AgentRequest, AgentResolver, AgentView, resolve_agent_in},
     ownership::*,
@@ -132,12 +135,18 @@ struct State {
     failed_migrations: HashMap<TaskId, FailedMigration>,
     blocked_listeners: IndexMap<u64, Arc<dyn Fn() -> Result<()> + Send + Sync>>,
     next_blocked_listener: u64,
-    timer: Option<(f64, DisarmTimer)>,
+    timer: Option<WakeTimer>,
+    next_wake_timer: u64,
     last_wake: Option<Wake>,
     wake_pending: bool,
     contexts: HashMap<ConversationId, KeptContext>,
     expiry: Option<(f64, DisarmTimer)>,
     expiry_generation: u64,
+}
+struct WakeTimer {
+    at: f64,
+    generation: u64,
+    disarm: Option<DisarmTimer>,
 }
 struct KeptContext {
     range: Arc<super::context::ContextRange>,
@@ -1991,7 +2000,7 @@ impl TaskScheduler {
         );
         let scheduler = self.clone();
         let context = context.clone();
-        eager(async move {
+        crate::storage::line::eager_on(&self.inner.session, async move {
             let (result, invocation) = operation.await?;
             if let Some(invocation) = invocation {
                 let session = scheduler.inner.session.clone();
@@ -2170,17 +2179,30 @@ impl TaskScheduler {
         });
     }
     fn arm_timer(&self, at: Option<f64>) {
-        let old = {
+        let (old, registration) = {
             let mut state = self.inner.state.lock();
-            if state.timer.as_ref().map(|(at, _)| *at) == at {
+            let at = at.filter(|_| !state.closing);
+            if state.timer.as_ref().map(|timer| timer.at) == at {
                 return;
             }
-            state.timer.take()
+            let old = state.timer.take();
+            let registration = at.map(|at| {
+                let generation = state.next_wake_timer;
+                state.next_wake_timer = state.next_wake_timer.wrapping_add(1);
+                // A host or another runtime thread can fire before arming returns.
+                state.timer = Some(WakeTimer {
+                    at,
+                    generation,
+                    disarm: None,
+                });
+                (at, generation)
+            });
+            (old, registration)
         };
-        if let Some((_, disarm)) = old {
+        if let Some(disarm) = old.and_then(|timer| timer.disarm) {
             disarm();
         }
-        let Some(at) = at else {
+        let Some((at, generation)) = registration else {
             return;
         };
         let weak = Arc::downgrade(&self.inner);
@@ -2188,13 +2210,42 @@ impl TaskScheduler {
             Box::new(move || {
                 if let Some(inner) = weak.upgrade() {
                     let scheduler = TaskScheduler { inner };
-                    scheduler.inner.state.lock().timer = None;
-                    scheduler.kick();
+                    let current = {
+                        let mut state = scheduler.inner.state.lock();
+                        if state
+                            .timer
+                            .as_ref()
+                            .is_some_and(|timer| timer.generation == generation)
+                        {
+                            state.timer.take();
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if current {
+                        scheduler.kick();
+                    }
                 }
             }),
             at - self.now(),
         );
-        self.inner.state.lock().timer = Some((at, disarm));
+        let unused = {
+            let mut state = self.inner.state.lock();
+            if let Some(timer) = state
+                .timer
+                .as_mut()
+                .filter(|timer| timer.generation == generation)
+            {
+                timer.disarm = Some(disarm);
+                None
+            } else {
+                Some(disarm)
+            }
+        };
+        if let Some(disarm) = unused {
+            disarm();
+        }
     }
     fn seal(&self) {
         let expiry = {
@@ -2222,7 +2273,7 @@ impl TaskScheduler {
             let mut state = self.inner.state.lock();
             state.timer.take()
         };
-        if let Some((_, disarm)) = timer {
+        if let Some(disarm) = timer.and_then(|timer| timer.disarm) {
             disarm();
         }
         let error = closed_error(&self.inner.session);

@@ -2,7 +2,7 @@ use super::*;
 use crate::harness::{
     hooks::HookKey,
     live::{self, CompactionReason, CompactionStatus, LIVE_DOC, RetryStatus},
-    models::{RequestScope, provider_options, provider_token_limit},
+    models::{AssistantValueRef, ResolvedModel},
     provider::ensure_provider_session_id,
     submissions::admit_submission,
     usage::record_usage,
@@ -79,12 +79,14 @@ pub type CompactionRuntime =
 pub type CompactionTask =
     Task<CompactionInput, CompactionCheckpoint, CompactionResult, CompactionHooks>;
 type Next = NextTaskState<CompactionCheckpoint, CompactionResult>;
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompactionSource {
     pub reason: CompactionReason,
     pub entries: Vec<Arc<EntryRecord>>,
     pub messages: Vec<Arc<JsonValue>>,
     pub first_kept: EntryId,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<JsonString>,
 }
 pub enum CompactionDecision {
@@ -103,10 +105,17 @@ pub type BeforeCompact = Arc<
 #[derive(Default)]
 pub struct CompactionHooks {
     pub before_compact: Option<BeforeCompact>,
+    pub provider: Option<Arc<dyn CompactionHookProvider>>,
+}
+pub trait CompactionHookProvider: Send + Sync {
+    fn before_compact(&self) -> Result<Option<BeforeCompact>>;
 }
 static BEFORE_COMPACT: LazyLock<HookKey<CompactionHooks, BeforeCompact>> = LazyLock::new(|| {
-    HookKey::new("beforeCompact", |hooks: Arc<CompactionHooks>| {
-        hooks.before_compact.clone()
+    HookKey::try_new("beforeCompact", |hooks: Arc<CompactionHooks>| {
+        hooks.provider.as_ref().map_or_else(
+            || Ok(hooks.before_compact.clone()),
+            |provider| provider.before_compact(),
+        )
     })
 });
 pub static COMPACTION_TASK: LazyLock<CompactionTask> = LazyLock::new(|| {
@@ -198,15 +207,36 @@ pub async fn create_compaction(
     Ok(id)
 }
 type Running = RunningTask<CompactionInput, CompactionCheckpoint, CompactionResult>;
-fn resolve(runtime: &CompactionRuntime, model: &ModelRef) -> Result<Option<pi_ai::Model>> {
-    let models = runtime.models()?;
-    Ok(model
-        .provider
-        .to_string_checked()
-        .ok()
-        .zip(model.model_id.to_string_checked().ok())
-        .and_then(|(provider, id)| models.get_model(&provider, &id)))
+fn resolve(runtime: &CompactionRuntime, model: &ModelRef) -> Result<Option<ResolvedModel>> {
+    runtime.model_collection()?.get_model(model)
 }
+/// Start ordinary foreground compaction and enable scheduling before admission.
+pub fn compact_conversation(
+    scheduler: &crate::harness::scheduler::TaskScheduler,
+    conversation: ConversationId,
+    instructions: Option<JsonString>,
+    context: &Context,
+) -> crate::storage::StorageFuture<TypedTaskId<CompactionResult>> {
+    if let Err(error) = scheduler.resume() {
+        return crate::storage::ready(Err(error));
+    }
+    scheduler.session().commit(
+        move |tx| async move {
+            create_compaction(
+                &tx,
+                conversation,
+                CompactionInput {
+                    reason: CompactionReason::Manual,
+                    instructions,
+                },
+                None,
+            )
+            .await
+        },
+        context,
+    )
+}
+
 async fn select(task: Running, runtime: CompactionRuntime, context: Context) -> Result<()> {
     let agent = runtime.agent(&context).await?;
     let settings = runtime.settings()?;
@@ -271,8 +301,8 @@ async fn select(task: Running, runtime: CompactionRuntime, context: Context) -> 
         stream_options: settings.stream,
         max_tokens: (0.8 * policy.reserve_tokens)
             .floor()
-            .min(if model.max_tokens > 0 {
-                model.max_tokens as f64
+            .min(if model.max_tokens > 0.0 {
+                model.max_tokens
             } else {
                 f64::INFINITY
             }),
@@ -327,40 +357,50 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
         prompt.append(&"\n\nAdditional focus: ".into());
         prompt.append(instructions);
     }
-    let messages = pi_ai::Context {
-        messages: vec![
-            provider_message("system", SUMMARIZATION_SYSTEM_PROMPT.into(), now)?,
-            provider_message("user", prompt, now)?,
-        ],
-        ..Default::default()
-    };
-    let mut forwarded = request.stream_options.clone();
-    forwarded.shift_remove(&JsonString::from("deferred"));
-    let mut options = provider_options(&forwarded)?;
-    options.cache_retention = Some(pi_ai::CacheRetention::None);
-    options.max_tokens = Some(provider_token_limit(request.max_tokens)?);
-    options.session_id = Some(
-        ensure_provider_session_id(&runtime, &context)
-            .await?
-            .to_string_checked()
-            .map_err(|error| Error::message(error.to_string()))?,
+    let messages = vec![
+        provider_message("system", SUMMARIZATION_SYSTEM_PROMPT.into(), now),
+        provider_message("user", prompt, now),
+    ];
+    let mut options = request.stream_options.clone();
+    options.shift_remove(&JsonString::from("deferred"));
+    options.insert("cacheRetention".into(), wire::encode(&"none"));
+    options.insert("maxTokens".into(), wire::encode(&request.max_tokens));
+    options.insert(
+        "sessionId".into(),
+        wire::encode(&ensure_provider_session_id(&runtime, &context).await?),
     );
     if !request.thinking_level.equals_str("off") {
-        options.reasoning =
-            Some(wire::decode(&wire::encode(&request.thinking_level)).map_err(Error::message)?);
+        options.insert("reasoning".into(), wire::encode(&request.thinking_level));
     }
-    let scope = RequestScope::new(&mut options, runtime.signal(), &context);
     let message = runtime
-        .models()?
-        .complete_simple(&model, &messages, options)
-        .await;
-    drop(scope);
+        .model_collection()?
+        .complete_simple(
+            model,
+            messages,
+            options,
+            pi_chord::context::with_abort_signal(runtime.signal(), &context),
+        )
+        .await?;
     runtime.signal().check()?;
-    let summary = summary_text(&message);
+    let summary = summary_text(&message)?;
+    let stop: JsonString = message.required("stopReason")?;
+    let error: Option<JsonString> = if stop.equals_str("error") {
+        message
+            .field("errorMessage")?
+            .map(|value| wire::decode(&value).map_err(Error::message))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
     let policy = runtime.settings()?.retry;
     let attempt = request.attempt;
-    let retry = message.stop_reason == pi_ai::StopReason::Error
-        && pi_ai::is_retryable_assistant_error(&message)
+    let retry = stop.equals_str("error")
+        && pi_ai::is_retryable_assistant_error(&pi_ai::AssistantMessage {
+            stop_reason: pi_ai::StopReason::Error,
+            error_message: error.as_ref().map(JsonString::to_string_lossy),
+            ..Default::default()
+        })
         && policy.value()["enabled"].as_bool() == Some(true)
         && attempt as f64 <= policy.value()["maxRetries"].as_f64().unwrap_or(0.0);
     let until = if retry {
@@ -376,9 +416,11 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
                     &tx,
                     conversation,
                     crate::harness::usage::UsageBucket::Models,
-                    format!("{}/{}", message.provider, message.model),
-                    &JsonObject::try_from_value(wire::encode(&message.usage))
-                        .map_err(Error::message)?,
+                    joined(
+                        [message.required("provider")?, message.required("model")?],
+                        "/",
+                    ),
+                    &message.required("usage")?,
                 )
                 .await?;
                 let live = tx.doc(&LIVE_DOC, conversation).await?;
@@ -393,7 +435,7 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
                         if let Some(status) = live::compaction_status(live, task_id) {
                             status.retry = Some(RetryStatus {
                                 at: until,
-                                error: message.error_message.clone().unwrap_or_default().into(),
+                                error: error.clone().unwrap_or_default(),
                             });
                         }
                         Ok(())
@@ -403,7 +445,7 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
                         until,
                     }));
                 }
-                let text = summary_failure(&message);
+                let text = summary_failure(&message)?;
                 live.update(|live| {
                     live::fail_compaction_status(live, task_id, text.clone());
                     Ok(())
@@ -444,7 +486,7 @@ async fn retry(task: Running, runtime: CompactionRuntime, context: Context) -> R
         )
         .await
 }
-fn provider_message(role: &str, text: JsonString, timestamp: f64) -> Result<pi_ai::Message> {
+fn provider_message(role: &str, text: JsonString, timestamp: f64) -> Arc<JsonValue> {
     let mut message = wire::object();
     wire::put(&mut message, "role", &role);
     if role == "user" {
@@ -456,57 +498,51 @@ fn provider_message(role: &str, text: JsonString, timestamp: f64) -> Result<pi_a
         wire::put(&mut message, "content", &text);
     }
     wire::put(&mut message, "timestamp", &timestamp);
-    wire::decode(&message).map_err(Error::message)
+    Arc::new(message)
 }
-fn summary_text(message: &pi_ai::AssistantMessage) -> Option<JsonString> {
-    if message.stop_reason != pi_ai::StopReason::Stop
-        || message
-            .content
-            .iter()
-            .any(|content| matches!(content, pi_ai::AssistantContent::ToolCall(_)))
+fn summary_text(message: &AssistantValueRef) -> Result<Option<JsonString>> {
+    if !message
+        .required::<JsonString>("stopReason")?
+        .equals_str("stop")
+        || message.has_tool_calls()?
     {
-        return None;
+        return Ok(None);
     }
-    let text = message
-        .content
+    let text = joined(message.text_blocks()?, "\n");
+    let whitespace = |unit: &u16| matches!(*unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
+    let Some(start) = text.units().iter().position(|unit| !whitespace(unit)) else {
+        return Ok(None);
+    };
+    let end = text
+        .units()
         .iter()
-        .filter_map(|content| {
-            if let pi_ai::AssistantContent::Text(text) = content {
-                Some(text.text.as_str())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let text = text.trim_matches(|character: char| matches!(character, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'));
-    (!text.is_empty()).then(|| text.into())
+        .rposition(|unit| !whitespace(unit))
+        .unwrap()
+        + 1;
+    Ok(Some(JsonString::from_utf16(
+        text.units()[start..end].to_vec(),
+    )))
 }
-fn summary_failure(message: &pi_ai::AssistantMessage) -> JsonString {
-    if matches!(
-        message.stop_reason,
-        pi_ai::StopReason::Error | pi_ai::StopReason::Aborted
-    ) {
-        return format!(
-            "Summarization failed: {}",
-            message
-                .error_message
-                .as_deref()
-                .unwrap_or(message.stop_reason.as_str())
-        )
-        .into();
+fn summary_failure(message: &AssistantValueRef) -> Result<JsonString> {
+    let stop: JsonString = message.required("stopReason")?;
+    if stop.equals_str("error") || stop.equals_str("aborted") {
+        let error: Option<JsonString> = message
+            .field("errorMessage")?
+            .map(|value| wire::decode(&value).map_err(Error::message))
+            .transpose()?
+            .flatten();
+        return Ok(joined(
+            ["Summarization failed: ".into(), error.unwrap_or(stop)],
+            "",
+        ));
     }
-    if message.stop_reason == pi_ai::StopReason::Length {
-        return "Summarization hit the token limit; the summary is incomplete".into();
+    if stop.equals_str("length") {
+        return Ok("Summarization hit the token limit; the summary is incomplete".into());
     }
-    if message
-        .content
-        .iter()
-        .any(|content| matches!(content, pi_ai::AssistantContent::ToolCall(_)))
-    {
-        return "Summarization attempted to call a tool".into();
+    if message.has_tool_calls()? {
+        return Ok("Summarization attempted to call a tool".into());
     }
-    "Summarization produced no text".into()
+    Ok("Summarization produced no text".into())
 }
 fn retry_delay(policy: &JsonObject, attempt: u64) -> f64 {
     let delay = policy.value()["baseDelayMs"].as_f64().unwrap_or(0.0)

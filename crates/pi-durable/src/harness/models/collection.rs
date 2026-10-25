@@ -7,6 +7,7 @@ use std::{any::Any, future::Future, pin::Pin};
 pub struct ResolvedModel {
     pub reference: ModelRef,
     pub context_window: f64,
+    pub max_tokens: f64,
     value: Arc<dyn Any + Send + Sync>,
 }
 impl ResolvedModel {
@@ -14,8 +15,13 @@ impl ResolvedModel {
         Self {
             reference,
             context_window,
+            max_tokens: 0.0,
             value: Arc::new(value),
         }
+    }
+    pub fn with_max_tokens(mut self, max_tokens: f64) -> Self {
+        self.max_tokens = max_tokens;
+        self
     }
     pub fn value<T: Any>(&self) -> Result<&T> {
         self.value
@@ -38,6 +44,16 @@ pub trait ModelCollection: Send + Sync {
         options: JsonObject,
         context: Context,
     ) -> StorageFuture<Box<dyn ModelStream>>;
+    fn complete_simple(
+        &self,
+        model: ResolvedModel,
+        messages: Vec<Arc<JsonValue>>,
+        options: JsonObject,
+        context: Context,
+    ) -> StorageFuture<AssistantValueRef> {
+        let stream = self.stream_simple(model, messages, options, context);
+        Box::pin(async move { stream.await?.result().await })
+    }
     fn fetch_deferred(
         &self,
         model: ResolvedModel,
@@ -95,10 +111,11 @@ impl ModelCollection for SdkCollection {
             .model_id
             .to_string_checked()
             .map_err(|error| Error::message(error.to_string()))?;
-        Ok(self
-            .0
-            .get_model(&provider, &id)
-            .map(|model| ResolvedModel::new(reference.clone(), model.context_window as f64, model)))
+        Ok(self.0.get_model(&provider, &id).map(|model| {
+            let max_tokens = model.max_tokens as f64;
+            ResolvedModel::new(reference.clone(), model.context_window as f64, model)
+                .with_max_tokens(max_tokens)
+        }))
     }
     fn stream_simple(
         &self,

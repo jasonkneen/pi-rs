@@ -13,6 +13,12 @@ pub trait HostedAssistantValue: Any + Send + Sync {
     fn tool_calls(&self) -> Result<Vec<JsonValue>> {
         Ok(tool_calls(content(self.field("content")?)?))
     }
+    fn has_tool_calls(&self) -> Result<bool> {
+        Ok(!self.tool_calls()?.is_empty())
+    }
+    fn text_blocks(&self) -> Result<Vec<JsonString>> {
+        text_blocks(content(self.field("content")?)?)
+    }
 }
 fn content(value: Option<JsonValue>) -> Result<Vec<JsonValue>> {
     wire::decode(&value.ok_or_else(|| Error::message("Assistant message has no content"))?)
@@ -22,6 +28,13 @@ fn tool_calls(content: Vec<JsonValue>) -> Vec<JsonValue> {
     content
         .into_iter()
         .filter(|block| block["type"].string_equals("toolCall"))
+        .collect()
+}
+fn text_blocks(content: Vec<JsonValue>) -> Result<Vec<JsonString>> {
+    content
+        .iter()
+        .filter(|block| block["type"].string_equals("text"))
+        .map(|block| wire::field(block, "text").map_err(Error::message))
         .collect()
 }
 enum Value {
@@ -95,6 +108,18 @@ impl AssistantValue {
         match &self.value {
             Value::Json(_) => Ok(tool_calls(self.required("content")?)),
             Value::Hosted(value) => value.tool_calls(),
+        }
+    }
+    pub fn has_tool_calls(&self) -> Result<bool> {
+        match &self.value {
+            Value::Json(_) => Ok(!self.tool_calls()?.is_empty()),
+            Value::Hosted(value) => value.has_tool_calls(),
+        }
+    }
+    pub fn text_blocks(&self) -> Result<Vec<JsonString>> {
+        match &self.value {
+            Value::Json(_) => text_blocks(self.required("content")?),
+            Value::Hosted(value) => value.text_blocks(),
         }
     }
 }

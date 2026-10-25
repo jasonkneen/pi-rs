@@ -421,15 +421,23 @@
         "crates/pi-durable/src/harness/compaction.rs",
         "crates/pi-durable/src/harness/compaction/task.rs",
         "crates/pi-durable/tests/compaction_runtime.rs",
-        "crates/pi-durable/tests/compaction_reference.rs"
+        "crates/pi-durable/tests/compaction_reference.rs",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/src/harness/models/message.rs",
+        "crates/pi-durable/tests/compaction_runtime/collection.rs",
+        "crates/pi-durable/examples/support/compaction_bridge.rs",
+        "crates/pi-durable/examples/support/model_bridge.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test compaction_runtime --test compaction_reference --test models_runtime",
         "node --conditions=source --experimental-strip-types scripts/golden/gen-durable-compaction.mjs /Users/jkneen/Documents/GitHub/pi-mono --check",
-        "Native select/summarize/retry/abort phases; pinned requests, beforeCompact decisions, usage, provider state, conversation-owned admission and owner-blocking placement",
+        "Native select/summarize/retry/abort phases, original completeSimple collection dispatch, pinned model/options/cutoff, fractional output caps, beforeCompact decisions, usage and foreground/background placement",
+        "All 108 unchanged stock compaction cases pass in both retention modes; 102 native completions, twelve compaction hook calls and 368 generation requests per mode; zero source generation or compaction phases",
+        "Eleven native execution tests include hosted UTF16 summaries/instructions, unused non-JSON fields and throwing getters, invalid usage, original collection exceptions, fault cleanup and attempted tool calls with non-JSON arguments",
         "Ten independent source views, seventy cuts and three model policies; exact UTF16 serialization and message identity for measured usage",
-        "Stock gate verifies eleven original range/serialization cases per retention mode; ninety-seven execution cases remain unselected",
-        "Existing pi-ai provider boundary rejects unsupported UTF16 strings instead of replacing them; full SDK 1.4 alignment and generation/host integration remain pending"
+        "Native manual command enables scheduling before Session admission; original host models, renderers, environments and persistent/decorated backend capabilities remain external",
+        "Full SDK 1.4 alignment, complete Harness facade and embedded exports remain open",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -497,7 +505,7 @@
         "All 25 unmodified stock generation cases and all eight recovery cases pass in both retention modes, with native model counters and zero source generation phases",
         "Native generation also drives the complete stock tool, recovery, nested, restart, view, event, submission and inspection files; tool files prove original generation hook callbacks through native dispatch",
         "Original JS model collections, section renderers, environments, backend and user callbacks remain host capabilities; the direct resolveSettings helper assertion remains source",
-        "Full SDK 1.4 lossless alignment, compaction model-collection integration and complete Harness/embedded exports remain open",
+        "Full SDK 1.4 lossless alignment and complete Harness/embedded exports remain open",
         "porting/durable/STATUS.md"
       ]
     },
@@ -511,8 +519,10 @@
         "crates/pi-durable/src/harness/mod.rs"
       ],
       "evidence": [
-        "Native inspection and graph types; the full Harness, generation, submissions and other services remain pending",
-        "Native built-in conversation document initialization creates live, inbox, usage and provider state before the agent hook; the complete Harness and remaining conversation conveniences remain pending"
+        "Native Session, scheduler, generation, compaction, submissions, registry, context, views/events, inspection and graph services have stock coverage; complete public Harness facade is still pending",
+        "Native conversation document initialization creates live, inbox, usage and provider state before the agent hook; manual compaction resumes scheduling before its native admission",
+        "Original user callbacks, model collections and I/O remain external capabilities in the test transport; native environment construction, telemetry and embedded exports remain incomplete",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -633,7 +643,8 @@
         "crates/pi-durable/examples/support/memory_bridge.rs",
         "scripts/stock/durable-memory-adapter.mjs",
         "crates/pi-durable/src/harness/models/collection.rs",
-        "crates/pi-durable/src/harness/models/message.rs"
+        "crates/pi-durable/src/harness/models/message.rs",
+        "crates/pi-durable/src/harness/scheduler/timer_tests.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -649,7 +660,9 @@
         "External callback nested admissions stay on the owning Session FIFO; graph and conversation observers recheck Session admission after hydration, including while an earlier close listener is blocked",
         "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities",
         "Reservation and reconciliation loops run on the Session FIFO as deferred jobs, matching source queueMicrotask ordering without an extra Tokio yield",
-        "Optional live model-collection capability preserves original host models and assistant objects, with the native pi-ai SDK as the default; arbitrary hosted values copy only at durable writers"
+        "Optional live model-collection capability preserves original host models and assistant objects, with the native pi-ai SDK as the default; arbitrary hosted values copy only at durable writers",
+        "A red/green native timer regression proves registration cannot retain a callback that fired before the host returned; generation ownership also guards superseded callbacks and close. Three complete stock compaction repeats pass in both retention modes after the fix",
+        "Abort joins bind to the owning Session FIFO; process response observers use that same queue to preserve the caller-before-abort-handler order. Original stock assertion passes thirty focused repeats and three complete task-file repeats in both retention modes"
       ]
     },
     {
@@ -1531,12 +1544,19 @@
         "crates/pi-durable/tests/compaction_reference.rs",
         "crates/pi-durable/examples/support/compaction_bridge.rs",
         "scripts/stock/durable-compaction-adapter.mjs",
-        "scripts/run-stock-durable-compaction.mjs"
+        "scripts/run-stock-durable-compaction.mjs",
+        "crates/pi-durable/tests/compaction_runtime/collection.rs",
+        "crates/pi-durable/examples/support/model_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs"
       ],
       "evidence": [
         "node scripts/run-stock-durable-compaction.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-compaction-report.json",
-        "Eleven unchanged stock range-selection/serialization cases in both retention modes, native operation counters and source hash checked; ninety-seven execution cases not selected",
-        "Eight separate native execution tests cover summaries, pinned retries, hook decisions, missing models, empty ranges, failure spend/cleanup, late response after abort, task-owned direct placement and queued stale summaries"
+        "All 108 unmodified cases pass in both retention modes with zero pending tests; source pin and bytes before/after verified; original assertions, timers and timeouts unchanged",
+        "Native compaction/generation/tools, Session, scheduler, registry, memory, conversation views/events, hooks and model collection dispatch; original host model collections, callbacks, validators, environments and controlled/persistent storage retained",
+        "Per mode: 102 native complete calls, twelve native compaction hook calls, 368 native generation requests, 94 direct memory opens, 2266 memory commits, fifteen planning calls and zero source generation/compaction phases",
+        "Actual SQLite reopen, interrupted summary retry, overflow and threshold compaction, concurrent/stale placement, cancellation, failed commit atomicity and event ordering assertions run against native services",
+        "Eleven native execution tests exercise the native SDK and hosted value boundaries independently; complete native Harness facade, embedded bindings and SDK 1.4 alignment remain open",
+        "porting/durable/STATUS.md"
       ]
     },
     {

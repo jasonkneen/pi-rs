@@ -16,6 +16,8 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 use tokio::sync::Semaphore;
+#[path = "compaction_runtime/collection.rs"]
+mod collection;
 struct Tool(JsonString);
 impl RegisteredTool for Tool {
     fn name(&self) -> &JsonString {
@@ -167,6 +169,16 @@ async fn open(
     hooks: Vec<Arc<CompactionHooks>>,
     configure: bool,
 ) -> (TaskScheduler, ConversationId, Arc<MemoryStorage>) {
+    open_with_collection(retention, models, settings, hooks, configure, None).await
+}
+async fn open_with_collection(
+    retention: f64,
+    models: Arc<Mutex<Models>>,
+    settings: Arc<Mutex<Settings>>,
+    hooks: Vec<Arc<CompactionHooks>>,
+    configure: bool,
+    model_collection: Option<pi_durable::harness::models::ModelCollectionReader>,
+) -> (TaskScheduler, ConversationId, Arc<MemoryStorage>) {
     let registry =
         Registry::<Tool, Section>::new([COMPACTION_TASK.erased(), owner_task().erased()]).unwrap();
     for (index, hook) in hooks.into_iter().enumerate() {
@@ -181,8 +193,14 @@ async fn open(
         storage.clone(),
         registry,
         SchedulerOptions {
+            model_collection,
             models: Arc::new(move || Ok(models.lock().clone())),
             settings: Arc::new(move || Ok(settings.lock().clone())),
+            settle_outcome: Arc::new(|tx, record, outcome| {
+                Box::pin(pi_durable::harness::live::settle_scheduler_outcome(
+                    tx, record, outcome,
+                ))
+            }),
             ..Default::default()
         },
         SessionOptions {
@@ -448,12 +466,14 @@ async fn hook_decisions_avoid_model_spend_and_models_remain_live_after_invocatio
                     ))))
                 })
             })),
+            ..Default::default()
         }),
         Arc::new(CompactionHooks {
             before_compact: Some(Arc::new(move |_, _, _| {
                 skipped_call.fetch_add(1, Ordering::Relaxed);
                 Box::pin(async { Ok(Some(CompactionDecision::Decline)) })
             })),
+            ..Default::default()
         }),
     ];
     let (scheduler, conversation, _storage) = open(
@@ -714,6 +734,7 @@ async fn rejected_summaries_record_failure_and_spend_and_declines_spend_nothing(
         before_compact: Some(Arc::new(|_, _, _| {
             Box::pin(async { Ok(Some(CompactionDecision::Decline)) })
         })),
+        ..Default::default()
     })];
     let (scheduler, conversation, _) = open(
         0.0,

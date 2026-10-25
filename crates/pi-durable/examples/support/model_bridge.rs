@@ -14,6 +14,8 @@ pub(super) struct ModelBridge {
     pub polls: AtomicU64,
     pub cancellations: AtomicU64,
     pub hook_calls: AtomicU64,
+    pub completions: AtomicU64,
+    pub compaction_hooks: AtomicU64,
 }
 pub(super) struct HostAssistant {
     pub hub: Weak<Hub>,
@@ -58,6 +60,12 @@ impl HostedAssistantValue for HostAssistant {
     }
     fn tool_calls(&self) -> Result<Vec<JsonValue>> {
         decode(&self.hub()?.sync("models.toolCalls", encode(&self.id))?)
+    }
+    fn has_tool_calls(&self) -> Result<bool> {
+        decode(&self.hub()?.sync("models.hasToolCalls", encode(&self.id))?)
+    }
+    fn text_blocks(&self) -> Result<Vec<JsonString>> {
+        decode(&self.hub()?.sync("models.textBlocks", encode(&self.id))?)
     }
 }
 struct HostModel(u64);
@@ -147,11 +155,20 @@ impl ModelCollection for HostCollection {
             Some("NaN") => f64::NAN,
             _ => field(&value, "contextWindow")?,
         };
-        Ok(Some(ResolvedModel::new(
-            reference.clone(),
-            window,
-            HostModel(field(&value, "model")?),
-        )))
+        let max_tokens = match value["maxTokens"].to_utf8().as_deref() {
+            Some("Infinity") => f64::INFINITY,
+            Some("-Infinity") => f64::NEG_INFINITY,
+            Some("NaN") => f64::NAN,
+            _ => field(&value, "maxTokens")?,
+        };
+        Ok(Some(
+            ResolvedModel::new(
+                reference.clone(),
+                window,
+                HostModel(field(&value, "model")?),
+            )
+            .with_max_tokens(max_tokens),
+        ))
     }
     fn stream_simple(
         &self,
@@ -208,6 +225,25 @@ impl ModelCollection for HostCollection {
             model,
             handle.into_value(),
             JsonObject::default(),
+            context,
+            None,
+        )
+    }
+    fn complete_simple(
+        &self,
+        model: ResolvedModel,
+        messages: Vec<Arc<JsonValue>>,
+        options: JsonObject,
+        context: Context,
+    ) -> StorageFuture<AssistantValueRef> {
+        if let Ok(hub) = self.hub() {
+            hub.models.completions.fetch_add(1, Ordering::Relaxed);
+        }
+        self.invoke(
+            "completeSimple",
+            model,
+            object([("messages", encode(&messages))]),
+            options,
             context,
             None,
         )

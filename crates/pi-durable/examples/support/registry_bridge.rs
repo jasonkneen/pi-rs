@@ -249,6 +249,18 @@ impl Hub {
             .map(|description| self.stock_catalog_task(description))
             .collect::<Result<_>>()?;
         for hook in field::<Vec<JsonValue>>(description, "hooks")? {
+            if hook["nativeCompaction"].as_bool() == Some(true) {
+                extension.hooks.push(HookRegistration::new(
+                    "pi.compaction",
+                    Arc::new(pi_durable::harness::compaction::CompactionHooks {
+                        provider: Some(Arc::new(super::compaction_bridge::HostCompactionHooks {
+                            hub: Arc::downgrade(self),
+                            id: field(&hook, "handlers")?,
+                        })),
+                        ..Default::default()
+                    }),
+                ));
+            }
             if hook["nativeGeneration"].as_bool() == Some(true) {
                 extension.hooks.push(HookRegistration::new(
                     "pi.generation",

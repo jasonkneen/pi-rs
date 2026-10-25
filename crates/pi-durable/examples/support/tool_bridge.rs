@@ -376,6 +376,14 @@ impl Hub {
         id
     }
     pub(super) fn stock_catalog_task(self: &Arc<Self>, description: &JsonValue) -> Result<AnyTask> {
+        if description["nativeCompaction"].as_bool() == Some(true) {
+            let task = pi_durable::harness::compaction::compaction_task().erased();
+            self.tool
+                .definitions
+                .lock()
+                .insert(field(description, "id")?, task.clone());
+            return Ok(task);
+        }
         if description["nativeGeneration"].as_bool() == Some(true) {
             let id = field(description, "id")?;
             if let Some(task) = self.tool.definitions.lock().get(&id).cloned() {

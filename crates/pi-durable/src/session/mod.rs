@@ -232,7 +232,9 @@ impl Session {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.inner.options.now)()))
             .unwrap_or_else(|_| wall_now())
     }
-    pub(crate) fn spawn(&self, operation: impl Future<Output = ()> + Send + 'static) {
+    /// Poll a service continuation on this Session's FIFO without holding its
+    /// mutation line. Transports use this to preserve service-result ordering.
+    pub fn spawn(&self, operation: impl Future<Output = ()> + Send + 'static) {
         self.inner.executor.spawn(operation);
     }
     fn enqueue<T, F, Fut>(&self, callback: F) -> StorageFuture<T>

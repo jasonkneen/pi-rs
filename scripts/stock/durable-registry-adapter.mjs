@@ -4,7 +4,8 @@ import {writeFileSync} from "node:fs";
 import {GenerationTask,ToolTask,CompactionTask} from "@earendil-works/pi-durable";
 import {nativeTransport,failure} from "./durable-native-transport.mjs";
 import {captureSettings,settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
-import {handle,objectFor,describeTask,markNativeTool,markNativeGeneration} from "./durable-native-handles.mjs";
+import {handle,objectFor,describeTask,markNativeTool,markNativeGeneration,markNativeCompaction} from "./durable-native-handles.mjs";
+if(process.env.PI_DURABLE_NATIVE_COMPACTION_TASK==="1")markNativeCompaction(CompactionTask);
 if(process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1")markNativeGeneration(GenerationTask);
 if(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1")markNativeTool(ToolTask);
 const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),resolvedAgents=new Map(),registries=new WeakMap();
@@ -14,7 +15,7 @@ function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.c
 function describeSection(section){return{id:handle(section),key:section.key,untagged:section.tag===false};}
 function describeExtension(extension){return{
  id:handle(extension),name:extension.name,tools:(extension.tools??[]).map(describeTool),sections:(extension.sections??[]).map(describeSection),tasks:(extension.tasks??[]).map(describeTask),
- hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool",nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1"&&hook.task==="pi.generation"})),
+ hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool",nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1"&&hook.task==="pi.generation",nativeCompaction:process.env.PI_DURABLE_NATIVE_COMPACTION_TASK==="1"&&hook.task==="pi.compaction"})),
  wraps:(extension.wraps??[]).map(wrap=>({...(Object.hasOwn(wrap,"tool")?{tool:wrap.tool}:{section:wrap.section}),callback:handle(wrap.wrap)})),
 };}
 nativeTransport.register("registry.listener",args=>{callbacks.listeners++;objectFor(args)();return null;});
