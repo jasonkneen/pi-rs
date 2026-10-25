@@ -151,9 +151,10 @@ impl ModelCollection for HostCollection {
         }
         let id: u64 = decode(&value)?;
         let host = self.hub.clone();
+        let image_host = self.hub.clone();
         Ok(Some(
-            ResolvedModel::new(reference.clone(), 0.0, HostModel(id)).with_metadata(Arc::new(
-                move |property| {
+            ResolvedModel::new(reference.clone(), 0.0, HostModel(id))
+                .with_metadata(Arc::new(move |property| {
                     let hub = host
                         .upgrade()
                         .ok_or_else(|| Error::message("Model host closed"))?;
@@ -170,8 +171,35 @@ impl ModelCollection for HostCollection {
                         Some("NaN") => Ok(f64::NAN),
                         _ => decode(&value),
                     }
-                },
-            )),
+                }))
+                .with_image_input(Arc::new(move || {
+                    let hub = image_host
+                        .upgrade()
+                        .ok_or_else(|| Error::message("Model host closed"))?;
+                    let value = hub.sync("models.imageInput", encode(&id))?;
+                    let optional = |key: &str| -> Result<Option<f64>> {
+                        if value[key].is_null() {
+                            return Ok(None);
+                        }
+                        value[key]
+                            .to_utf8()
+                            .map_or_else(
+                                || decode(&value[key]),
+                                |s| {
+                                    s.parse().map_err(|e: std::num::ParseFloatError| {
+                                        Error::message(e.to_string())
+                                    })
+                                },
+                            )
+                            .map(Some)
+                    };
+                    Ok(ModelImageInput {
+                        vision: field(&value, "vision")?,
+                        max_width: optional("maxWidth")?,
+                        max_height: optional("maxHeight")?,
+                        max_bytes: optional("maxBytes")?,
+                    })
+                })),
         ))
     }
     fn stream_simple(

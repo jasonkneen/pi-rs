@@ -3,6 +3,12 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum ErrorKind {
+    File(crate::env::FileError),
+    Execution(crate::env::ExecutionError),
+    Caused {
+        message: crate::JsonString,
+        cause: Error,
+    },
     Sqlite(pi_chord::sqlite::SqliteError),
     JsonlCorruption {
         message: String,
@@ -38,6 +44,15 @@ pub enum ErrorKind {
 pub struct Error(Arc<ErrorKind>);
 pub type Result<T> = std::result::Result<T, Error>;
 impl Error {
+    pub fn file(error: crate::env::FileError) -> Self {
+        Self(Arc::new(ErrorKind::File(error)))
+    }
+    pub fn execution(error: crate::env::ExecutionError) -> Self {
+        Self(Arc::new(ErrorKind::Execution(error)))
+    }
+    pub fn caused(message: crate::JsonString, cause: Error) -> Self {
+        Self(Arc::new(ErrorKind::Caused { message, cause }))
+    }
     pub fn jsonl_corruption(message: impl Into<String>, cause: Option<Error>) -> Self {
         Self(Arc::new(ErrorKind::JsonlCorruption {
             message: message.into(),
@@ -64,7 +79,7 @@ impl Error {
     }
     pub fn message_text(&self) -> crate::JsonString {
         match self.kind() {
-            ErrorKind::Host { message, .. } => message.clone(),
+            ErrorKind::Host { message, .. } | ErrorKind::Caused { message, .. } => message.clone(),
             _ => self.to_string().into(),
         }
     }
@@ -91,6 +106,8 @@ impl Error {
     }
     pub fn name(&self) -> &str {
         match self.kind() {
+            ErrorKind::File(_) => "FileError",
+            ErrorKind::Execution(_) => "ExecutionError",
             ErrorKind::Host { name, .. } => name,
             ErrorKind::JsonlCorruption { .. } => "JsonlCorruptionError",
             ErrorKind::JsonlPoisoned { .. } => "JsonlStoragePoisonedError",
@@ -116,6 +133,9 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
+            ErrorKind::File(error) => error.fmt(f),
+            ErrorKind::Execution(error) => error.fmt(f),
+            ErrorKind::Caused { message, .. } => f.write_str(&message.to_string_lossy()),
             ErrorKind::Sqlite(error) => error.fmt(f),
             ErrorKind::JsonlCorruption { message, .. } => f.write_str(message),
             ErrorKind::JsonlPoisoned { .. } => {
@@ -142,6 +162,9 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self.kind() {
+            ErrorKind::File(error) => Some(error),
+            ErrorKind::Execution(error) => Some(error),
+            ErrorKind::Caused { cause, .. } => Some(cause),
             ErrorKind::Sqlite(error) => Some(error),
             ErrorKind::JsonlCorruption { cause, .. } => cause.as_ref().map(|e| e as _),
             ErrorKind::JsonlPoisoned { cause } => Some(cause),

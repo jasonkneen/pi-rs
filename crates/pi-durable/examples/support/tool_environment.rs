@@ -132,6 +132,67 @@ impl HostEnv {
     }
 }
 impl FileSystem for HostEnv {
+    fn open_binary_reader(
+        &self,
+        path: &Path,
+        no_follow: bool,
+        context: &Context,
+    ) -> FileFuture<Arc<dyn BinaryReader>> {
+        let operation = self.file::<u64>(
+            "openBinaryReader",
+            encode(&(path, object([("noFollow", encode(&no_follow))]))),
+            context,
+        );
+        let hub = self.hub.clone();
+        Box::pin(async move {
+            Ok(Arc::new(HostBinaryReader {
+                env: HostEnv {
+                    hub,
+                    handle: operation.await?,
+                    id: String::new(),
+                    cwd: PathBuf::new(),
+                },
+            }) as Arc<dyn BinaryReader>)
+        })
+    }
+    fn read_text_file(&self, path: &Path, context: &Context) -> FileFuture<String> {
+        self.file("readTextFile", encode(&[path]), context)
+    }
+    fn write_text_file(
+        &self,
+        path: &Path,
+        content: &JsonString,
+        context: &Context,
+    ) -> FileFuture<()> {
+        self.file("writeTextFile", encode(&(path, content)), context)
+    }
+    fn canonical_path(&self, path: &Path, context: &Context) -> FileFuture<PathBuf> {
+        self.file("canonicalPath", encode(&[path]), context)
+    }
+    fn exists(&self, path: &Path, context: &Context) -> FileFuture<bool> {
+        self.file("exists", encode(&[path]), context)
+    }
+    fn file_info(&self, path: &Path, context: &Context) -> FileFuture<FileInfo> {
+        let operation = self.file::<JsonValue>("fileInfo", encode(&[path]), context);
+        Box::pin(async move {
+            let value = operation.await?;
+            let read = || -> Result<FileInfo> {
+                Ok(FileInfo {
+                    name: field::<String>(&value, "name")?.into(),
+                    path: field(&value, "path")?,
+                    kind: match value["kind"].to_utf8().as_deref() {
+                        Some("file") => FileKind::File,
+                        Some("directory") => FileKind::Directory,
+                        Some("symlink") => FileKind::Symlink,
+                        _ => return Err(Error::message("Unknown file kind")),
+                    },
+                    size: field(&value, "size")?,
+                    mtime_ms: field(&value, "mtimeMs")?,
+                })
+            };
+            read().map_err(|e| FileError::new(FileErrorCode::Invalid, e.to_string(), None))
+        })
+    }
     fn id(&self) -> &str {
         &self.id
     }
@@ -227,6 +288,57 @@ impl FileSystem for HostEnv {
         )
     }
 }
+struct HostBinaryReader {
+    env: HostEnv,
+}
+impl BinaryReader for HostBinaryReader {
+    fn info(&self, context: &Context) -> FileFuture<FileInfo> {
+        let operation = self
+            .env
+            .file::<JsonValue>("info", encode(&Vec::<()>::new()), context);
+        Box::pin(async move {
+            let value = operation.await?;
+            let parse = || -> Result<FileInfo> {
+                Ok(FileInfo {
+                    name: field::<String>(&value, "name")?.into(),
+                    path: field(&value, "path")?,
+                    kind: match value["kind"].to_utf8().as_deref() {
+                        Some("file") => FileKind::File,
+                        Some("directory") => FileKind::Directory,
+                        Some("symlink") => FileKind::Symlink,
+                        _ => return Err(Error::message("Unknown binary file kind")),
+                    },
+                    size: field(&value, "size")?,
+                    mtime_ms: field(&value, "mtimeMs")?,
+                })
+            };
+            parse().map_err(|error| FileError::new(FileErrorCode::Invalid, error.to_string(), None))
+        })
+    }
+    fn read(&self, offset: f64, length: f64, context: &Context) -> FileFuture<Vec<u8>> {
+        let operation = self
+            .env
+            .file::<String>("read", encode(&(offset, length)), context);
+        Box::pin(async move {
+            STANDARD
+                .decode(operation.await?)
+                .map_err(|error| FileError::new(FileErrorCode::Invalid, error.to_string(), None))
+        })
+    }
+    fn scan_lines(&self, start: f64, end: Option<f64>, context: &Context) -> FileFuture<LineScan> {
+        let mut options = object([("startLine", encode(&start))]);
+        if let Some(end) = end {
+            options
+                .as_object_mut()
+                .unwrap()
+                .insert("endLine".into(), encode(&end));
+        }
+        self.env.file("scanLines", encode(&(options,)), context)
+    }
+    fn close(&self, context: &Context) -> FileFuture<()> {
+        self.env.file("close", encode(&Vec::<()>::new()), context)
+    }
+}
 impl Shell for HostEnv {
     fn exec(
         &self,
@@ -280,6 +392,20 @@ impl Shell for HostEnv {
     }
 }
 impl Hub {
+    pub(super) fn described_environment(
+        self: &Arc<Self>,
+        description: &JsonValue,
+    ) -> Result<Option<Arc<dyn ExecutionEnv>>> {
+        if description.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(Arc::new(HostEnv {
+            hub: Arc::downgrade(self),
+            handle: field(description, "handle")?,
+            id: field(description, "namespace")?,
+            cwd: field(description, "cwd")?,
+        })))
+    }
     pub(super) fn build_environment(
         self: &Arc<Self>,
         harness: u64,
@@ -332,20 +458,18 @@ impl Hub {
             .cloned()
             .ok_or_else(|| Error::message("Unknown shell output callback"))?;
         let info = &request["info"];
-        let result = callback(
-            field(&request, "text")?,
-            context,
-            ShellOutputInfo {
-                stream: if info["stream"].string_equals("stderr") {
-                    ShellStream::Stderr
-                } else {
-                    ShellStream::Stdout
-                },
-                skipped: field(info, "skipped")?,
+        let text = field(&request, "text")?;
+        let info = ShellOutputInfo {
+            stream: if info["stream"].string_equals("stderr") {
+                ShellStream::Stderr
+            } else {
+                ShellStream::Stdout
             },
-        );
+            skipped: field(info, "skipped")?,
+        };
         Ok(Box::pin(async move {
-            result.map_err(|error| Error::host("ExecutionError", error.to_string().into()))?;
+            callback(text, context, info)
+                .map_err(|error| Error::host("ExecutionError", error.to_string().into()))?;
             Ok(None)
         }))
     }

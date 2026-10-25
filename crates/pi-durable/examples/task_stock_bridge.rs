@@ -22,6 +22,8 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+#[path = "support/builtin_bridge.rs"]
+mod builtin_bridge;
 #[path = "support/compaction_bridge.rs"]
 mod compaction_bridge;
 #[path = "support/context_bridge.rs"]
@@ -93,7 +95,9 @@ fn error_value(error: &Error) -> JsonValue {
             encode(&matches!(error.kind(), ErrorKind::Aborted(_))),
         ),
     ]);
-    if let ErrorKind::SessionFailed { cause } | ErrorKind::DocumentCopy { cause, .. } = error.kind()
+    if let ErrorKind::SessionFailed { cause }
+    | ErrorKind::DocumentCopy { cause, .. }
+    | ErrorKind::Caused { cause, .. } = error.kind()
     {
         value
             .as_object_mut()
@@ -139,6 +143,7 @@ struct Hub {
     native_runtimes: Mutex<HashMap<u64, ErasedRuntime>>,
     tool: tool_bridge::ToolBridge,
     environment: tool_environment::EnvironmentBridge,
+    builtin: builtin_bridge::BuiltinBridge,
     host_timers: Mutex<HashMap<u64, DisarmTimer>>,
     host_timer_callbacks: Mutex<HashMap<u64, pi_durable::timers::TimerCallback>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
@@ -537,6 +542,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method.starts_with("builtin.") {
+            return self.builtin_request(&method, request, context);
+        }
         if method.starts_with("memory.") {
             return self.memory_request(&method, request);
         }
@@ -1332,6 +1340,17 @@ fn to_next(state: TaskState) -> Result<NextTaskState> {
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--stock-base64") {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::io::stdin().read_to_end(&mut bytes).unwrap();
+        let encoded = pi_durable::tools::image_processor::to_base64(&bytes);
+        std::io::stdout().write_all(encoded.as_bytes()).unwrap();
+        if let Some(marker) = std::env::var_os("PI_DURABLE_NATIVE_BASE64_MARKER") {
+            std::fs::write(marker, bytes.len().to_string()).unwrap();
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--order-tool-results") {
         let mut input = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).unwrap();
@@ -1360,6 +1379,7 @@ async fn main() {
         native_runtimes: Mutex::new(HashMap::new()),
         tool: tool_bridge::ToolBridge::default(),
         environment: tool_environment::EnvironmentBridge::default(),
+        builtin: builtin_bridge::BuiltinBridge::default(),
         host_timers: Mutex::new(HashMap::new()),
         host_timer_callbacks: Mutex::new(HashMap::new()),
         transactions: Mutex::new(HashMap::new()),

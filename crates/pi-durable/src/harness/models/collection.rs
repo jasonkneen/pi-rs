@@ -17,14 +17,35 @@ impl ModelProperty {
     }
 }
 pub type ModelMetadataReader = Arc<dyn Fn(ModelProperty) -> Result<f64> + Send + Sync>;
+#[derive(Clone, Copy, Debug)]
+pub struct ModelImageInput {
+    pub vision: bool,
+    pub max_width: Option<f64>,
+    pub max_height: Option<f64>,
+    pub max_bytes: Option<f64>,
+}
+impl Default for ModelImageInput {
+    fn default() -> Self {
+        Self {
+            vision: true,
+            max_width: None,
+            max_height: None,
+            max_bytes: None,
+        }
+    }
+}
+pub type ModelImageReader = Arc<dyn Fn() -> Result<ModelImageInput> + Send + Sync>;
 #[derive(Clone)]
 pub struct ResolvedModel {
     pub reference: ModelRef,
     metadata: ModelMetadataReader,
+    image_input: ModelImageReader,
     value: Arc<dyn Any + Send + Sync>,
 }
 impl ResolvedModel {
     pub fn new<T: Any + Send + Sync>(reference: ModelRef, context_window: f64, value: T) -> Self {
+        let value: Arc<dyn Any + Send + Sync> = Arc::new(value);
+        let image = value.clone();
         Self {
             reference,
             metadata: Arc::new(move |property| {
@@ -33,7 +54,23 @@ impl ResolvedModel {
                     ModelProperty::MaxTokens => 0.0,
                 })
             }),
-            value: Arc::new(value),
+            image_input: Arc::new(move || {
+                let Some(model) = image.downcast_ref::<pi_ai::Model>() else {
+                    return Ok(ModelImageInput::default());
+                };
+                let resize = model
+                    .input_limits
+                    .as_ref()
+                    .and_then(|l| l.images.as_ref())
+                    .and_then(|l| l.resize.as_ref());
+                Ok(ModelImageInput {
+                    vision: model.supports_images(),
+                    max_width: resize.and_then(|r| r.max_width).map(|n| n as f64),
+                    max_height: resize.and_then(|r| r.max_height).map(|n| n as f64),
+                    max_bytes: resize.and_then(|r| r.max_bytes).map(|n| n as f64),
+                })
+            }),
+            value,
         }
     }
     pub fn with_max_tokens(mut self, max_tokens: f64) -> Self {
@@ -50,6 +87,13 @@ impl ResolvedModel {
     }
     pub fn context_window(&self) -> Result<f64> {
         (self.metadata)(ModelProperty::ContextWindow)
+    }
+    pub fn with_image_input(mut self, reader: ModelImageReader) -> Self {
+        self.image_input = reader;
+        self
+    }
+    pub fn image_input(&self) -> Result<ModelImageInput> {
+        (self.image_input)()
     }
     pub fn max_tokens(&self) -> Result<f64> {
         (self.metadata)(ModelProperty::MaxTokens)

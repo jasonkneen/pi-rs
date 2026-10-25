@@ -893,27 +893,59 @@
     },
     {
       "reference": "packages/durable/src/images/exif.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/images/exif.rs"
+      ],
+      "evidence": [
+        "Native JPEG and WebP TIFF orientation extraction passes original image helper cases and all eight original image orientation preparations",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/images/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/images/mod.rs"
+      ],
+      "evidence": [
+        "Native photon-rs pinned to the same 0.3.3 implementation performs decode, EXIF transformation, Lanczos resize, JPEG/PNG encoding and bounded fallback; original image assertions pass in both modes; supplied WebAssembly-module initialization remains open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/images/node-worker.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/images/native.rs"
+      ],
+      "evidence": [
+        "Image requests serialize on a native thread with owned bytes and reply channels; worker idle and owner-drop lifecycle regression passes; JavaScript worker loader and browser/worker targets remain open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/images/node.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/images/native.rs"
+      ],
+      "evidence": [
+        "Native lazily started image worker and inline mode; all original image cases use native processing with 28 native preparations per mode; native regression verifies idle retirement, recreation, queued ownership and corrupt-input cleanup; JS module/worker loader compatibility remains open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/images/photon-wasm.d.ts",
@@ -1246,75 +1278,177 @@
     },
     {
       "reference": "packages/durable/src/tools/bash.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/bash.rs"
+      ],
+      "evidence": [
+        "Native bash and PowerShell registrations implement preparation, prefixes, timeout validation, program fallback, output progress, spill diagnostics and structured results; all active original shell-tool cases pass in both modes; physical Windows remains open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/edit-diff.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/edit_diff.rs",
+        "crates/pi-json/src/diff.rs",
+        "crates/pi-coding-agent/src/core/tools/jsdiff.rs",
+        "crates/pi-durable/tests/builtin_mutations.rs"
+      ],
+      "evidence": [
+        "2013 independent pinned-source cases cover normalization, lossless UTF16 matching, overlapping/duplicate/missing/no-op edits, unchanged-line preservation, display diffs and unified patches",
+        "The existing coding-agent jsdiff engine is shared unchanged in algorithm through pi-json; UTF16 units are losslessly encoded as scalar line tokens before diffing and restored afterward; no Node runtime dependency",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/edit.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/edit.rs",
+        "crates/pi-durable/src/tools/edit_diff.rs",
+        "crates/pi-durable/tests/builtin_mutations.rs"
+      ],
+      "evidence": [
+        "Native registration repairs string/object/legacy edit arguments without mutating the input; validates edits before I/O; retains access error causes, BOM/CRLF and unchanged fuzzy lines",
+        "All original edit assertions pass in the selected stock mutation gate; native production Harness dispatches the real registration and repairs model arguments in both retention modes; physical Windows and embedded exports remain open",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/env.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/mod.rs"
+      ],
+      "evidence": [
+        "Native built-ins take their invocation environment and fail with the original ordinary error when absent; native no-environment regression and production Harness dispatch pass",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/file-mutation-queue.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/file_mutation_queue.rs",
+        "crates/pi-durable/tests/builtin_mutations.rs"
+      ],
+      "evidence": [
+        "All 14 original write/edit cases pass per retention mode, including cancellation during held I/O, symlink aliases, new files under symlinked parents, different environment objects and filesystem IDs, and a literal Unix backslash",
+        "The same production queue serves original withFileMutationQueue callbacks; a native regression verifies that shutting down one queued runtime releases its slot without bypassing an active predecessor in another runtime",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/image-processor.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/image_processor.rs"
+      ],
+      "evidence": [
+        "Native image capability, model resize metadata, inline support, base64 and byte limits; the original 128 MB child-process assertion routes to production Rust base64 and proves invocation",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/image.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/image.rs"
+      ],
+      "evidence": [
+        "Original image signature, bounded APNG detection and image dimensions assertions execute Rust in both modes; 32-bit chunk arithmetic is bounded before conversion",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/mod.rs",
+        "crates/pi-durable/src/tools/read.rs",
+        "crates/pi-durable/src/tools/write.rs",
+        "crates/pi-durable/src/tools/edit.rs",
+        "crates/pi-durable/src/tools/bash.rs"
+      ],
+      "evidence": [
+        "All native tool factories and create_coding_tools are exported; a public native Harness executes the complete read/write/edit/bash extension, including real shell/filesystem I/O in both retention modes; embedded exports remain open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/path-utils.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/path_utils.rs"
+      ],
+      "evidence": [
+        "Native read/write/edit path policies pass the complete stock tools file and bounded-read differential; physical Windows and embedded lossless path boundary audit remain open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/read.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/read.rs",
+        "crates/pi-durable/src/tools/api.rs"
+      ],
+      "evidence": [
+        "Native bounded opened-reader pipeline, unstable-file retry, path variants, image limits and diagnostics; all original tools and 1601 differential native reads per mode pass with zero leaked readers; embedded exports remain open",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/write.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/tools/write.rs",
+        "crates/pi-durable/tests/builtin_mutations.rs"
+      ],
+      "evidence": [
+        "Native registration serializes file mutations, checks cancellation before and after the actual write, preserves the original success message and creates parent directories through the environment",
+        "Text arguments remain lossless until the filesystem boundary; native local writing uses Node-compatible UTF8 replacement for lone surrogates; original held-write subclasses receive text and retain their actual delay gates",
+        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/truncate.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/truncate.rs"
+      ],
+      "evidence": [
+        "Native head and bounded-reader truncation implement UTF16 and UTF8 budgets, complete-line retention, source size formatting and metadata; exercised through complete read suites; standalone env-truncate suite remains pending",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/types.ts",
@@ -2536,21 +2670,55 @@
     },
     {
       "reference": "packages/durable/test/tools-images.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/tools/read.rs",
+        "crates/pi-durable/src/tools/image.rs",
+        "crates/pi-durable/src/tools/image_processor.rs",
+        "crates/pi-durable/src/images/mod.rs",
+        "crates/pi-durable/src/images/exif.rs",
+        "crates/pi-durable/src/images/native.rs"
+      ],
+      "evidence": [
+        "All 34 original cases pass per mode, including eight EXIF orientations and the original 128 MB heap subprocess; native counters prove 4 processors, 28 preparations, 18 reads, 31 pure operations and one native base64 subprocess per mode; reference Photon is used only for independent fixture encoding/decoding",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/tools-read-differential.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/tools/read.rs"
+      ],
+      "evidence": [
+        "Both complete original differential cases pass in both modes: 1601 native read executions and 14189 environment callbacks per mode; independent reference classification is retained; no active readers remain",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/tools.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/tools/mod.rs",
+        "crates/pi-durable/src/tools/read.rs",
+        "crates/pi-durable/src/tools/write.rs",
+        "crates/pi-durable/src/tools/edit.rs",
+        "crates/pi-durable/src/tools/bash.rs"
+      ],
+      "evidence": [
+        "Complete original file: 35 active cases per mode, with its one original platform skip; original assertions, source bytes and deadlines retained",
+        "Per mode: 7 native writes, 12 edits, 2 queues, 8 reads, 13 shell calls, 212 original environment callbacks and zero active readers; production native Harness separately exercises the complete coding-tools extension",
+        "scripts/run-stock-durable-builtins.mjs",
+        "scripts/stock/durable-builtin-adapter.mjs",
+        "crates/pi-durable/examples/support/builtin_bridge.rs",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/types.test.ts",

@@ -245,6 +245,7 @@ nativeTransport.register("environment.build",async(args,context)=>{
 });
 nativeTransport.register("environment.call",async(args,context)=>{
  const env=objectFor(args.environment),values=[...args.args];
+ if(args.method==="writeTextFile")return env.writeFile(...values,context??BACKGROUND_CONTEXT);
  if(args.method==="writeFile"||args.method==="appendFile")values[1]=Uint8Array.from(Buffer.from(values[1],"base64"));
  if(args.method==="exec"&&values[1]?.onOutput!==undefined){const callback=values[1].onOutput;values[1].onOutput=(text,_context,info)=>nativeTransport.sync("environment.output",{callback,text,info});}
  const result=await env[args.method](...values,context??BACKGROUND_CONTEXT);
@@ -268,6 +269,7 @@ nativeTransport.event("models.signal",({stream})=>modelControllers.get(stream)?.
 nativeTransport.register("models.collection",id=>handle(harnesses.get(id).currentModels()));
 nativeTransport.register("models.get",args=>{const model=objectFor(args.collection).getModel(args.reference.provider,args.reference.modelId);return model===undefined?null:handle(model);});
 nativeTransport.register("models.metadata",args=>{const value=objectFor(args.model)[args.property];return Number.isFinite(value)?value:String(value);});
+nativeTransport.register("models.imageInput",id=>{const model=objectFor(id),resize=model?.inputLimits?.images?.resize,scalar=value=>typeof value==="number"&&!Number.isFinite(value)?String(value):value;return {vision:model?.input.includes("image")??true,maxWidth:scalar(resize?.maxWidth),maxHeight:scalar(resize?.maxHeight),maxBytes:scalar(resize?.maxBytes)};});
 nativeTransport.register("models.field",args=>{const value=objectFor(args.message)[args.name];return value===undefined?{present:false}:{present:true,value:copyJson(value,{omitUndefinedProperties:true})};});
 nativeTransport.register("models.setField",args=>{if(args.present)objectFor(args.message)[args.name]=args.value;else delete objectFor(args.message)[args.name];return null;});
 nativeTransport.register("models.copy",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));

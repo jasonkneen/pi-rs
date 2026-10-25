@@ -288,6 +288,16 @@ pub trait FileSystem: Send + Sync {
         unsupported(None)
     }
     fn write_file(&self, path: &Path, content: &[u8], context: &Context) -> FileFuture<()>;
+    /// Preserve a text argument across hosted environments; local files encode
+    /// it as UTF8, replacing unpaired UTF16 units as Node's writeFile does.
+    fn write_text_file(
+        &self,
+        path: &Path,
+        content: &crate::JsonString,
+        context: &Context,
+    ) -> FileFuture<()> {
+        self.write_file(path, content.to_string_lossy().as_bytes(), context)
+    }
     fn append_file(&self, path: &Path, content: &[u8], context: &Context) -> FileFuture<()>;
     fn truncate_file(&self, path: &Path, size: u64, context: &Context) -> FileFuture<()>;
     fn flush_file(&self, path: &Path, context: &Context) -> FileFuture<()>;

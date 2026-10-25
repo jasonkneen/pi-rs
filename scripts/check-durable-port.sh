@@ -8,6 +8,7 @@ trap 'rm -f "$native_output"' EXIT
 python3 scripts/durable-inventory.py "$reference" --check
 cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --check
 rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
+rustfmt --edition 2024 --check crates/pi-json/src/diff.rs crates/pi-coding-agent/src/core/tools/jsdiff.rs
 cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry
 cargo run --locked -q -p pi-durable --example conversation -- "Hello"
 cargo test --locked -p pi-ai --test telemetry
@@ -24,6 +25,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-s
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-prompt.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-compaction.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-tool-results.mjs "$reference" --check
+node --conditions=source --experimental-strip-types scripts/golden/gen-durable-edit.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange
@@ -34,6 +36,9 @@ node scripts/run-stock-durable-codecs.mjs "$reference" --report=/tmp/pi-durable-
 node scripts/run-stock-durable-env.mjs "$reference" --suite=all --report=/tmp/pi-durable-stock-env-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=spill --report=/tmp/pi-durable-stock-env-spill-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=conformance --report=/tmp/pi-durable-stock-env-conformance-report.json
+node scripts/run-stock-durable-builtins.mjs "$reference" --report=/tmp/pi-durable-stock-builtins-report.json
+node scripts/run-stock-durable-builtins.mjs "$reference" --suite=read-differential --report=/tmp/pi-durable-stock-read-differential-report.json
+node scripts/run-stock-durable-builtins.mjs "$reference" --suite=images --report=/tmp/pi-durable-stock-native-images-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=host-inputs --report=/tmp/pi-durable-stock-host-inputs-report.json

@@ -74,6 +74,7 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 unicode-normalization = "0.1"
 notify = "8"
+photon-rs = {version="=0.3.3",default-features=false}
 winapi-util = "0.1"
 ignore = "0.4"
 tempfile = "3"
@@ -86,6 +87,13 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# Keep native image preparation within interactive development deadlines.
+[profile.dev.package."image@0.24.9"]
+opt-level = 2
+
+[profile.dev.package.photon-rs]
+opt-level = 2
 
 # The embedded JavaScript engine parses and compiles every extension module (and pi's bundled
 # glue, TypeBox and marked) when an extension loads; unoptimized, with debug assertions, it is

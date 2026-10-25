@@ -1,8 +1,8 @@
 //! Streaming byte offsets and decoded sizes for a selected range of LF lines.
 use super::decode::{RangeDecoder, starts_with_bom};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineScan {
     pub newlines: u64,
