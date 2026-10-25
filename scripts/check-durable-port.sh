@@ -46,6 +46,7 @@ node scripts/run-stock-durable-session.mjs "$reference" --suite=definitions --re
 node scripts/run-stock-durable-session.mjs "$reference" --suite=tables --report=/tmp/pi-durable-stock-session-tables-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=forks --report=/tmp/pi-durable-stock-session-forks-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=documents --report=/tmp/pi-durable-stock-session-documents-report.json
+node scripts/run-stock-durable-session.mjs "$reference" --suite=checkpoints-migrations --report=/tmp/pi-durable-stock-session-checkpoints-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-models-native --report=/tmp/pi-durable-stock-codemode-models-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode --report=/tmp/pi-durable-stock-codemode-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-describe --report=/tmp/pi-durable-stock-codemode-describe-report.json

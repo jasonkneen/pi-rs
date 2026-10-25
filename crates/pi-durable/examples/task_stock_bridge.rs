@@ -1617,6 +1617,18 @@ async fn main() {
                     .spawn_blocking(move || begin_request(hub, &runtime, value, context));
                 continue;
             }
+            // Detaching a document watch reads the host clock synchronously.
+            // Keep stdin available to receive that callback's reply.
+            if matches!(
+                value["method"].to_utf8().as_deref(),
+                Some("graph.stop" | "graph.cancel")
+            ) {
+                let (hub, runtime) = (hub.clone(), runtime.clone());
+                runtime
+                    .clone()
+                    .spawn_blocking(move || begin_request(hub, &runtime, value, context));
+                continue;
+            }
             // Registry operations are independent of the Session admission
             // line and may be called by a synchronous host callback on it.
             if value["method"].to_utf8().is_some_and(|method| {

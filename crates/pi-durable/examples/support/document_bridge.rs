@@ -37,7 +37,7 @@ impl Hub {
         };
         let initial = self.clone();
         let checkpoint = self.clone();
-        let mut definition = AnyDocDefinition::new(
+        let mut definition = AnyDocDefinition::new_with_shared_checkpoint(
             field::<JsonString>(description, "kind")?,
             field(description, "version")?,
             scope,
@@ -56,8 +56,8 @@ impl Hub {
                     "docCheckpoint",
                     object([
                         ("id", encode(&id)),
-                        ("value", encode(value)),
-                        ("ops", encode(&ops)),
+                        ("value", checkpoint.native_value(value.value())),
+                        ("ops", checkpoint.native_ops(ops)),
                         (
                             "info",
                             encode(&serde_json::json!({"deltasSinceBase":info.deltas_since_base})),

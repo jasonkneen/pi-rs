@@ -1279,9 +1279,9 @@ impl Transaction {
                 .lock();
             let value = JsonObject::try_from_value(change.prepared.value().as_ref().clone())
                 .map_err(Error::message)?;
-            if change.definition.checkpoint_when(
+            if change.definition.checkpoint_when_shared(
                 &value,
-                change.prepared.ops(),
+                &change.prepared.shared_ops(),
                 CheckpointInfo {
                     deltas_since_base: loaded.deltas_since_base,
                 },

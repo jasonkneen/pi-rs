@@ -399,12 +399,14 @@
       "rust": [
         "crates/pi-durable/src/documents.rs",
         "crates/pi-durable/tests/documents.rs",
-        "crates/pi-durable/tests/dynamic_documents.rs"
+        "crates/pi-durable/tests/dynamic_documents.rs",
+        "crates/pi-durable/tests/session_shared_revisions.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts",
+        "Native runtime checkpoint policies can retain the exact prepared Arc operation batch used by persistence and publication; native pointer regression verifies base and delta decisions."
       ]
     },
     {
@@ -2622,12 +2624,15 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "crates/pi-durable/tests/session_shared_revisions.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/examples/support/document_bridge.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Pure native Session stock attempt stalled and was stopped after two minutes; no passing stock coverage claimed. /tmp/pi-durable-stock-session-checkpoints-first.log"
+        "All 20 unchanged cases pass in both retention modes against pure native Session, 40 executions: /tmp/pi-durable-stock-checkpoints-verified.log. Original definition and controlled-backend callbacks remain host capabilities. Native owners preserve exact checkpoint arguments; strict migration copying is validated before transport."
       ]
     },
     {

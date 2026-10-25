@@ -115,7 +115,8 @@ impl RewindableScope for RewindableConversationScope {}
 
 type Initial = Arc<dyn Fn(Option<&JsonValue>) -> Result<JsonObject> + Send + Sync>;
 type Migration = Arc<dyn Fn(JsonObject, u64) -> Result<JsonObject> + Send + Sync>;
-type Checkpoint = Arc<dyn Fn(&JsonObject, &[Op], CheckpointInfo) -> Result<bool> + Send + Sync>;
+type Checkpoint =
+    Arc<dyn Fn(&JsonObject, &Arc<Vec<Op>>, CheckpointInfo) -> Result<bool> + Send + Sync>;
 pub struct AnyDocDefinition {
     pub(crate) kind: JsonString,
     pub(crate) version: u64,
@@ -134,6 +135,28 @@ impl AnyDocDefinition {
         family: bool,
         initial: impl Fn(Option<&JsonValue>) -> Result<JsonObject> + Send + Sync + 'static,
         checkpoint: impl Fn(&JsonObject, &[Op], CheckpointInfo) -> Result<bool> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::new_with_shared_checkpoint(
+            kind,
+            version,
+            scope,
+            family,
+            initial,
+            move |v, ops, info| checkpoint(v, ops, info),
+        )
+    }
+    /// Runtime bindings can retain the exact prepared operation batch passed
+    /// to persistence and publication, rather than copying a borrowed slice.
+    pub fn new_with_shared_checkpoint(
+        kind: impl Into<JsonString>,
+        version: u64,
+        scope: DefinitionScope,
+        family: bool,
+        initial: impl Fn(Option<&JsonValue>) -> Result<JsonObject> + Send + Sync + 'static,
+        checkpoint: impl Fn(&JsonObject, &Arc<Vec<Op>>, CheckpointInfo) -> Result<bool>
+        + Send
+        + Sync
+        + 'static,
     ) -> Result<Self> {
         let kind = kind.into();
         validate(&kind, version)?;
@@ -182,6 +205,14 @@ impl AnyDocDefinition {
         &self,
         value: &JsonObject,
         ops: &[Op],
+        info: CheckpointInfo,
+    ) -> Result<bool> {
+        self.checkpoint_when_shared(value, &Arc::new(ops.to_vec()), info)
+    }
+    pub fn checkpoint_when_shared(
+        &self,
+        value: &JsonObject,
+        ops: &Arc<Vec<Op>>,
         info: CheckpointInfo,
     ) -> Result<bool> {
         (self.checkpoint)(value, ops, info)

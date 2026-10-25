@@ -15,6 +15,8 @@ import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-n
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,lookupNativeSnapshot,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 nativeTransport.register("docInitial",({id,seed})=>copyJson(objectFor(id).definition.initial(seed)));
+nativeTransport.register("docMigrate",([id,value,version])=>copyJson(objectFor(id).definition.migrate(value,version)));
+nativeTransport.register("docCheckpoint",({id,value,ops,info})=>objectFor(id).definition.checkpointWhen(graphValue(value),graphValue(ops),info));
 nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
 nativeTransport.error("readOnly",value=>new ReadOnlySession(value.operation));
 nativeTransport.error("readAfterWrite",value=>new ReadAfterWrite(value.method));
