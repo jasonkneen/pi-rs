@@ -961,9 +961,20 @@
     },
     {
       "reference": "packages/durable/src/search.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/search.rs",
+        "crates/pi-durable/src/tool_search.rs",
+        "crates/pi-durable/src/harness/agent.rs",
+        "crates/pi-durable/tests/search.rs"
+      ],
+      "evidence": [
+        "All six original stock tool-search cases pass unfiltered in both retention modes; native generation, registry, memory storage and native tool_search execute; original user tools and model collections remain host capabilities",
+        "Seven native searches, nineteen native model requests and 146 native commits per mode prove load order, extension removal/reinstallation, forks, reset baselines and no-match behavior; source search execute throws if reached",
+        "Native tests cover tokenization, stable BM25 ties, numeric limits, recursive schema metadata, UTF16 names, first-line descriptions and validation; native agent/registry regressions and all-target Clippy pass",
+        "Embedded tool-search exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/session/forks.ts",
@@ -1266,15 +1277,37 @@
     },
     {
       "reference": "packages/durable/src/tool-search/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/search.rs",
+        "crates/pi-durable/src/tool_search.rs",
+        "crates/pi-durable/src/harness/agent.rs",
+        "crates/pi-durable/tests/search.rs"
+      ],
+      "evidence": [
+        "All six original stock tool-search cases pass unfiltered in both retention modes; native generation, registry, memory storage and native tool_search execute; original user tools and model collections remain host capabilities",
+        "Seven native searches, nineteen native model requests and 146 native commits per mode prove load order, extension removal/reinstallation, forks, reset baselines and no-match behavior; source search execute throws if reached",
+        "Native tests cover tokenization, stable BM25 ties, numeric limits, recursive schema metadata, UTF16 names, first-line descriptions and validation; native agent/registry regressions and all-target Clippy pass",
+        "Embedded tool-search exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tool-search/tool-search.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/search.rs",
+        "crates/pi-durable/src/tool_search.rs",
+        "crates/pi-durable/src/harness/agent.rs",
+        "crates/pi-durable/tests/search.rs"
+      ],
+      "evidence": [
+        "All six original stock tool-search cases pass unfiltered in both retention modes; native generation, registry, memory storage and native tool_search execute; original user tools and model collections remain host capabilities",
+        "Seven native searches, nineteen native model requests and 146 native commits per mode prove load order, extension removal/reinstallation, forks, reset baselines and no-match behavior; source search execute throws if reached",
+        "Native tests cover tokenization, stable BM25 ties, numeric limits, recursive schema metadata, UTF16 names, first-line descriptions and validation; native agent/registry regressions and all-target Clippy pass",
+        "Embedded tool-search exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/tools/bash.ts",
@@ -2664,9 +2697,20 @@
     },
     {
       "reference": "packages/durable/test/tool-search.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-durable/src/search.rs",
+        "crates/pi-durable/src/tool_search.rs",
+        "crates/pi-durable/src/harness/agent.rs",
+        "crates/pi-durable/tests/search.rs"
+      ],
+      "evidence": [
+        "All six original stock tool-search cases pass unfiltered in both retention modes; native generation, registry, memory storage and native tool_search execute; original user tools and model collections remain host capabilities",
+        "Seven native searches, nineteen native model requests and 146 native commits per mode prove load order, extension removal/reinstallation, forks, reset baselines and no-match behavior; source search execute throws if reached",
+        "Native tests cover tokenization, stable BM25 ties, numeric limits, recursive schema metadata, UTF16 names, first-line descriptions and validation; native agent/registry regressions and all-target Clippy pass",
+        "/tmp/pi-durable-stock-search-verified.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/tools-images.test.ts",

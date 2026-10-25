@@ -9,6 +9,7 @@ use std::sync::Weak;
 pub(super) struct ToolBridge {
     apis: Mutex<HashMap<u64, ToolExecutionApi>>,
     pub executions: AtomicU64,
+    pub searches: AtomicU64,
     definitions: Mutex<HashMap<u64, AnyTask>>,
     contents: Mutex<HashMap<u64, ToolContent>>,
     content_hosts: Mutex<HashMap<u64, u64>>,
@@ -418,7 +419,18 @@ impl Hub {
         value: &JsonValue,
     ) -> Result<Arc<registry_bridge::ToolHandle>> {
         let mut tool: registry_bridge::ToolHandle = decode(value)?;
-        if value["declaration"].is_object() {
+        if value["nativeBuiltin"].string_equals("tool_search") {
+            let mut native = pi_durable::tool_search::create_tool_search_tool();
+            let execute = native.execute.clone();
+            let hub = Arc::downgrade(self);
+            native.execute = Arc::new(move |args, api, context| {
+                if let Some(hub) = hub.upgrade() {
+                    hub.tool.searches.fetch_add(1, Ordering::Relaxed);
+                }
+                execute(args, api, context)
+            });
+            tool.executable = Some(Arc::new(native));
+        } else if value["declaration"].is_object() {
             tool.executable = Some(Arc::new(HostTool {
                 hub: Arc::downgrade(self),
                 id: field(value, "id")?,

@@ -40,6 +40,7 @@ node scripts/run-stock-durable-builtins.mjs "$reference" --report=/tmp/pi-durabl
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=read-differential --report=/tmp/pi-durable-stock-read-differential-report.json
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=images --report=/tmp/pi-durable-stock-native-images-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=search --report=/tmp/pi-durable-stock-search-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=host-inputs --report=/tmp/pi-durable-stock-host-inputs-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=structured-output --report=/tmp/pi-durable-stock-structured-output-report.json

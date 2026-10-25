@@ -11,7 +11,7 @@ if(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1")markNativeTool(ToolTask);
 const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),resolvedAgents=new Map(),registries=new WeakMap();
 const callbacks={listeners:0,wrappers:0,reports:0};
 const call=(method,args={})=>nativeTransport.sync(`registry.${method}`,args);
-function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true,...(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"?{declaration:{name:tool.name,description:tool.description,parameters:tool.parameters,constrainedSampling:tool.constrainedSampling},replay:tool.replay,executionMode:tool.executionMode,limits:{maxBytes:tool.outputLimits?.maxBytes??51200,maxLines:tool.outputLimits?.maxLines??2000,retain:tool.outputLimits?.retain??"head"},schema:tool.structuredOutputSchema}:{})};}
+function describeTool(tool){return{id:handle(tool),name:tool.name,nativeBuiltin:tool.__piNativeBuiltin,callers:tool.callers,deferred:tool.deferred===true,...(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"?{declaration:{name:tool.name,description:tool.description,parameters:tool.parameters,constrainedSampling:tool.constrainedSampling},replay:tool.replay,executionMode:tool.executionMode,limits:{maxBytes:tool.outputLimits?.maxBytes??51200,maxLines:tool.outputLimits?.maxLines??2000,retain:tool.outputLimits?.retain??"head"},schema:tool.structuredOutputSchema}:{})};}
 function describeSection(section){return{id:handle(section),key:section.key,untagged:section.tag===false};}
 function describeExtension(extension){return{
  id:handle(extension),name:extension.name,tools:(extension.tools??[]).map(describeTool),sections:(extension.sections??[]).map(describeSection),tasks:(extension.tasks??[]).map(describeTask),

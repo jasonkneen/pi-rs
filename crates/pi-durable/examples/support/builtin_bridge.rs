@@ -243,6 +243,7 @@ impl Hub {
                     Some("read") => create_read_tool(read_options(self, &request["options"])?),
                     Some("bash") => create_bash_tool(Default::default()),
                     Some("powershell") => create_powershell_tool(Default::default()),
+                    Some("tool_search") => pi_durable::tool_search::create_tool_search_tool(),
                     _ => return Err(Error::message("Unknown built-in tool")),
                 };
                 let mut value = encode(&tool.declaration);

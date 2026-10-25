@@ -239,6 +239,7 @@ pub struct AgentView {
             + Sync,
     >,
     tool_extension: Arc<dyn Fn(&JsonString) -> Option<JsonString> + Send + Sync>,
+    deferred_tools: Arc<dyn Fn() -> Result<Vec<super::declaration::ToolDeclaration>> + Send + Sync>,
 }
 impl AgentView {
     pub fn tool(
@@ -250,6 +251,9 @@ impl AgentView {
     }
     pub fn tool_extension(&self, name: &JsonString) -> Option<JsonString> {
         (self.tool_extension)(name)
+    }
+    pub fn deferred_tools(&self) -> Result<Vec<super::declaration::ToolDeclaration>> {
+        (self.deferred_tools)()
     }
     pub fn model(&self) -> Option<&JsonValue> {
         self.model.as_ref()
@@ -285,6 +289,7 @@ impl<T: RegisteredTool, S: RegisteredSection> From<Arc<Agent<T, S>>> for AgentVi
             .collect();
         let selected = agent.clone();
         let owner = agent.clone();
+        let deferred = agent.clone();
         Self {
             tool: Arc::new(move |name, nested| {
                 let tools = if nested {
@@ -303,6 +308,23 @@ impl<T: RegisteredTool, S: RegisteredSection> From<Arc<Agent<T, S>>> for AgentVi
                     .transpose()
             }),
             tool_extension: Arc::new(move |name| tool_extension(&owner, name)),
+            deferred_tools: Arc::new(move || {
+                deferred
+                    .deferred
+                    .iter()
+                    .map(|tool| {
+                        tool.clone()
+                            .executable()
+                            .map(|tool| tool.declaration())
+                            .ok_or_else(|| {
+                                Error::message(format!(
+                                    "Tool {} has no executable capability",
+                                    tool.name()
+                                ))
+                            })
+                    })
+                    .collect()
+            }),
             model: agent.model.clone(),
             thinking_level: agent.thinking_level.clone(),
             value: agent,
