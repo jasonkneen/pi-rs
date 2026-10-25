@@ -38,15 +38,28 @@ impl HostEnv {
                     as StorageFuture<_>
             },
             |hub| {
-                hub.call_context(
+                let signal=context.abort_signal().cloned();
+                let signal_id=hub.next.fetch_add(1,Ordering::Relaxed);
+                let operation=hub.call_context(
                     "environment.call",
                     object([
                         ("environment", encode(&self.handle)),
                         ("method", encode(&method)),
                         ("args", args),
+                        ("signal",encode(&signal_id)),
+                        ("aborted",encode(&signal.as_ref().is_some_and(|signal|signal.aborted()))),
                     ]),
                     context,
-                )
+                );
+                Box::pin(async move {
+                    tokio::pin!(operation);
+                    if let Some(signal)=signal {
+                        tokio::select!{reply=&mut operation=>reply,_=signal.cancelled()=>{
+                            hub.emit(object([("type",encode(&"environment.signal")),("signal",encode(&signal_id))]));
+                            operation.await
+                        }}
+                    }else{operation.await}
+                })
             },
         )
     }
@@ -132,6 +145,9 @@ impl HostEnv {
     }
 }
 impl FileSystem for HostEnv {
+    fn create_temp_dir(&self, prefix: Option<&str>, context: &Context) -> FileFuture<PathBuf> {
+        self.file("createTempDir", encode(&[prefix]), context)
+    }
     fn open_binary_reader(
         &self,
         path: &Path,

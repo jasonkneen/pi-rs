@@ -7,7 +7,7 @@ use std::sync::Weak;
 
 #[derive(Default)]
 pub(super) struct ToolBridge {
-    apis: Mutex<HashMap<u64, ToolExecutionApi>>,
+    pub(super) apis: Mutex<HashMap<u64, ToolExecutionApi>>,
     pub executions: AtomicU64,
     pub searches: AtomicU64,
     pub codemode_formats: AtomicU64,
@@ -423,7 +423,9 @@ impl Hub {
         value: &JsonValue,
     ) -> Result<Arc<registry_bridge::ToolHandle>> {
         let mut tool: registry_bridge::ToolHandle = decode(value)?;
-        if value["nativeBuiltin"].string_equals("tool_search") {
+        if value["nativeBuiltin"].string_equals("codemode") {
+            tool.executable = Some(Arc::new(self.native_codemode(&value["codemodeOptions"])?));
+        } else if value["nativeBuiltin"].string_equals("tool_search") {
             let mut native = pi_durable::tool_search::create_tool_search_tool();
             let execute = native.execute.clone();
             let hub = Arc::downgrade(self);

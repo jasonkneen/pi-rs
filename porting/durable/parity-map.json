@@ -289,21 +289,60 @@
     },
     {
       "reference": "packages/durable/src/codemode/codemode.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/call.rs",
+        "crates/pi-durable/src/codemode/types.rs",
+        "crates/pi-durable/src/codemode/vm.rs",
+        "crates/pi-durable/src/codemode/tool.rs",
+        "crates/pi-durable/tests/codemode_runtime.rs",
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+      ],
+      "evidence": [
+        "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
+        "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
+        "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
+        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "/tmp/pi-durable-stock-native-codemode-final.log",
+        "/tmp/pi-durable-native-codemode-runtime-verified.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/codemode/describe.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/describe.rs",
+        "crates/pi-durable/src/codemode/tool.rs",
+        "crates/pi-durable/src/harness/prompt.rs"
+      ],
+      "evidence": [
+        "Native fixed instructions, grammar declaration, namespace grouping and budgeted round-robin prompt catalog; native sections compose with caller sections",
+        "All five original describe cases pass unfiltered per retention mode through native metadata and actual Harness generation",
+        "/tmp/pi-durable-stock-native-codemode-describe-verified.log",
+        "Full lossless SDK metadata conversion and embedded exports remain open"
+      ]
     },
     {
       "reference": "packages/durable/src/codemode/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/call.rs",
+        "crates/pi-durable/src/codemode/types.rs",
+        "crates/pi-durable/src/codemode/vm.rs",
+        "crates/pi-durable/src/codemode/tool.rs",
+        "crates/pi-durable/tests/codemode_runtime.rs",
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+      ],
+      "evidence": [
+        "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
+        "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
+        "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
+        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "/tmp/pi-durable-stock-native-codemode-final.log",
+        "/tmp/pi-durable-native-codemode-runtime-verified.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/codemode/models.ts",
@@ -316,12 +355,13 @@
       ],
       "evidence": [
         "Native typed model catalogs, header stripping, configured-model re-resolution, classifier/image context validation, hidden unsafe model tools, structured results and usage; native SDK delegates through request scopes preserving cancellation and telemetry",
-        "All seven original model cases pass unfiltered per mode, with seventeen native model-tool executions, sixteen actual provider callbacks, eleven native catalog calls and 257 native memory commits per mode",
-        "The original CodemodeCall replay driver, its four-slot scheduling, VM and provider I/O remain host capabilities in this modular gate; native replay/slot driver and embedded exports remain open",
         "Two native regressions prove configured authority overrides script-supplied URL/headers and preserve unpaired UTF16 units in model/question/object-key errors",
         "/tmp/pi-durable-stock-codemode-models-verified.log",
         "/tmp/pi-durable-codemode-models-native.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All seven original model cases now pass with the native replay driver and four-slot limiter in both modes, with 8 native executions, 26 native deliveries, 17 native effects and 16 typed provider requests per mode",
+        "The original controlled VM and provider methods remain host capabilities; source replay scheduling is bypassed",
+        "/tmp/pi-durable-stock-native-codemode-models-first.log"
       ]
     },
     {
@@ -335,10 +375,11 @@
       "evidence": [
         "Native lossless result formatting, console layout, error summaries, bounded text spills and deduplicated parallel image writes match 112 independent pinned-source expectations and exact writes",
         "All 41 original code-mode cases pass unfiltered per retention mode using the release bridge, with 30 native formatting calls, 146 native tool calls and 425 native document writes per mode; the original five-second deadline is unchanged",
-        "Original CodemodeCall durable replay driver, VM and globals remain host capabilities in this modular gate; full native code-mode execution and exports remain open",
         "/tmp/pi-durable-stock-codemode-output-second.log",
         "/tmp/pi-durable-codemode-output-native.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 41 original cases also pass with the native replay driver owning formatting and I/O admission; source CodemodeCall is bypassed",
+        "/tmp/pi-durable-stock-native-codemode-final.log"
       ]
     },
     {
@@ -1543,9 +1584,18 @@
     },
     {
       "reference": "packages/durable/test/codemode-describe.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/describe.rs",
+        "crates/pi-durable/src/codemode/tool.rs",
+        "crates/pi-durable/src/harness/prompt.rs"
+      ],
+      "evidence": [
+        "Native fixed instructions, grammar declaration, namespace grouping and budgeted round-robin prompt catalog; native sections compose with caller sections",
+        "All five original describe cases pass unfiltered per retention mode through native metadata and actual Harness generation",
+        "/tmp/pi-durable-stock-native-codemode-describe-verified.log",
+        "Full lossless SDK metadata conversion and embedded exports remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/codemode-models.test.ts",
@@ -1558,28 +1608,33 @@
       ],
       "evidence": [
         "Native typed model catalogs, header stripping, configured-model re-resolution, classifier/image context validation, hidden unsafe model tools, structured results and usage; native SDK delegates through request scopes preserving cancellation and telemetry",
-        "All seven original model cases pass unfiltered per mode, with seventeen native model-tool executions, sixteen actual provider callbacks, eleven native catalog calls and 257 native memory commits per mode",
-        "The original CodemodeCall replay driver, its four-slot scheduling, VM and provider I/O remain host capabilities in this modular gate; native replay/slot driver and embedded exports remain open",
         "Two native regressions prove configured authority overrides script-supplied URL/headers and preserve unpaired UTF16 units in model/question/object-key errors",
         "/tmp/pi-durable-stock-codemode-models-verified.log",
         "/tmp/pi-durable-codemode-models-native.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All seven original model cases now pass with the native replay driver and four-slot limiter in both modes, with 8 native executions, 26 native deliveries, 17 native effects and 16 typed provider requests per mode",
+        "The original controlled VM and provider methods remain host capabilities; source replay scheduling is bypassed",
+        "/tmp/pi-durable-stock-native-codemode-models-first.log"
       ]
     },
     {
       "reference": "packages/durable/test/codemode.test.ts",
       "status": "partial",
       "rust": [
-        "crates/pi-durable/src/codemode/output.rs",
-        "crates/pi-durable/tests/codemode_output.rs",
-        "crates/pi-durable/examples/support/codemode_bridge.rs"
+        "crates/pi-durable/src/codemode/call.rs",
+        "crates/pi-durable/src/codemode/types.rs",
+        "crates/pi-durable/src/codemode/vm.rs",
+        "crates/pi-durable/src/codemode/tool.rs",
+        "crates/pi-durable/tests/codemode_runtime.rs",
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
       ],
       "evidence": [
-        "Native lossless result formatting, console layout, error summaries, bounded text spills and deduplicated parallel image writes match 112 independent pinned-source expectations and exact writes",
-        "All 41 original code-mode cases pass unfiltered per retention mode using the release bridge, with 30 native formatting calls, 146 native tool calls and 425 native document writes per mode; the original five-second deadline is unchanged",
-        "Original CodemodeCall durable replay driver, VM and globals remain host capabilities in this modular gate; full native code-mode execution and exports remain open",
-        "/tmp/pi-durable-stock-codemode-output-second.log",
-        "/tmp/pi-durable-codemode-output-native.log",
+        "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
+        "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
+        "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
+        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "/tmp/pi-durable-stock-native-codemode-final.log",
+        "/tmp/pi-durable-native-codemode-runtime-verified.log",
         "porting/durable/STATUS.md"
       ]
     },

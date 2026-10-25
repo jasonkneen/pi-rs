@@ -58,6 +58,7 @@ storage, Sessions/transactions, scheduling, registry, views/events, submissions 
 generation/compaction/tool services, composed by a public native Harness/Conversation API.
 Native tests and unmodified pinned stock suites, including all twelve conversation and four report cases,
 validate these paths. Remaining report variants/phase telemetry, remaining active-work lifetimes, native
-environments/codemode, full SDK 1.4 alignment, IndexedDB and embedded exports remain open;
+environment portability, full SDK 1.4 alignment, IndexedDB and embedded exports remain open;
+native coding tools, Photon images, search and the durable code-mode replay driver now have stock coverage;
 see the detailed ledger for coverage boundaries.
 This entry does not claim complete durable parity.

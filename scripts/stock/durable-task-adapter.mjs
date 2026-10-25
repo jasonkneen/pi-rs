@@ -1,6 +1,7 @@
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
+import {environmentContext} from "./durable-env-signals.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
 import {ConversationBusy,ReadOnlySession,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
@@ -193,6 +194,7 @@ export async function shutdownContextTransport(){await finish(true);}
 export async function shutdownSubmissions(){await finish(false,true);}
 
 const toolApiStates=new WeakMap();
+export function invokeCodemodeGlobal(args,context){const api=toolApi(args.api),global=objectFor(args.callback);return global.execute(args.present?args.args:undefined,api,withAbortSignal(runtime(args.api.runtime).signal,context??BACKGROUND_CONTEXT));}
 function toolApi(args){
  const state={ended:false},details=[];let cursor=0;
  const drain=()=>{while(cursor<details.length&&details[cursor].outcome){const slot=details[cursor++];if(slot.outcome==="ok")slot.resolve();else if(slot.outcome==="error")slot.reject(slot.error);}};
@@ -244,14 +246,17 @@ nativeTransport.register("environment.build",async(args,context)=>{
  const env=await build(target,context??BACKGROUND_CONTEXT);return env===undefined?undefined:{handle:handle(env),namespace:env.id,cwd:env.cwd};
 });
 nativeTransport.register("environment.call",async(args,context)=>{
+ const scope=environmentContext(args,context??BACKGROUND_CONTEXT),callbackContext=scope.context;
+ try{
  const env=objectFor(args.environment),values=[...args.args];
- if(args.method==="writeTextFile")return env.writeFile(...values,context??BACKGROUND_CONTEXT);
+ if(args.method==="writeTextFile")return await env.writeFile(...values,callbackContext);
  if(args.method==="writeFile"||args.method==="appendFile")values[1]=Uint8Array.from(Buffer.from(values[1],"base64"));
  if(args.method==="exec"&&values[1]?.onOutput!==undefined){const callback=values[1].onOutput;values[1].onOutput=(text,_context,info)=>nativeTransport.sync("environment.output",{callback,text,info});}
- const result=await env[args.method](...values,context??BACKGROUND_CONTEXT);
+ const result=await env[args.method](...values,callbackContext);
  if(args.method==="cleanup")return {ok:true,value:null};
  if(result.ok){if(args.method==="readBinaryFile")return {ok:true,value:Buffer.from(result.value).toString("base64")};return result;}
  return {ok:false,error:{code:result.error.code,message:result.error.message,path:result.error.path,spillPath:result.error.spillPath}};
+ }finally{scope.release();}
 });
 
 nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));

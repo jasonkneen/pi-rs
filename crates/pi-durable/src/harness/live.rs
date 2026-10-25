@@ -114,7 +114,7 @@ pub struct NestedToolSlot {
     pub parent_call_id: JsonString,
     pub parent_task_id: TaskId,
     pub task_id: TaskId,
-    pub arguments: JsonObject,
+    pub arguments: JsonValue,
     pub summary: Option<NestedToolSummary>,
 }
 impl NestedToolSlot {

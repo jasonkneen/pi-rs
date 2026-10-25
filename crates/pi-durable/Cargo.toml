@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 pi-chord.workspace = true
 pi-ai.workspace = true
+pi-codemode.workspace = true
+icu_collator.workspace = true
 pi-telemetry.workspace = true
 pi-json.workspace = true
 serde.workspace = true

@@ -26,6 +26,8 @@ use std::{
 mod builtin_bridge;
 #[path = "support/codemode_bridge.rs"]
 mod codemode_bridge;
+#[path = "support/codemode_vm_bridge.rs"]
+mod codemode_vm_bridge;
 #[path = "support/compaction_bridge.rs"]
 mod compaction_bridge;
 #[path = "support/context_bridge.rs"]
@@ -146,6 +148,7 @@ struct Hub {
     tool: tool_bridge::ToolBridge,
     environment: tool_environment::EnvironmentBridge,
     builtin: builtin_bridge::BuiltinBridge,
+    codemode: codemode_vm_bridge::CodemodeBridge,
     host_timers: Mutex<HashMap<u64, DisarmTimer>>,
     host_timer_callbacks: Mutex<HashMap<u64, pi_durable::timers::TimerCallback>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
@@ -544,6 +547,16 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if [
+            "codemode.declaration",
+            "codemode.description",
+            "codemode.section",
+            "codemode.docCheckpoint",
+        ]
+        .contains(&method.as_str())
+        {
+            return self.codemode_metadata(request);
+        }
         if method == "codemode.catalog" {
             return self.codemode_catalog(request, context);
         }
@@ -1336,6 +1349,22 @@ impl Hub {
                     "nativeCatalogQueries".into(),
                     encode(&self.tool.catalog_queries.load(Ordering::Relaxed)),
                 );
+                value.as_object_mut().unwrap().insert(
+                    "nativeCodemodeExecutions".into(),
+                    encode(&self.codemode.executions.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeVmStarts".into(),
+                    encode(&self.codemode.starts.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeVmDeliveries".into(),
+                    encode(&self.codemode.deliveries.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeCodemodeGlobals".into(),
+                    encode(&self.codemode.globals.load(Ordering::Relaxed)),
+                );
                 Box::pin(async move { Ok(Some(value)) })
             }
             other => {
@@ -1408,6 +1437,7 @@ async fn main() {
         tool: tool_bridge::ToolBridge::default(),
         environment: tool_environment::EnvironmentBridge::default(),
         builtin: builtin_bridge::BuiltinBridge::default(),
+        codemode: codemode_vm_bridge::CodemodeBridge::default(),
         host_timers: Mutex::new(HashMap::new()),
         host_timer_callbacks: Mutex::new(HashMap::new()),
         transactions: Mutex::new(HashMap::new()),
@@ -1461,6 +1491,10 @@ async fn main() {
         for line in std::io::stdin().lock().lines() {
             let value: JsonValue = serde_json::from_str(&line.unwrap()).unwrap();
             match value["type"].to_utf8().as_deref() {
+                Some("codemode.vmEvent") => {
+                    hub.codemode_event(&value).unwrap();
+                    continue;
+                }
                 Some("models.event") => {
                     hub.model_event(&value).unwrap();
                     continue;

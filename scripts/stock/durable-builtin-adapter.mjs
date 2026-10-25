@@ -2,16 +2,19 @@
 import {BACKGROUND_CONTEXT} from "@earendil-works/chord/context";
 import {nativeTransport} from "./durable-native-transport.mjs";
 import {handle,objectFor} from "./durable-native-handles.mjs";
+import {environmentContext} from "./durable-env-signals.mjs";
 let environmentCalls=0,functions=0;
 const declarations=new Map(),readers=new Set();
 const scalar=n=>typeof n==="number"&&!Number.isFinite(n)?String(n):n;
 function environment(env){return env===undefined?undefined:{handle:handle(env),namespace:env.id,cwd:env.cwd};}
 nativeTransport.register("environment.call",async(args,context)=>{
  environmentCalls++;
+ const scope=environmentContext(args,context??BACKGROUND_CONTEXT);
+ try{
  const env=objectFor(args.environment),values=[...args.args],method=args.method==="writeTextFile"?"writeFile":args.method;
  if(args.method==="writeFile"||args.method==="appendFile")values[1]=Uint8Array.from(Buffer.from(values[1],"base64"));
  if(method==="exec"&&values[1]?.onOutput!==undefined){const callback=values[1].onOutput;values[1].onOutput=(text,_context,info)=>nativeTransport.sync("environment.output",{callback,text,info});}
- const result=await env[method](...values,context??BACKGROUND_CONTEXT);
+ const result=await env[method](...values,scope.context);
  if(method==="cleanup"||method==="close"){readers.delete(args.environment);return {ok:true,value:null};}
  if(result.ok){
   if(method==="readBinaryFile"||method==="read")return {ok:true,value:Buffer.from(result.value).toString("base64")};
@@ -19,6 +22,7 @@ nativeTransport.register("environment.call",async(args,context)=>{
   return result;
  }
  return {ok:false,error:{code:result.error.code,message:result.error.message,path:result.error.path,spillPath:result.error.spillPath}};
+ }finally{scope.release();}
 });
 nativeTransport.register("builtin.function",callback=>{functions++;return objectFor(callback)();});
 nativeTransport.register("builtin.api",args=>{

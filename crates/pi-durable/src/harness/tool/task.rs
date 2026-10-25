@@ -297,7 +297,7 @@ async fn call(task: Running, runtime: ToolRuntime, context: Context) -> Result<(
                     if let Some(mut slot) = live::tool_slot(live, id) {
                         slot.progress().status = SlotStatus::Running;
                         if let (ToolSlotMut::Nested(slot), Some(args)) = (slot, nested_args) {
-                            slot.arguments = args;
+                            slot.arguments = args.into_value();
                         }
                     }
                     Ok(())
@@ -772,7 +772,7 @@ pub(crate) async fn start_nested_call(
     runtime: &ToolRuntime,
     parent_call_id: JsonString,
     name: JsonString,
-    arguments: JsonObject,
+    arguments: JsonValue,
     options: AdmissionOptions,
     context: &Context,
 ) -> Result<TypedTaskId<ToolTaskResult>> {
@@ -786,7 +786,7 @@ pub(crate) async fn start_nested_call(
     let call = ToolCall::new(
         result::join([parent_call_id.clone(), "/".into(), key.clone()], ""),
         name.clone(),
-        arguments.clone().into_value(),
+        arguments.clone(),
     );
     let id = Arc::new(Mutex::new(None));
     let capture = id.clone();

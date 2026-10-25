@@ -320,6 +320,15 @@ impl ToolExecutionApi {
         context: &Context,
         options: NestedCallOptions,
     ) -> StorageFuture<NestedToolExecutionResult> {
+        self.execute_tool_value(name, arguments.into_value(), context, options)
+    }
+    pub fn execute_tool_value(
+        &self,
+        name: impl Into<JsonString>,
+        arguments: JsonValue,
+        context: &Context,
+        options: NestedCallOptions,
+    ) -> StorageFuture<NestedToolExecutionResult> {
         let lease = match self.scope.acquire(&self.call_id) {
             Ok(lease) => lease,
             Err(error) => return ready(Err(error)),

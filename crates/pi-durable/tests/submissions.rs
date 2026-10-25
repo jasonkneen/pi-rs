@@ -862,7 +862,7 @@ fn live_slot_and_compaction_helpers_preserve_parent_order_and_release_progress()
         parent_call_id: format!("c{parent}").into(),
         parent_task_id: TaskId::from_raw(parent),
         task_id: TaskId::from_raw(id),
-        arguments: JsonObject::default(),
+        arguments: JsonObject::default().into_value(),
         summary: None,
     };
     let mut live = LiveState {

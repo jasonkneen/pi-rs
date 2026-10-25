@@ -27,6 +27,36 @@ pub trait PromptSection<I>: RegisteredSection {
         true
     }
 }
+pub type NativePromptInput =
+    super::generation::GenerationPromptInput<super::tool::NativeTool, NativeSection>;
+pub type NativeSectionRender = std::sync::Arc<
+    dyn Fn(std::sync::Arc<NativePromptInput>, Context) -> StorageFuture<Option<JsonString>>
+        + Send
+        + Sync,
+>;
+/// Common native registration type, so built-in and caller sections compose.
+pub struct NativeSection {
+    pub key: JsonString,
+    pub tagged: bool,
+    pub render: NativeSectionRender,
+}
+impl RegisteredSection for NativeSection {
+    fn key(&self) -> &JsonString {
+        &self.key
+    }
+}
+impl PromptSection<NativePromptInput> for NativeSection {
+    fn render(
+        &self,
+        input: Arc<NativePromptInput>,
+        context: &Context,
+    ) -> StorageFuture<Option<JsonString>> {
+        (self.render)(input, context.clone())
+    }
+    fn tagged(&self) -> bool {
+        self.tagged
+    }
+}
 impl<S: RegisteredSection> RegisteredSection for AgentSection<S> {
     fn key(&self) -> &JsonString {
         AgentSection::key(self)
