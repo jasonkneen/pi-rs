@@ -52,6 +52,10 @@ pub use declarations::{
     DEFAULT_INPUT_SCHEMA_MAX_CHARS, RenderDeclarationsOptions, render_declarations, render_tool_output_type,
     render_tool_sample, render_tool_signature, schema_to_type,
 };
+pub use declarations::json::{
+    JsonToolDeclaration, render_json_declarations, render_json_tool_output_type, render_json_tool_sample,
+    render_json_tool_signature, schema_to_json_type, to_json_codemode_identifier,
+};
 pub use identifier::to_codemode_identifier;
 pub use json_run::*;
 pub use runtime::execution::{

@@ -326,13 +326,20 @@
       "rust": [
         "crates/pi-durable/src/codemode/describe.rs",
         "crates/pi-durable/src/codemode/tool.rs",
-        "crates/pi-durable/src/harness/prompt.rs"
+        "crates/pi-durable/src/harness/prompt.rs",
+        "crates/pi-codemode/src/declarations.rs",
+        "crates/pi-codemode/src/declarations/json.rs",
+        "crates/pi-codemode/tests/declarations_utf16.rs",
+        "crates/pi-durable/tests/codemode_declarations.rs",
+        "scripts/run-stock-codemode-declarations.mjs",
+        "scripts/golden/gen-durable-declarations.mjs"
       ],
       "evidence": [
         "Native fixed instructions, grammar declaration, namespace grouping and budgeted round-robin prompt catalog; native sections compose with caller sections",
         "All five original describe cases pass unfiltered per retention mode through native metadata and actual Harness generation",
         "/tmp/pi-durable-stock-native-codemode-describe-verified.log",
-        "Full lossless SDK metadata conversion and embedded exports remain open"
+        "Full lossless SDK metadata conversion and embedded exports remain open",
+        "Lossless rendering matches 189 independent pinned-source observations and full native samples/catalogs for 21 schemas. All 17 unchanged SDK declaration tests pass in both modes through 39 native calls per mode: /tmp/pi-durable-stock-declarations-workspace.log. VM metadata DTOs, generic validation/provider conversion and malformed percent-reference exception parity remain open."
       ]
     },
     {

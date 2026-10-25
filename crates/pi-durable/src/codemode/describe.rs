@@ -71,32 +71,25 @@ fn trimmed(value: &JsonString) -> JsonString {
     JsonString::from_utf16(value.units()[begin..end].to_vec())
 }
 pub fn sample_of(tool: &ToolMetadata) -> Result<JsonString> {
-    let declaration = pi_codemode::CodemodeToolDeclaration {
-        name: tool
-            .declaration
-            .name
-            .to_string_checked()
-            .map_err(|e| Error::message(e.to_string()))?,
-        description: Some(
-            tool.declaration
-                .description
-                .to_string_checked()
-                .map_err(|e| Error::message(e.to_string()))?,
-        ),
-        input_schema: Some(wire::decode(&tool.declaration.parameters).map_err(Error::message)?),
+    let declaration = pi_codemode::declarations::JsonToolDeclaration {
+        name: tool.declaration.name.clone(),
+        description: Some(tool.declaration.description.clone()),
+        input_schema: Some(tool.declaration.parameters.clone()),
         output_schema: Some(
-            wire::decode(
-                tool.structured_output_schema
-                    .as_ref()
-                    .filter(|schema| !schema.is_null())
-                    .unwrap_or(&wire::encode(&serde_json::json!({"type":"string"}))),
-            )
-            .map_err(Error::message)?,
+            tool.structured_output_schema
+                .as_ref()
+                .filter(|schema| !schema.is_null())
+                .cloned()
+                .unwrap_or_else(|| wire::encode(&serde_json::json!({"type":"string"}))),
         ),
         ..Default::default()
     };
-    Ok(pi_codemode::render_tool_sample(&declaration, None).into())
+    Ok(pi_codemode::declarations::render_json_tool_sample(
+        &declaration,
+        None,
+    ))
 }
+
 fn tool_section(tool: &ToolMetadata) -> Result<JsonString> {
     let name = &tool.declaration.name;
     let id = identifier(name);

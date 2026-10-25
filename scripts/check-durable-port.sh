@@ -10,6 +10,7 @@ cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --
 rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
 rustfmt --edition 2024 --check crates/pi-json/src/strict.rs crates/pi-json/tests/strict_cow.rs crates/pi-codemode/src/json_run.rs crates/pi-codemode/tests/json_run.rs
 rustfmt --edition 2024 --check crates/pi-codemode/src/source/utf16.rs crates/pi-codemode/tests/source_utf16.rs
+rustfmt --edition 2024 --check crates/pi-codemode/src/declarations/json.rs crates/pi-codemode/tests/declarations_utf16.rs crates/pi-codemode/examples/declarations_stock_bridge.rs
 rustfmt --edition 2024 --check crates/pi-json/src/diff.rs crates/pi-coding-agent/src/core/tools/jsdiff.rs
 cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-codemode -p pi-jsrt
 cargo test --locked -p pi-durable --features stock-test-probes --test transaction_probes
@@ -31,6 +32,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-c
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-tool-results.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-edit.mjs "$reference" --check
 node --experimental-strip-types scripts/golden/gen-durable-codemode-output.mjs "$reference" --check
+node --experimental-strip-types scripts/golden/gen-durable-declarations.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange
@@ -38,6 +40,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-s
 node scripts/run-stock-durable-sqlite.mjs "$reference" --report=/tmp/pi-durable-stock-sqlite-report.json
 node scripts/run-stock-durable-jsonl.mjs "$reference" --report=/tmp/pi-durable-stock-jsonl-report.json
 node scripts/run-stock-durable-codecs.mjs "$reference" --report=/tmp/pi-durable-stock-codecs-report.json
+node scripts/run-stock-codemode-declarations.mjs "$reference" --report=/tmp/pi-durable-stock-declarations-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=all --report=/tmp/pi-durable-stock-env-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=spill --report=/tmp/pi-durable-stock-env-spill-report.json
 node scripts/run-stock-durable-env.mjs "$reference" --suite=conformance --report=/tmp/pi-durable-stock-env-conformance-report.json
