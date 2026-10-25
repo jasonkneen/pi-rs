@@ -285,7 +285,7 @@ impl Server {
             message @ WorkerToHostMessage::Started { .. } => state.buffered.push(CodemodeRemoteMessage::Vm(message)),
             // Sent at once: a host replaying a script waits for it to see that the script issued no
             // further call.
-            message @ (WorkerToHostMessage::Call { .. } | WorkerToHostMessage::Idle { .. }) => {
+            message @ (WorkerToHostMessage::Call { .. } | WorkerToHostMessage::CallUtf16 { .. } | WorkerToHostMessage::Idle { .. }) => {
                 let mut batch = Self::take_buffer(&mut state);
                 batch.push(CodemodeRemoteMessage::Vm(message));
                 drop(state);
@@ -419,7 +419,7 @@ impl VmLauncher for RemoteLauncher {
             // Register the waiter first: the host may answer a call synchronously, for example when
             // the tool fails before returning a future.
             let call = messages.iter().find_map(|message| match message {
-                CodemodeRemoteMessage::Vm(WorkerToHostMessage::Call { id, .. }) => Some(*id),
+                CodemodeRemoteMessage::Vm(WorkerToHostMessage::Call { id, .. } | WorkerToHostMessage::CallUtf16 { id, .. }) => Some(*id),
                 _ => None,
             });
             let reply: BoxFuture<'static, Result<CodemodeRemoteReply, String>> = match call {

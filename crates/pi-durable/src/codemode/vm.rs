@@ -112,10 +112,16 @@ impl Drop for NativeRun {
         }
     }
 }
-fn utf8(value: &JsonString) -> Result<String> {
-    value
-        .to_string_checked()
-        .map_err(|error| Error::message(error.to_string()))
+fn global_name(value: &JsonString) -> Result<String> {
+    value.to_string_checked().map_err(|_| {
+        Error::host(
+            "Error",
+            join(
+                ["Invalid global name \"".into(), value.clone(), "\"".into()],
+                "",
+            ),
+        )
+    })
 }
 impl Sandbox for NativeSandbox {
     fn start(&self, code: JsonString, options: RunOptions) -> Result<Arc<dyn Run>> {
@@ -133,7 +139,7 @@ impl Sandbox for NativeSandbox {
                     } else {
                         CallTarget::Global
                     },
-                    name: call.name.into(),
+                    name: call.name,
                     args: call.args,
                 })
             },
@@ -145,21 +151,19 @@ impl Sandbox for NativeSandbox {
             .tools
             .iter()
             .filter(|tool| !tool.hidden)
-            .map(|tool| {
-                Ok(pi_codemode::CodemodeDeclaredTool {
-                    name: utf8(&tool.name)?,
-                    js_name: Some(utf8(&tool.js_name)?),
-                    description: Some(utf8(&tool.description)?),
-                })
+            .map(|tool| pi_codemode::CodemodeJsonDeclaredTool {
+                name: tool.name.clone(),
+                js_name: Some(tool.js_name.clone()),
+                description: Some(tool.description.clone()),
             })
-            .collect::<Result<_>>()?;
+            .collect();
         native.globals = options
             .start
             .globals
             .iter()
             .map(|global| {
                 Ok(pi_codemode::CodemodeDeclaredGlobal {
-                    name: utf8(&global.name)?,
+                    name: global_name(&global.name)?,
                     spread: global.spread,
                 })
             })

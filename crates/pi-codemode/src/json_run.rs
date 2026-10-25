@@ -4,11 +4,42 @@ use futures::future::BoxFuture;
 use pi_json::strict::{self, JsonString, Map, Value};
 use std::sync::Arc;
 
+/// Script-visible tool metadata retaining every JavaScript string code unit.
+#[derive(Clone, Debug, Default)]
+pub struct CodemodeJsonDeclaredTool {
+    pub name: JsonString,
+    pub js_name: Option<JsonString>,
+    pub description: Option<JsonString>,
+}
+impl CodemodeJsonDeclaredTool {
+    pub fn new(name: impl Into<JsonString>) -> Self {
+        Self {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+}
+impl From<CodemodeDeclaredTool> for CodemodeJsonDeclaredTool {
+    fn from(tool: CodemodeDeclaredTool) -> Self {
+        Self {
+            name: tool.name.into(),
+            js_name: tool.js_name.map(Into::into),
+            description: tool.description.map(Into::into),
+        }
+    }
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct JsonCallRecord {
+    pub name: JsonString,
+    pub status: CodemodeCallStatus,
+    pub duration_ms: f64,
+}
 #[derive(Clone, Debug)]
 pub struct CodemodeJsonHostCall {
     pub id: u64,
     pub target: CodemodeCallTarget,
-    pub name: String,
+    pub name: JsonString,
     pub args: Option<Value>,
 }
 #[derive(Clone, Debug)]
@@ -26,7 +57,7 @@ pub type OnJsonCall = Arc<dyn Fn(CodemodeJsonHostCall, CodemodeJsonRunHandle) + 
 pub struct CodemodeJsonRunOptions {
     pub started_at: f64,
     pub seed: u32,
-    pub tools: Vec<CodemodeDeclaredTool>,
+    pub tools: Vec<CodemodeJsonDeclaredTool>,
     pub globals: Vec<CodemodeDeclaredGlobal>,
     pub store: Option<Map>,
     pub signal: Option<AbortSignal>,

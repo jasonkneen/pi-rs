@@ -1,6 +1,6 @@
 // One native process serves synchronous registry calls and asynchronous task
 // calls. A synchronous caller pumps frames so nested host callbacks can finish.
-import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
+import {Worker,MessageChannel,receiveMessageOnPort,threadId} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0,synchronousCallbacks=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
@@ -8,8 +8,11 @@ const errors=new Map(),foreignErrors=new Map();let nextForeignError=1;
 const contexts=new Map();
 function captureError(value){const id=nextForeignError++;foreignErrors.set(id,value);return id;}
 let exited;
+const bufferedTrace=process.env.PI_DURABLE_NATIVE_TRACE_BUFFERED==="1"?[]:undefined;
+function flushTrace(){if(bufferedTrace?.length&&process.env.PI_DURABLE_NATIVE_TRACE){appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,bufferedTrace.join(""));bufferedTrace.length=0;}}
+process.once("exit",flushTrace);
 export function failure(value){if(foreignErrors.has(value.foreignId))return foreignErrors.get(value.foreignId);const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
-function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({at:performance.now(),direction,type:frame.type,id:frame.id,method:frame.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n");}
+function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE){const row=JSON.stringify({at:performance.now(),pid:process.pid,threadId,direction,type:frame.type,id:frame.id,method:frame.method,operation:frame.args?.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,run:frame.run??frame.args?.run,event:frame.event,...(frame.method==="codemode.vm.start"?{codePrefix:typeof frame.args?.code==="string"?frame.args.code.slice(0,256):undefined}:{}),error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n";if(bufferedTrace)bufferedTrace.push(row);else appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,row);}}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
@@ -96,9 +99,10 @@ export const nativeTransport={
   }finally{pending.delete(id);}
  },
  async close(){
+  flushTrace();
   if(!worker)throw new Error("Stock tests did not reach Rust");
   if(pending.size)throw new Error(`Native requests still pending: ${pending.size} (${[...pending].map(([id,waiter])=>`${id}:${waiter.method}`).join(", ")})`);
   closing=true;send({type:"transport.close"});if(await exited!==0)throw new Error("Native durable bridge failed");
-  port.close();await worker.terminate();
+  port.close();await worker.terminate();flushTrace();
  },
 };

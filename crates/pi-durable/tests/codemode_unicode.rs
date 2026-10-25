@@ -62,6 +62,84 @@ fn options() -> RunOptions {
 }
 
 #[tokio::test]
+async fn invalid_global_names_preserve_the_source_error_units_before_execution() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let mut config = options();
+        config.start.globals.push(DeclaredGlobal {
+            name: JsonString::from_utf16(vec![0xd800]),
+            spread: false,
+        });
+        let error = sandbox.start("return 1;".into(), config).err().unwrap();
+        let expected = JsonString::from_utf16(
+            "Invalid global name \""
+                .encode_utf16()
+                .chain([0xd800, 34])
+                .collect(),
+        );
+        assert_eq!(error.name(), "Error");
+        assert_eq!(error.message_text(), expected);
+        sandbox.0.close().await;
+    }
+}
+
+#[tokio::test]
+async fn native_tool_metadata_and_call_records_preserve_utf16_across_both_transports() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let name = JsonString::from_utf16(vec![0xd800]);
+        let alias = JsonString::from_utf16(vec![0xd802]);
+        let description = JsonString::from_utf16(vec![0xdc01]);
+        let reply = JsonString::from_utf16(vec![0xd804]);
+        let mut config = options();
+        config.start.tools.push(DeclaredTool {
+            name: name.clone(),
+            js_name: alias.clone(),
+            description: description.clone(),
+            structured: false,
+            hidden: false,
+        });
+        let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+        config.on_call = Arc::new(move |call| {
+            send.send(call).unwrap();
+        });
+        let run = sandbox.start(
+            "const tool = ALL_TOOLS[0]; const value = await tools[tool.name]({input:'\\udc03'}); return [tool.name, tool.description, value];".into(),
+            config,
+        ).unwrap();
+        let call = tokio::time::timeout(std::time::Duration::from_secs(3), receive.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(call.name, name);
+        assert_eq!(
+            call.args.unwrap()["input"].as_string().unwrap().units(),
+            &[0xdc03]
+        );
+        run.deliver(
+            1,
+            124.0,
+            call.id,
+            Outcome::Success(Some(JsonValue::String(reply.clone()))),
+        )
+        .unwrap();
+        let result = run.result().await.unwrap();
+        assert_eq!(result["ok"], JsonValue::Bool(true), "{result}");
+        let values = result["value"].as_array().unwrap();
+        assert_eq!(
+            values,
+            &vec![
+                JsonValue::String(alias),
+                JsonValue::String(description),
+                JsonValue::String(reply)
+            ]
+        );
+        assert_eq!(result["calls"][0]["name"].as_string(), Some(&name));
+        sandbox.0.close().await;
+    }
+}
+
+#[tokio::test]
 async fn source_validation_preserves_units_but_respects_provider_errors_and_changed_schemas() {
     use pi_durable::harness::tool::{ExecutableTool, ToolCall};
     let sandbox = Arc::new(NativeSandbox::new().unwrap());

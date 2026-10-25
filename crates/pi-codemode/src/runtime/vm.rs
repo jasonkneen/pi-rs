@@ -57,7 +57,7 @@ use crate::types::{CodemodeCallTarget, CodemodeDuring, CodemodeOutputItem};
 
 /// Bumped whenever this module or the prelude changes what a deterministic script observes,
 /// beyond what the fingerprint's other parts (engine version, prelude hash, limits) already capture.
-const DETERMINISTIC_VERSION: u32 = 3;
+const DETERMINISTIC_VERSION: u32 = 4;
 
 /// The engine named in the fingerprint.
 const ENGINE: &str = "boa 0.22";
@@ -423,12 +423,13 @@ fn bridge(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
         "call" | "global" => {
             st.issued.set(st.issued.get() + 1);
             let id = args.get(1).and_then(JsValue::as_number).unwrap_or(0.0) as u64;
-            st.send(WorkerToHostMessage::Call {
-                id,
-                target: if kind == "call" { CodemodeCallTarget::Tool } else { CodemodeCallTarget::Global },
-                name: string_arg(args, 2).unwrap_or_default(),
-                args: string_arg(args, 3),
-            });
+            let target = if kind == "call" { CodemodeCallTarget::Tool } else { CodemodeCallTarget::Global };
+            if st.lossless_json {
+                let name = args.get(2).and_then(JsValue::as_string).map(|s| s.to_vec()).unwrap_or_default();
+                st.send(WorkerToHostMessage::CallUtf16 { id, target, name, args: string_arg(args, 3) });
+            } else {
+                st.send(WorkerToHostMessage::Call { id, target, name: string_arg(args, 2).unwrap_or_default(), args: string_arg(args, 3) });
+            }
         }
         "output" => {
             let what = string_arg(args, 1).unwrap_or_default();
@@ -625,7 +626,7 @@ impl Vm {
                 limits.recursion_limit,
                 data.memory_limit_bytes.map_or_else(|| "none".to_string(), |bytes| bytes.to_string()),
                 limits.interrupt_budget.map_or_else(|| "none".to_string(), |budget| budget.to_string()),
-                if data.lossless_json { ", UTF16 JSON 2" } else { "" },
+                if data.lossless_json { ", UTF16 JSON 3" } else { "" },
             )
         });
         Ok(Vm {

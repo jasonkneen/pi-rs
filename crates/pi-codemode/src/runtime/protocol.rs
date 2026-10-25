@@ -1,7 +1,7 @@
 //! Messages between the host and a VM. Tool arguments, results, and values cross as JSON strings:
 //! the VM passes them into and out of the engine as strings and never builds structured values
-//! itself. All types serialize to the same JSON as the TS protocol, so they can cross a process or
-//! network boundary unchanged.
+//! itself. Ordinary messages retain the TS protocol's JSON. Lossless JSON runs negotiate
+//! UTF-16 extensions through the VM fingerprint before host effects.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -13,9 +13,9 @@ use crate::types::{CodemodeCallTarget, CodemodeDuring, CodemodeOutputItem};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VmTool {
-    pub name: String,
-    pub js_name: String,
-    pub description: String,
+    pub name: pi_json::strict::JsonString,
+    pub js_name: pi_json::strict::JsonString,
+    pub description: pi_json::strict::JsonString,
 }
 
 /// A global as the VM sees it.
@@ -93,6 +93,14 @@ pub enum WorkerToHostMessage {
         id: u64,
         target: CodemodeCallTarget,
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        args: Option<String>,
+    },
+    /// Lossless call names for deterministic JSON runs.
+    CallUtf16 {
+        id: u64,
+        target: CodemodeCallTarget,
+        name: Vec<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         args: Option<String>,
     },
