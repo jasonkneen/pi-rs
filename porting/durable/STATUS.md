@@ -2,6 +2,8 @@
 
 Goal: the complete native Rust port described in PLAN.md. Status: active, incomplete.
 
+Latest validation: the UTF16-source full run passed 840 Rust checks and 834 stock cases before the first Session table case exceeded its unchanged five-second deadline (`/tmp/pi-durable-check-2026-10-25-utf16-source-full.log`, terminal exit 1). Thirty complete table-file reruns passed both retentions, 720 executions (`/tmp/pi-durable-tables-startup-repeat/`). Their transport traces show the first external process reply taking about one second, with subsequent calls in milliseconds. A controlled six-second launcher reproduces the same first-case timeout (`/tmp/pi-durable-startup-delay-before.log`); the runner now awaits a no-state native readiness handshake during setup. With the same delayed launcher, all twelve original cases pass in both modes and retain their original five-second deadlines (`/tmp/pi-durable-startup-delay-after-{600000,0}.log`). This establishes and fixes startup being charged to the first test; it does not establish the operating-system cause of the earlier untraced delay. The last completed full baseline remains the 832/2048 run recorded below until the new combined run completes.
+
 Worktree: `/Users/jkneen/Documents/GitHub/pi-rs-durable`, branch `feat/pi-durable`.
 The original `pi-rs` worktree remains on clean `dev` at `2a274f9`.
 Reference: `/Users/jkneen/Documents/GitHub/pi-mono`, commit `5e63241d0294ed3fcfc4388c737a8ea27e09c74e`.

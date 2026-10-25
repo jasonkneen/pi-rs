@@ -680,6 +680,7 @@ impl Hub {
             return self.session_request(&method, request, context);
         }
         Ok(match method.as_str() {
+            "transport.ready" => Box::pin(async { Ok(Some(encode(&true))) }),
             "open" => Box::pin(async move {
                 let harness: u64 = field(&request, "id")?;
                 let handle: u64 = field(&request, "storage")?;
