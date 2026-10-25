@@ -7,7 +7,7 @@ const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(
 const errors=new Map();
 let exited;
 export function failure(value){const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
-function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,error:frame.error??false})+"\n");}
+function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,error:frame.error??false})+"\n");}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
@@ -60,7 +60,7 @@ export const nativeTransport={
   start();const id=next++;
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
-   pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
+   pending.set(id,{method,resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
    try{send({id,method,...args,...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});}catch(error){pending.delete(id);admissionFailures.add(error);reject(error);return;}
    if(!signal?.aborted)signal?.addEventListener("abort",abort,{once:true});
   });
@@ -80,7 +80,7 @@ export const nativeTransport={
   return response;
  },
  sync(method,args={}){
-  start();const id=next++,waiter={sync:true};pending.set(id,waiter);send({id,method,...args});const deadline=Date.now()+30000;
+  start();const id=next++,waiter={sync:true,method};pending.set(id,waiter);send({id,method,...args});const deadline=Date.now()+30000;
   try{
    while(!waiter.frame){
     const observed=Atomics.load(signal,0);drain();
@@ -93,7 +93,7 @@ export const nativeTransport={
  },
  async close(){
   if(!worker)throw new Error("Stock tests did not reach Rust");
-  if(pending.size)throw new Error(`Native requests still pending: ${pending.size}`);
+  if(pending.size)throw new Error(`Native requests still pending: ${pending.size} (${[...pending].map(([id,waiter])=>`${id}:${waiter.method}`).join(", ")})`);
   closing=true;send({type:"transport.close"});if(await exited!==0)throw new Error("Native durable bridge failed");
   port.close();await worker.terminate();
  },

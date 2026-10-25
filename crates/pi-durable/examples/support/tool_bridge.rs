@@ -347,7 +347,7 @@ impl Hub {
     pub(super) fn bind_tool_runtime(
         self: &Arc<Self>,
         runtime: &ErasedRuntime,
-        _context: &Context,
+        context: &Context,
     ) -> u64 {
         if let Some(id) = self
             .native_runtimes
@@ -360,19 +360,7 @@ impl Hub {
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         self.native_runtimes.lock().insert(id, runtime.clone());
-        let signal = runtime.signal();
-        let hub = self.clone();
-        tokio::spawn(async move {
-            signal.cancelled().await;
-            hub.emit(object([
-                ("type", encode(&"signal")),
-                ("runtime", encode(&id)),
-                (
-                    "message",
-                    encode(&signal.reason().unwrap().waiter_error().message),
-                ),
-            ]));
-        });
+        self.forward_runtime_signal(id, runtime.signal(), context);
         id
     }
     pub(super) fn stock_catalog_task(self: &Arc<Self>, description: &JsonValue) -> Result<AnyTask> {

@@ -40,6 +40,33 @@ async fn setup() -> (Arc<support::ControlledStorage>, Session, ConversationId) {
     (storage, session, conversation)
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_context_read_queued_before_close_finishes_its_captured_transcript() {
+    for _ in 0..128 {
+        let (storage, session, conversation) = setup().await;
+        append(&session, conversation, user("before close")).await;
+        let gate = Arc::new(support::Gate::default());
+        *storage.commit_gate.lock() = Some(gate.clone());
+        let held = session.commit(
+            move |tx| async move {
+                tx.append_entry(conversation, EntryDraft::new("note"))
+                    .await?;
+                Ok(())
+            },
+            &Context::default(),
+        );
+        gate.entered().await;
+        let read = read_context(&session, storage, conversation, &Context::default(), None);
+        let closing = session.close(&Context::default());
+        gate.release();
+        held.await.unwrap();
+        let view = read.await.unwrap();
+        closing.await.unwrap();
+        assert_eq!(view.entries.len(), 2);
+        assert_eq!(*view.messages[0], user("before close"));
+    }
+}
+
 #[tokio::test]
 async fn native_session_captures_an_immutable_range_before_later_resets_and_edits() {
     let (storage, session, conversation) = setup().await;

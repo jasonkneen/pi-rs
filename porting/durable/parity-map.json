@@ -1712,7 +1712,7 @@
         "All 4 unchanged stock cases pass with retention=600000 and retention=0; pinned bytes before/after, exact case inventory and zero pending cases verified",
         "Four host-input cases pass: live model collection functions, plain Models objects, current api.models on each tool access and changing settings functions; seven native generation requests and one native tool execution per mode",
         "Native generation, compaction, tools, Session/scheduler, registry and plain memory; original host models, renderers, user task/tool callbacks, schema validators, environments and controlled/persistent backend capabilities remain external",
-        "Zero source generation/compaction phases required; complete native Harness facade, SDK 1.4 alignment and embedded exports remain open",
+        "Zero source generation/compaction phases required; native Harness services execute the workflow, while complete SDK 1.4 alignment and embedded exports remain open",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1763,6 +1763,7 @@
         "The stock file covers failed open cleanup/cancellation, stubborn task/tool/hook joins, real SQLite reopen, repeated/cancelled close, admitted commit settlement, frame suppression, cancelled acquisitions, queued reads/waits and paused progress admission",
         "The adapter exposes the native unload_documents operation; original models, hooks, controlled backend subclasses and the public subscribeCommits instrumentation remain host capabilities; native observer lifetime tests supply additional coverage",
         "Complete native environment implementations, observer-only and pending-wait lifetime boundaries and embedded exports remain open",
+        "A full rerun reproduced a queued context scan reaching its backend after close; a four-thread native regression fails before the fix, then passes 128 iterations when the scan continuation shares the Session FIFO; the actual scan stays outside the mutation line; all fourteen original lifecycle cases pass in both modes afterward",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1966,7 +1967,9 @@
         "Native generation, compaction, tools, Session/scheduler, registry and plain memory; original host models, renderers, user task/tool callbacks, schema validators, environments and controlled/persistent backend capabilities remain external",
         "Zero source generation/compaction phases required; complete native Harness facade, SDK 1.4 alignment and embedded exports remain open",
         "porting/durable/STATUS.md",
-        "A traced structured child-wait assertion reproduced the next JS timer overtaking delivery of a native commit callback; the adapter now pumps initial immediate work to a host promise, preserving asynchronous callback microtasks and skipping synchronous host callbacks; thirty focused runs and complete structured/task files pass afterward in both modes"
+        "A traced structured child-wait assertion reproduced the next JS timer overtaking delivery of a native commit callback; the adapter now pumps initial immediate work to a host promise, preserving asynchronous callback microtasks and skipping synchronous host callbacks; thirty focused runs and complete structured/task files pass afterward in both modes",
+        "A controlled transport comparison reproduced the parallel-abort result assertion and captured c2 cancellation reaching JS before c1; runtime signal forwarding now shares the native Session FIFO; twenty complete corrected files pass across both retention modes, totaling 1160 case executions",
+        "An earlier all-assertions-passed teardown failure and a later pair of recovery timeouts remain separate investigation items; the signal-order trace establishes only the reversed parallel-abort result cause"
       ]
     },
     {

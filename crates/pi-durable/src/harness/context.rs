@@ -1,7 +1,7 @@
 //! Active transcript and model context, bounded by immutable committed entry IDs.
 //! Incremental reads retain immutable messages and only rescan the appended tail.
 use crate::{
-    storage::{StorageFuture, line::eager},
+    storage::{StorageFuture, line::eager_on},
     wire, *,
 };
 use serde::{Deserialize, Serialize};
@@ -142,7 +142,9 @@ pub fn read_context_from(
         capture_context_bounds(on_line.as_ref(), conversation, &bounds_context, at).await
     });
     let context = context.clone();
-    eager(async move {
+    // Continue on the same FIFO as bounds capture, before later close work can
+    // reach the backend. The range scan still releases the mutation line.
+    eager_on(session, async move {
         read_range(
             storage.as_ref(),
             conversation,

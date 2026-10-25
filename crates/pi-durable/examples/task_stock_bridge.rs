@@ -337,15 +337,7 @@ impl Hub {
             id
         });
         if existing.is_none() {
-            let hub = self.clone();
-            let signal = runtime.signal();
-            tokio::spawn(async move {
-                signal.cancelled().await;
-                let message = signal.reason().unwrap().waiter_error().message;
-                hub.emit(encode(
-                    &serde_json::json!({"type":"signal","runtime":id,"message":message}),
-                ));
-            });
+            self.forward_runtime_signal(id, runtime.signal(), &context);
         }
         let serial = {
             let mut serials = self.phase_serials.lock();
@@ -489,6 +481,29 @@ impl Hub {
             .get(&field::<u64>(request, "tx")?)
             .cloned()
             .ok_or_else(|| Error::message("Unknown transaction"))
+    }
+    fn forward_runtime_signal(
+        self: &Arc<Self>,
+        id: u64,
+        signal: pi_chord::AbortSignal,
+        context: &Context,
+    ) {
+        let harness = context.value(&HARNESS_CONTEXT).expect("invocation Harness");
+        let session = self.schedulers.lock()[&*harness].session();
+        let hub = self.clone();
+        // Signal delivery shares native continuation order. Independent Tokio
+        // jobs can reverse sibling cancellations before the host receives them.
+        session.spawn(async move {
+            signal.cancelled().await;
+            hub.emit(object([
+                ("type", encode(&"signal")),
+                ("runtime", encode(&id)),
+                (
+                    "message",
+                    encode(&signal.reason().unwrap().waiter_error().message),
+                ),
+            ]));
+        });
     }
     fn runtime(&self, request: &JsonValue) -> Result<ErasedRuntime> {
         if let Some(runtime) = self
