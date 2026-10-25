@@ -8,6 +8,7 @@ trap 'rm -f "$native_output"' EXIT
 python3 scripts/durable-inventory.py "$reference" --check
 cargo fmt -p pi-chord -p pi-durable -p pi-telemetry --check
 cargo test --locked -p pi-chord -p pi-durable -p pi-telemetry
+cargo run --locked -q -p pi-durable --example conversation -- "Hello"
 cargo test --locked -p pi-ai --test telemetry
 cargo check --locked -p pi-agent -p pi-coding-agent
 cargo test --locked -p pi-coding-agent --test extensions_platform js_models_requests_
@@ -34,6 +35,8 @@ node scripts/run-stock-durable-tasks.mjs "$reference" --suite=nested --report=/t
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=nested-restart --report=/tmp/pi-durable-stock-nested-restart-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=view --report=/tmp/pi-durable-stock-view-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=events --report=/tmp/pi-durable-stock-events-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=generation --report=/tmp/pi-durable-stock-generation-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=generation-recovery --report=/tmp/pi-durable-stock-generation-recovery-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=graph --report=/tmp/pi-durable-stock-graph-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=inspect --report=/tmp/pi-durable-stock-inspect-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=submissions --report=/tmp/pi-durable-stock-submissions-report.json

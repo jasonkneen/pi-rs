@@ -2633,4 +2633,7 @@ impl TaskDriver for Driver {
         self.scheduler
             .report(error, "task_error", Some(self.invocation.task), None);
     }
+    fn report_host(&self, error: Error, callback: &'static str) {
+        self.scheduler.report_host(error, callback);
+    }
 }

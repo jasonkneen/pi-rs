@@ -28,10 +28,14 @@ mod compaction_bridge;
 mod context_bridge;
 #[path = "support/document_bridge.rs"]
 mod document_bridge;
+#[path = "support/generation_bridge.rs"]
+mod generation_bridge;
 #[path = "support/task_graph_bridge.rs"]
 mod graph_bridge;
 #[path = "support/memory_bridge.rs"]
 mod memory_bridge;
+#[path = "support/model_bridge.rs"]
+mod model_bridge;
 #[path = "support/prompt_bridge.rs"]
 mod prompt_bridge;
 #[path = "support/registry_bridge.rs"]
@@ -131,6 +135,7 @@ struct Hub {
     graph: graph_bridge::GraphBridge,
     views: view_bridge::ViewBridge,
     memory: memory_bridge::MemoryBridge,
+    models: model_bridge::ModelBridge,
     documents: document_bridge::DocumentBridge,
     submissions: submission_bridge::SubmissionBridge,
     inspections: AtomicU64,
@@ -444,6 +449,22 @@ impl Hub {
             "open" => Box::pin(async move {
                 let harness: u64 = field(&request, "id")?;
                 let handle: u64 = field(&request, "storage")?;
+                if request["nativeGeneration"].as_bool() == Some(true)
+                    && let Some(reader) = field::<Option<u64>>(&request, "reader")?
+                {
+                    let names: Vec<JsonString> =
+                        decode(&self.sync("readerTaskNames", encode(&reader))?)?;
+                    let missing = ["pi.generation", "pi.tool", "pi.compaction"]
+                        .into_iter()
+                        .filter(|name| !names.iter().any(|held| held.equals_str(name)))
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(Error::message(format!(
+                            "Registry lacks built-in tasks {}; create it with createRegistry()",
+                            missing.join(", ")
+                        )));
+                    }
+                }
                 let registry = self.registry_reader(&request)?;
                 self.readers.lock().insert(harness, registry.clone());
                 let report = self.clone();
@@ -452,6 +473,7 @@ impl Hub {
                 let settings = self.clone();
                 let resolver = self.clone();
                 let environment = self.clone();
+                let model_host = Arc::downgrade(&self);
                 let has_environment = request["environment"].as_bool() == Some(true);
                 let host_clock = request["clock"].as_bool() == Some(true);
                 let host_settings = request["settings"].as_bool() == Some(true);
@@ -466,6 +488,7 @@ impl Hub {
                 };
                 self.harness_storage.lock().insert(harness, storage.clone());
                 let scheduler=TaskScheduler::open(storage,registry,SchedulerOptions{
+                    models: Arc::new(move || model_host.upgrade().ok_or_else(|| Error::message("Model host closed"))?.host_models(harness)),
                     env:Arc::new(move |conversation,context|if has_environment {environment.build_environment(harness,conversation,context)}else{Box::pin(async {Ok(None)})}),
                     settings:Arc::new(move || if host_settings {registry_bridge::settings(&settings.sync("settings",encode(&harness))?)} else {Ok(pi_durable::harness::settings::resolve_settings(Default::default()))}),
                     settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
@@ -511,6 +534,7 @@ impl Hub {
             }),
             "root" => {
                 let scheduler = self.scheduler(&request)?;
+                let hub = self.clone();
                 mapped(scheduler.session().commit(
                     move |tx| async move {
                         if let Some(root) = tx.conversation(ROOT_CONVERSATION_ID).await? {
@@ -525,10 +549,23 @@ impl Hub {
                             )
                             .await?;
                         }
+                        hub.init_conversation(field(&request["options"], "init")?, tx, root.id)
+                            .await?;
                         Ok(root.id)
                     },
                     &context,
                 ))
+            }
+            "wake" => {
+                let wake = self.scheduler(&request)?.wake();
+                let mut value = object([("active", encode(&wake.active))]);
+                if let Some(at) = wake.at {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("at".into(), encode(&at));
+                }
+                Box::pin(async move { Ok(Some(value)) })
             }
             "inspect" => {
                 self.inspections.fetch_add(1, Ordering::Relaxed);
@@ -637,6 +674,7 @@ impl Hub {
             }
             "createConversation" | "forkConversation" => {
                 let scheduler = self.scheduler(&request)?;
+                let hub = self.clone();
                 let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
                     Some("ownerless") => ConversationOwnership::Ownerless,
                     Some("task") => ConversationOwnership::Task(field(
@@ -665,6 +703,8 @@ impl Hub {
                             )
                             .await?;
                         }
+                        hub.init_conversation(field(&request["options"], "init")?, tx, record.id)
+                            .await?;
                         Ok(record.id)
                     },
                     &context,
@@ -1083,7 +1123,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -1161,6 +1201,7 @@ async fn main() {
         graph: graph_bridge::GraphBridge::default(),
         views: view_bridge::ViewBridge::default(),
         memory: memory_bridge::MemoryBridge::default(),
+        models: model_bridge::ModelBridge::default(),
         documents: document_bridge::DocumentBridge::default(),
         submissions: submission_bridge::SubmissionBridge::default(),
         inspections: AtomicU64::new(0),
@@ -1193,6 +1234,10 @@ async fn main() {
         for line in std::io::stdin().lock().lines() {
             let value: JsonValue = serde_json::from_str(&line.unwrap()).unwrap();
             match value["type"].to_utf8().as_deref() {
+                Some("models.event") => {
+                    hub.model_event(&value).unwrap();
+                    continue;
+                }
                 Some("callback.result") => {
                     let id = field::<u64>(&value, "id").unwrap();
                     let synchronous = matches!(hub.pending.lock().get(&id), Some(Pending::Sync(_)));

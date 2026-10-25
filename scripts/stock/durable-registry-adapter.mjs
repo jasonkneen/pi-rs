@@ -4,13 +4,14 @@ import {writeFileSync} from "node:fs";
 import {GenerationTask,ToolTask,CompactionTask} from "@earendil-works/pi-durable";
 import {nativeTransport,failure} from "./durable-native-transport.mjs";
 import {captureSettings,settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
-import {handle,objectFor,describeTask,markNativeTool} from "./durable-native-handles.mjs";
+import {handle,objectFor,describeTask,markNativeTool,markNativeGeneration} from "./durable-native-handles.mjs";
+if(process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1")markNativeGeneration(GenerationTask);
 if(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1")markNativeTool(ToolTask);
 const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),resolvedAgents=new Map(),registries=new WeakMap();
 const callbacks={listeners:0,wrappers:0,reports:0};
 const call=(method,args={})=>nativeTransport.sync(`registry.${method}`,args);
-function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true,...(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"?{declaration:{name:tool.name,description:tool.description,parameters:tool.parameters,constrainedSampling:tool.constrainedSampling},replay:tool.replay,limits:{maxBytes:tool.outputLimits?.maxBytes??51200,maxLines:tool.outputLimits?.maxLines??2000,retain:tool.outputLimits?.retain??"head"},schema:tool.structuredOutputSchema}:{})};}
-function describeSection(section){return{id:handle(section),key:section.key};}
+function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true,...(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"?{declaration:{name:tool.name,description:tool.description,parameters:tool.parameters,constrainedSampling:tool.constrainedSampling},replay:tool.replay,executionMode:tool.executionMode,limits:{maxBytes:tool.outputLimits?.maxBytes??51200,maxLines:tool.outputLimits?.maxLines??2000,retain:tool.outputLimits?.retain??"head"},schema:tool.structuredOutputSchema}:{})};}
+function describeSection(section){return{id:handle(section),key:section.key,untagged:section.tag===false};}
 function describeExtension(extension){return{
  id:handle(extension),name:extension.name,tools:(extension.tools??[]).map(describeTool),sections:(extension.sections??[]).map(describeSection),tasks:(extension.tasks??[]).map(describeTask),
  hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool"})),

@@ -33,6 +33,7 @@ pub(super) struct HostTool {
     pub replay: ReplayPolicy,
     pub limits: OutputLimits,
     pub schema: Option<JsonValue>,
+    pub execution_mode: Option<ToolExecutionMode>,
 }
 impl ExecutableTool for HostTool {
     fn declaration(&self) -> ToolDeclaration {
@@ -40,6 +41,9 @@ impl ExecutableTool for HostTool {
     }
     fn replay(&self) -> ReplayPolicy {
         self.replay
+    }
+    fn execution_mode(&self) -> Option<ToolExecutionMode> {
+        self.execution_mode
     }
     fn output_limits(&self) -> OutputLimits {
         self.limits
@@ -372,6 +376,19 @@ impl Hub {
         id
     }
     pub(super) fn stock_catalog_task(self: &Arc<Self>, description: &JsonValue) -> Result<AnyTask> {
+        if description["nativeGeneration"].as_bool() == Some(true) {
+            let id = field(description, "id")?;
+            if let Some(task) = self.tool.definitions.lock().get(&id).cloned() {
+                return Ok(task);
+            }
+            let task = pi_durable::harness::generation::generation_task::<
+                registry_bridge::ToolHandle,
+                registry_bridge::SectionHandle,
+            >()
+            .erased();
+            self.tool.definitions.lock().insert(id, task.clone());
+            return Ok(task);
+        }
         if description["nativeTool"].as_bool() == Some(true) {
             let task = TOOL_TASK.erased();
             self.tool
@@ -416,6 +433,7 @@ impl Hub {
                     ReplayPolicy::Unsafe
                 },
                 limits: field(value, "limits")?,
+                execution_mode: field(value, "executionMode")?,
                 schema: value
                     .as_object()
                     .unwrap()

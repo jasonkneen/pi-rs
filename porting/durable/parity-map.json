@@ -470,7 +470,7 @@
         "Native commit-ordered event batches, atomic snapshot/attachment with completing-task scan, exact message/output deltas, child-first nested results, held-turn accounting, snapshot overflow and stream cancellation",
         "Five native regressions cover stable partial/details identities across moves, equal-container replacement, completing-to-terminal turn accounting, lossless UTF16 message deltas, snapshot overflow with subsequent deltas, independent cancellation and listener failure",
         "All 14 unmodified stock event cases pass with both retention settings and native event/memory counters; all 44 stock nested workflows also use native events",
-        "Event payloads retain lossless shared JSON until the SDK boundary; executable generation, SDK 1.4 alignment and embedded exports remain open"
+        "Event payloads retain lossless shared JSON until the SDK boundary; complete generation host integration, SDK 1.4 alignment and embedded exports remain open"
       ]
     },
     {
@@ -479,14 +479,22 @@
       "rust": [
         "crates/pi-durable/src/harness/generation.rs",
         "crates/pi-durable/tests/submissions.rs",
-        "crates/pi-durable/tests/submissions_reference.rs"
+        "crates/pi-durable/tests/submissions_reference.rs",
+        "crates/pi-durable/src/harness/generation/prepare.rs",
+        "crates/pi-durable/src/harness/generation/request.rs",
+        "crates/pi-durable/src/harness/generation/settle.rs",
+        "crates/pi-durable/src/harness/generation/tools.rs",
+        "crates/pi-durable/src/harness/generation/types.rs",
+        "crates/pi-durable/tests/generation_runtime.rs",
+        "crates/pi-durable/examples/conversation.rs"
       ],
       "evidence": [
-        "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "cargo test -p pi-durable --test submissions --test submissions_reference",
-        "porting/durable/STATUS.md",
-        "Only native generation record creation, initial checkpoint, input trace linkage, run start and handover are implemented; executable preparation/request/retry/poll/tools/abort phases remain pending",
-        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+        "Native typed preparation/request/retry/poll/tools/abort phases, pinned request options and cutoff, provider session IDs, coalesced trailing partials, failure policies, compaction admission, tool controls and run handover",
+        "Six native execution tests run both retention modes: input settlement/usage, unavailable models, live retry settings, owned tool successor, shared afterResponse/onYield identity and sequential unanimous termination",
+        "24 of 25 unmodified stock generation cases and all eight recovery cases pass in both retention modes with native model-request counters and no source generation phase dispatch",
+        "The stock generation file includes a direct source resolveSettings assertion; the non-JSON function-valued final message case remains unselected because the typed SDK provider transport cannot preserve a hosted invalid final value until the durable writer",
+        "Original JS model collections/provider APIs, section renderers, backend callbacks and direct definition helpers remain host capabilities; generation hook bindings, lossless SDK 1.4 alignment and complete Harness integration remain open",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -561,7 +569,7 @@
         "node --conditions=source --experimental-strip-types scripts/golden/gen-durable-prompt.mjs /Users/jkneen/Documents/GitHub/pi-mono --check",
         "node scripts/run-stock-durable-prompt.mjs /Users/jkneen/Documents/GitHub/pi-mono --report=/tmp/pi-durable-stock-prompt-report.json",
         "142 independent planner/replay cases; native renderer ordering, error identity, cancellation, instructions and UTF16 tags; full stock prompt file under both retention settings",
-        "Stock gate uses native prompt/context modules with original JS callbacks, outer Harness/Session/scheduler/backend; embedded JS exports and full generation integration remain pending"
+        "Stock gate uses native prompt/context modules with original JS callbacks, outer Harness/Session/scheduler/backend; embedded JS exports and full generation host integration remain pending"
       ]
     },
     {
@@ -1569,15 +1577,41 @@
     },
     {
       "reference": "packages/durable/test/harness-generation-recovery.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/generation.rs",
+        "crates/pi-durable/tests/generation_runtime.rs",
+        "crates/pi-durable/examples/support/generation_bridge.rs",
+        "crates/pi-durable/examples/support/model_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "8 original cases pass with retention=600000 and retention=0; source hash and literal case selection verified",
+        "Native generation phases, scheduler, Session, registry and runtime; original model/provider collection, renderers and storage capabilities remain host-owned",
+        "Model request/poll/cancel counters prove native execution; the JS task-phase counter is zero for these workflows",
+        "One non-JSON hosted final-value case remains unselected in the generation file; its direct resolveSettings assertion still calls the source helper",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-generation.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/generation.rs",
+        "crates/pi-durable/tests/generation_runtime.rs",
+        "crates/pi-durable/examples/support/generation_bridge.rs",
+        "crates/pi-durable/examples/support/model_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "24 original cases pass with retention=600000 and retention=0; source hash and literal case selection verified",
+        "Native generation phases, scheduler, Session, registry and runtime; original model/provider collection, renderers and storage capabilities remain host-owned",
+        "Model request/poll/cancel counters prove native execution; the JS task-phase counter is zero for these workflows",
+        "One non-JSON hosted final-value case remains unselected in the generation file; its direct resolveSettings assertion still calls the source helper",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-host-inputs.test.ts",

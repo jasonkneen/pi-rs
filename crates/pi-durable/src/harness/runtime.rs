@@ -45,6 +45,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn now(&self) -> f64;
     fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> DisarmTimer;
     fn report(&self, error: Error);
+    fn report_host(&self, error: Error, callback: &'static str);
     fn report_extension(&self, error: Error, extension: Option<JsonString>);
 }
 
@@ -139,6 +140,11 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     pub fn report(&self, error: Error) -> Result<()> {
         self.driver.check()?;
         self.driver.report(error);
+        Ok(())
+    }
+    pub fn report_host(&self, error: Error, callback: &'static str) -> Result<()> {
+        self.driver.check()?;
+        self.driver.report_host(error, callback);
         Ok(())
     }
     pub fn report_extension(&self, error: Error, extension: Option<JsonString>) -> Result<()> {

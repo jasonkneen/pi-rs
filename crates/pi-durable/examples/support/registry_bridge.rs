@@ -8,7 +8,7 @@ use serde::Deserialize;
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ToolHandle {
-    id: u64,
+    pub(super) id: u64,
     name: JsonString,
     callers: Option<Vec<ToolCaller>>,
     #[serde(default)]
@@ -32,8 +32,12 @@ impl RegisteredTool for ToolHandle {
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct SectionHandle {
-    id: u64,
-    key: JsonString,
+    pub(super) id: u64,
+    pub(super) key: JsonString,
+    #[serde(default)]
+    pub(super) untagged: bool,
+    #[serde(skip)]
+    pub(super) hub: std::sync::Weak<Hub>,
 }
 impl RegisteredSection for SectionHandle {
     fn key(&self) -> &JsonString {
@@ -235,7 +239,10 @@ impl Hub {
             .collect::<Result<_>>()?;
         extension.sections = field::<Vec<SectionHandle>>(description, "sections")?
             .into_iter()
-            .map(Arc::new)
+            .map(|mut section| {
+                section.hub = Arc::downgrade(self);
+                Arc::new(section)
+            })
             .collect();
         extension.tasks = field::<Vec<JsonValue>>(description, "tasks")?
             .iter()
@@ -282,15 +289,16 @@ impl Hub {
                     key: field(&wrap, "section")?,
                     apply: Arc::new(move |section| {
                         hub.registry.wrappers.fetch_add(1, Ordering::Relaxed);
-                        decode(&hub.sync(
+                        let mut section: SectionHandle = decode(&hub.sync(
                             "registry.wrap",
                             object([
                                 ("callback", encode(&callback)),
                                 ("kind", encode(&"section")),
                                 ("item", encode(&section.id)),
                             ]),
-                        )?)
-                        .map(Arc::new)
+                        )?)?;
+                        section.hub = Arc::downgrade(&hub);
+                        Ok(Arc::new(section))
                     }),
                 });
             }
