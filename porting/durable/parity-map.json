@@ -301,7 +301,11 @@
         "crates/pi-durable/examples/support/codemode_vm_bridge.rs",
         "crates/pi-json/src/strict.rs",
         "crates/pi-codemode/src/json_run.rs",
-        "crates/pi-durable/tests/codemode_unicode.rs"
+        "crates/pi-durable/tests/codemode_unicode.rs",
+        "crates/pi-codemode/src/source/utf16.rs",
+        "crates/pi-codemode/tests/source_utf16.rs",
+        "crates/pi-durable/tests/codemode_unicode.rs",
+        "crates/pi-durable/tests/codemode_runtime.rs"
       ],
       "evidence": [
         "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
@@ -312,7 +316,8 @@
         "/tmp/pi-durable-native-codemode-runtime-verified.log",
         "porting/durable/STATUS.md",
         "/tmp/pi-durable-codemode-unicode-red.log",
-        "/tmp/pi-durable-codemode-unicode-parser-green.log"
+        "/tmp/pi-durable-codemode-unicode-parser-green.log",
+        "Raw UTF16 source now survives the actual durable tool/options/VM/store path under both retentions. Thread and JSON-round-trip remote regressions and deadlines pass; pinned QuickJS source probe agrees. Native group: /tmp/pi-durable-utf16-source-native-complete.log. Complete stock codemode file: /tmp/pi-durable-stock-utf16-source-codemode.log. Generic SDK schemas and declaration/provider boundaries remain open."
       ]
     },
     {

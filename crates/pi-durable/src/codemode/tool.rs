@@ -32,6 +32,22 @@ pub fn create_codemode_tool(options: CodemodeToolOptions) -> NativeTool {
             }
         }),
     );
+    let source_schema = tool.declaration.parameters.clone();
+    tool.validate_arguments = Some(Arc::new(move |declaration, call, arguments| {
+        // This exact schema only requires a string `code`, with no content
+        // constraints or coercion for a string. Preserve its JavaScript units.
+        // Changed declarations retain the ordinary schema validation boundary.
+        let raw_source = arguments
+            .as_object()
+            .and_then(|arguments| arguments.get(&JsonString::from("code")))
+            .and_then(JsonValue::as_string)
+            .is_some_and(|code| code.to_string_checked().is_err());
+        if declaration.parameters == source_schema && raw_source {
+            JsonObject::try_from_value(arguments).map_err(Error::message)
+        } else {
+            validate_tool_arguments(declaration, call, arguments)
+        }
+    }));
     tool.callers = Some(vec![ToolCaller::Model]);
     tool.replay = ReplayPolicy::Safe;
     tool.output_limits = pi_chord::output::OutputLimits {

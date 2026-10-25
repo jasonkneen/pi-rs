@@ -69,7 +69,7 @@ pub use runtime::remote::{
 pub use runtime::vm::{DEFAULT_LOOP_ITERATION_LIMIT, DEFAULT_RECURSION_LIMIT, VmLimits};
 pub use source::{
     CODEMODE_OPTIONS_PREFIX, CODEMODE_SOURCE_GRAMMAR, CodemodeSourceError, CodemodeSourceOptions, ParsedCodemodeSource,
-    parse_codemode_source,
+    parse_codemode_source, parse_codemode_source_utf16, ParsedCodemodeSourceUtf16, CodemodeSourceErrorUtf16,
 };
 pub use types::*;
 

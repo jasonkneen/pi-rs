@@ -30,7 +30,7 @@ pub trait ExecutableTool: Send + Sync + 'static {
         Ok(arguments)
     }
     fn validate_arguments(&self, call: &ToolCall, arguments: JsonValue) -> Result<JsonObject> {
-        validate_arguments(&self.declaration(), call, arguments)
+        validate_tool_arguments(&self.declaration(), call, arguments)
     }
     fn structured_output_error(&self, result: &ToolExecutionResult) -> Result<Option<JsonString>> {
         structured_output_error(
@@ -53,6 +53,8 @@ pub type ExecuteTool = Arc<
         + Sync,
 >;
 pub type PrepareArguments = Arc<dyn Fn(JsonValue) -> Result<JsonValue> + Send + Sync>;
+pub type ValidateArguments =
+    Arc<dyn Fn(&ToolDeclaration, &ToolCall, JsonValue) -> Result<JsonObject> + Send + Sync>;
 
 pub struct NativeTool {
     pub declaration: ToolDeclaration,
@@ -63,6 +65,8 @@ pub struct NativeTool {
     pub output_limits: OutputLimits,
     pub structured_output_schema: Option<JsonValue>,
     pub prepare_arguments: Option<PrepareArguments>,
+    /// A registration with a lossless input representation can decode it natively.
+    pub validate_arguments: Option<ValidateArguments>,
     pub execute: ExecuteTool,
 }
 impl NativeTool {
@@ -80,6 +84,7 @@ impl NativeTool {
             },
             structured_output_schema: None,
             prepare_arguments: None,
+            validate_arguments: None,
             execute,
         }
     }
@@ -124,6 +129,14 @@ impl ExecutableTool for NativeTool {
             .as_ref()
             .map_or(Ok(arguments.clone()), |prepare| prepare(arguments))
     }
+    fn validate_arguments(&self, call: &ToolCall, arguments: JsonValue) -> Result<JsonObject> {
+        if let Some(validate) = &self.validate_arguments {
+            check_arguments_error(call)?;
+            validate(&self.declaration, call, arguments)
+        } else {
+            validate_tool_arguments(&self.declaration, call, arguments)
+        }
+    }
     fn execute(
         &self,
         arguments: JsonObject,
@@ -140,11 +153,7 @@ fn sdk_json(value: &JsonValue) -> Result<serde_json::Value> {
     serde_json::from_str(&value.to_string())
         .map_err(|error| Error::message(format!("Unsupported SDK JSON: {error}")))
 }
-fn validate_arguments(
-    declaration: &ToolDeclaration,
-    call: &ToolCall,
-    arguments: JsonValue,
-) -> Result<JsonObject> {
+fn check_arguments_error(call: &ToolCall) -> Result<()> {
     if let Some(error) = call
         .extra
         .get(&JsonString::from("argumentsError"))
@@ -164,6 +173,14 @@ fn validate_arguments(
             ),
         ));
     }
+    Ok(())
+}
+pub fn validate_tool_arguments(
+    declaration: &ToolDeclaration,
+    call: &ToolCall,
+    arguments: JsonValue,
+) -> Result<JsonObject> {
+    check_arguments_error(call)?;
     let parameters = sdk_json(&declaration.parameters)?;
     let args = sdk_json(&arguments)?;
     let serde_json::Value::Object(args) = args else {

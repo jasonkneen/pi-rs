@@ -57,7 +57,7 @@ use crate::types::{CodemodeCallTarget, CodemodeDuring, CodemodeOutputItem};
 
 /// Bumped whenever this module or the prelude changes what a deterministic script observes,
 /// beyond what the fingerprint's other parts (engine version, prelude hash, limits) already capture.
-const DETERMINISTIC_VERSION: u32 = 2;
+const DETERMINISTIC_VERSION: u32 = 3;
 
 /// The engine named in the fingerprint.
 const ENGINE: &str = "boa 0.22";
@@ -187,7 +187,7 @@ fn vm_main(
             return;
         }
     };
-    vm.start(&data.code);
+    vm.start(&data);
     while let Ok(command) = rx.recv() {
         if interrupt.load(Ordering::SeqCst) {
             break;
@@ -625,7 +625,7 @@ impl Vm {
                 limits.recursion_limit,
                 data.memory_limit_bytes.map_or_else(|| "none".to_string(), |bytes| bytes.to_string()),
                 limits.interrupt_budget.map_or_else(|| "none".to_string(), |budget| budget.to_string()),
-                if data.lossless_json { ", UTF16 JSON 1" } else { "" },
+                if data.lossless_json { ", UTF16 JSON 2" } else { "" },
             )
         });
         Ok(Vm {
@@ -654,15 +654,22 @@ impl Vm {
     }
 
     /// Evaluate the script and run it until it waits.
-    fn start(&mut self, code: &str) {
+    fn start(&mut self, data: &VmStartData) {
         if let Some(fingerprint) = self.fingerprint.clone() {
             self.send(WorkerToHostMessage::Started { fingerprint });
         }
         // The prefix shares the first line with the script so reported line numbers match the
         // script as written.
-        let wrapper = format!("(async (tools, console) => {{{code}\n}})");
-        let wrapper = super::instrument::instrument_loops(&wrapper).unwrap_or(wrapper);
-        let function = match self.context.eval(Source::from_bytes(wrapper.as_bytes()).with_path(Path::new("codemode.js"))) {
+        let wrapper = if let Some(code) = &data.code_utf16 {
+            let mut wrapper: Vec<u16> = "(async (tools, console) => {".encode_utf16().collect();
+            wrapper.extend_from_slice(code);
+            wrapper.extend("\n})".encode_utf16());
+            super::instrument::instrument_loops_utf16(&wrapper).unwrap_or(wrapper)
+        } else {
+            let wrapper = format!("(async (tools, console) => {{{}\n}})", data.code);
+            super::instrument::instrument_loops(&wrapper).unwrap_or(wrapper).encode_utf16().collect()
+        };
+        let function = match self.context.eval(Source::from_utf16(&wrapper).with_path(Path::new("codemode.js"))) {
             Ok(function) => function,
             Err(error) => {
                 if error.as_engine().is_some() {

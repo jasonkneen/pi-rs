@@ -236,6 +236,7 @@ struct Executors {
 
 struct ExecutionOptions {
     code: String,
+    code_utf16: Option<Vec<u16>>,
     tools: Vec<CodemodeDeclaredTool>,
     globals: Vec<CodemodeDeclaredGlobal>,
     executors: Executors,
@@ -298,6 +299,7 @@ impl Execution {
 
         let data = VmStartData {
             code: options.code,
+            code_utf16: options.code_utf16,
             tools: options
                 .tools
                 .iter()
@@ -439,7 +441,7 @@ impl Execution {
             }
             WorkerToHostMessage::Started { fingerprint } => {
                 if self.control.as_ref().is_some_and(|c| matches!(c.on_call, CallHandler::Json(_)))
-                    && !fingerprint.ends_with(", UTF16 JSON 1")
+                    && !fingerprint.ends_with(", UTF16 JSON 2")
                 {
                     return Err(BridgeError("the sandbox does not support lossless JSON runs".into()));
                 }
@@ -904,6 +906,7 @@ impl CodemodeSandbox {
         };
         let (execution, result) = Execution::start(ExecutionOptions {
             code: code.to_string(),
+            code_utf16: None,
             tools: tools
                 .iter()
                 .map(|tool| CodemodeDeclaredTool { name: tool.name.clone(), js_name: None, description: tool.description.clone() })
@@ -942,6 +945,7 @@ impl CodemodeSandbox {
         self.check_start(options.started_at, &options.tools, &options.globals)?;
         let (execution, result) = Execution::start(ExecutionOptions {
             code: code.to_string(),
+            code_utf16: None,
             tools: options.tools,
             globals: options.globals,
             executors: Executors::default(),
@@ -1001,7 +1005,16 @@ impl CodemodeSandbox {
     }
     /// Deterministic execution with lossless JavaScript JSON values.
     pub fn start_json(&self, code: &str, options: CodemodeJsonRunOptions) -> Result<CodemodeJsonRun, CodemodeSandboxError> {
+        self.start_json_utf16(&code.encode_utf16().collect::<Vec<_>>(), options)
+    }
+
+    /// Deterministic JSON execution preserving every source-text code unit.
+    pub fn start_json_utf16(&self, code: &[u16], options: CodemodeJsonRunOptions) -> Result<CodemodeJsonRun, CodemodeSandboxError> {
         self.check_start(options.started_at, &options.tools, &options.globals)?;
+        let (code, code_utf16) = match String::from_utf16(code) {
+            Ok(code) => (code, None),
+            Err(_) => (String::new(), Some(code.to_vec())),
+        };
         let store_json = options.store.as_ref().map(|store| {
             JsonValue::Object(
                 store.iter().map(|(key, value)| (key.clone(), JsonValue::String(value.to_string().into()))).collect::<strict::Map>().into(),
@@ -1009,7 +1022,8 @@ impl CodemodeSandbox {
             .to_string()
         });
         let (execution, result) = Execution::start(ExecutionOptions {
-            code: code.to_owned(),
+            code,
+            code_utf16,
             tools: options.tools,
             globals: options.globals,
             executors: Executors::default(),

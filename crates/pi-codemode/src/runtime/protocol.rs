@@ -38,6 +38,9 @@ pub struct VmDeterministic {
 #[serde(rename_all = "camelCase")]
 pub struct VmStartData {
     pub code: String,
+    /// Lossless source when JavaScript text contains unpaired surrogate units.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_utf16: Option<Vec<u16>>,
     pub tools: Vec<VmTool>,
     pub globals: Vec<VmGlobal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -10,6 +10,116 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn durable_codemode_tool_preserves_raw_utf16_source_through_options_and_storage() {
+    use pi_durable::harness::live::{LIVE_DOC, SlotProgress, ToolSlot};
+    for retention in [600_000.0, 0.0] {
+        let sandbox = Arc::new(vm::NativeSandbox::new().unwrap());
+        let registry = create_registry::<NativeTool, NativeSection>().unwrap();
+        let mut code = CodemodeToolOptions::new(sandbox.clone());
+        code.models = false;
+        registry
+            .install(Arc::new(create_codemode_extension(code)))
+            .unwrap();
+        let models = Models::default();
+        models.set_provider(faux_provider(Default::default()).provider);
+        let mut options = HarnessOptions::new(registry, models);
+        options.default_document_retention_ms = retention;
+        let context = Context::default();
+        let harness = Harness::open(Arc::new(MemoryStorage::default()), options, &context)
+            .await
+            .unwrap();
+        let root = harness
+            .root(
+                ConversationOptions {
+                    agent: Some(
+                        JsonObject::try_from_value(
+                            pi_chord::json::parse(
+                                r#"{"model":{"provider":"faux","modelId":"faux-1"}}"#,
+                            )
+                            .unwrap(),
+                        )
+                        .unwrap(),
+                    ),
+                    ..Default::default()
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        let conversation = root.id;
+        let source: Vec<u16> = "// @options: {\"timeout_ms\":5000}\r\nconst value='"
+            .encode_utf16()
+            .chain([0xd800])
+            .chain("'; store('raw', value); return value;".encode_utf16())
+            .collect();
+        let task = harness
+            .scheduler()
+            .session()
+            .commit(
+                move |tx| async move {
+                    let mut arguments = JsonObject::default();
+                    arguments.insert(
+                        "code".into(),
+                        JsonValue::String(JsonString::from_utf16(source)),
+                    );
+                    let call = ToolCall::new("raw", "codemode", arguments.into_value());
+                    let mut message = JsonObject::default();
+                    message.insert("role".into(), "assistant".into());
+                    message.insert("content".into(), pi_chord::json::to_value(&[call]).unwrap());
+                    let mut entry = EntryDraft::new("pi.assistant");
+                    entry.model = Some(vec![message.into_value()]);
+                    let entry = tx.append_entry(conversation, entry).await?;
+                    let mut options = TaskOptions::new(TaskOwnership::Conversation);
+                    options.conversation_id = Some(conversation);
+                    let id = tx
+                        .create_task(&TOOL_TASK, ToolTaskInput::model(entry.id, "raw"), options)
+                        .await?;
+                    tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
+                        live.tools = Some(vec![ToolSlot {
+                            progress: SlotProgress::new("raw", "codemode"),
+                            task_id: Some(id.untyped()),
+                            entry: None,
+                        }]);
+                        Ok(())
+                    })?;
+                    Ok(id.untyped())
+                },
+                &context,
+            )
+            .await
+            .unwrap();
+        let record = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            harness.wait_for_task(task, &context),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            matches!(
+                &record.state,
+                TaskState::Terminal {
+                    outcome: TaskOutcome::Completed { .. }
+                }
+            ),
+            "{:?}",
+            record.state
+        );
+        let stored = harness
+            .snapshot(&CODEMODE_STORE_DOC, conversation, &context)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stored.values.value()["raw"].as_string().unwrap().units(),
+            &[0xd800]
+        );
+        harness.close(&context).await.unwrap();
+        sandbox.0.close().await;
+    }
+}
+
+#[tokio::test]
 async fn native_sqlite_restart_replays_finished_calls_and_resumes_safe_owned_work() {
     use pi_durable::storage::sqlite::open_native_sqlite_storage;
     for retention in [600000.0, 0.0] {

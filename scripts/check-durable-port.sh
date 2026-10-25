@@ -9,6 +9,7 @@ python3 scripts/durable-inventory.py "$reference" --check
 cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --check
 rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
 rustfmt --edition 2024 --check crates/pi-json/src/strict.rs crates/pi-json/tests/strict_cow.rs crates/pi-codemode/src/json_run.rs crates/pi-codemode/tests/json_run.rs
+rustfmt --edition 2024 --check crates/pi-codemode/src/source/utf16.rs crates/pi-codemode/tests/source_utf16.rs
 rustfmt --edition 2024 --check crates/pi-json/src/diff.rs crates/pi-coding-agent/src/core/tools/jsdiff.rs
 cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-codemode -p pi-jsrt
 cargo test --locked -p pi-durable --features stock-test-probes --test transaction_probes

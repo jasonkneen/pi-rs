@@ -62,6 +62,104 @@ fn options() -> RunOptions {
 }
 
 #[tokio::test]
+async fn source_validation_preserves_units_but_respects_provider_errors_and_changed_schemas() {
+    use pi_durable::harness::tool::{ExecutableTool, ToolCall};
+    let sandbox = Arc::new(NativeSandbox::new().unwrap());
+    let mut config = CodemodeToolOptions::new(sandbox.clone());
+    config.models = false;
+    let mut tool = create_codemode_tool(config);
+    let mut arguments = JsonObject::default();
+    let source = JsonString::from_utf16(
+        "return '"
+            .encode_utf16()
+            .chain([0xd800])
+            .chain("';".encode_utf16())
+            .collect(),
+    );
+    arguments.insert("code".into(), JsonValue::String(source.clone()));
+    let mut call = ToolCall::new("source", "codemode", arguments.value().clone());
+    let validated = tool
+        .validate_arguments(&call, arguments.value().clone())
+        .unwrap();
+    assert_eq!(
+        validated.value()["code"].as_string().unwrap().units(),
+        source.units()
+    );
+    call.extra.insert(
+        "argumentsError".into(),
+        "provider rejected the arguments".into(),
+    );
+    assert!(
+        tool.validate_arguments(&call, arguments.value().clone())
+            .unwrap_err()
+            .to_string()
+            .contains("provider rejected the arguments")
+    );
+    call.extra = JsonObject::default();
+    tool.declaration
+        .parameters
+        .as_object_mut()
+        .unwrap()
+        .insert("maxProperties".into(), 0.into());
+    assert!(
+        tool.validate_arguments(&call, arguments.value().clone())
+            .is_err()
+    );
+    sandbox.0.close().await;
+}
+
+#[tokio::test]
+async fn native_sandbox_accepts_raw_unpaired_source_in_literals_regexes_and_templates() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let mut source: Vec<u16> = "const value = '".encode_utf16().chain([0xd800]).collect();
+        source.extend("'; const pattern = /".encode_utf16());
+        source.push(0xdc01);
+        source.extend("/; const raw = String.raw`".encode_utf16());
+        source.push(0xd802);
+        source.extend("`; return [value, pattern.source, raw];".encode_utf16());
+        let run = sandbox
+            .start(JsonString::from_utf16(source), options())
+            .unwrap();
+        let result = run.result().await.unwrap();
+        assert_eq!(result["ok"], JsonValue::Bool(true), "{result}");
+        assert_eq!(result["value"].as_array().unwrap().len(), 3);
+        for (value, unit) in result["value"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip([0xd800, 0xdc01, 0xd802])
+        {
+            assert_eq!(value.as_string().unwrap().units(), &[unit]);
+        }
+        sandbox.0.close().await;
+    }
+}
+
+#[tokio::test]
+async fn native_utf16_source_loops_still_observe_deadlines() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let mut config = options();
+        config.timeout_ms = Some(100.0);
+        let source: Vec<u16> = "//"
+            .encode_utf16()
+            .chain([0xd800])
+            .chain("\nwhile (true) await null;".encode_utf16())
+            .collect();
+        let run = sandbox
+            .start(JsonString::from_utf16(source), config)
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), run.result())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result["error"]["kind"].string_equals("timeout"), "{result}");
+        sandbox.0.close().await;
+    }
+}
+
+#[tokio::test]
 async fn native_sandbox_preserves_unpaired_units_in_output_values_and_store_writes() {
     for remote in [false, true] {
         let sandbox = sandbox(remote);

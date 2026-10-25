@@ -186,7 +186,7 @@ impl Sandbox for NativeSandbox {
         native.signal = Some(controller.signal());
         let run = self
             .0
-            .start_json(&utf8(&code)?, native)
+            .start_json_utf16(code.units(), native)
             .map_err(|error| Error::message(error.to_string()))?;
         let handle = run.handle();
         let cancel = controller.clone();

@@ -257,11 +257,8 @@ pub fn execute(
     source: JsonString,
 ) -> StorageFuture<ToolExecutionResult> {
     eager(async move {
-        let source = source
-            .to_string_checked()
-            .map_err(|e| Error::message(e.to_string()))?;
-        let parsed = pi_codemode::parse_codemode_source(&source)
-            .map_err(|error| Error::host(error.name(), error.message.into()))?;
+        let parsed = pi_codemode::parse_codemode_source_utf16(source.units())
+            .map_err(|error| Error::host(error.name(), error.message))?;
         let agent = api.agent(&context).await?;
         let tools = agent
             .callable_tools()?
@@ -400,7 +397,7 @@ pub fn execute(
         let idle = sender.clone();
         let controller = pi_chord::AbortController::new();
         let run = options.sandbox.start(
-            parsed.code.into(),
+            parsed.code,
             RunOptions {
                 start: found.start.clone(),
                 timeout_ms: remaining,
