@@ -1,4 +1,4 @@
-import {installSessionBinding} from "./durable-session-adapter.mjs";
+import {installSessionBinding,getDefaultDocumentRetention} from "./durable-session-adapter.mjs";
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
@@ -65,7 +65,8 @@ nativeTransport.event("signal",frame=>runtime(frame.runtime).controller.abort(ne
 nativeTransport.event("report",frame=>{try{Promise.resolve(harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info)).catch(()=>{});}catch{}});
 nativeTransport.register("timerFire",id=>objectFor(id)());
 nativeTransport.register("setTimer",({harness,timer,delay,background})=>{
- const disarm=harnesses.get(harness).options.setTimer(()=>nativeTransport.sync("hostTimerFire",{timer}),delay,{background});
+ const arm=harnesses.get(harness)?.options.setTimer??sessions.get(harness)?.setTimer;
+ const disarm=arm(()=>nativeTransport.sync("hostTimerFire",{timer}),delay,{background});
  return disarm===undefined?null:handle(disarm);
 });
 nativeTransport.register("disarmTimer",id=>{objectFor(id)();return null;});
@@ -173,7 +174,7 @@ export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
- const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,setTimer:options.setTimer!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,setTimer:options.setTimer!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:getDefaultDocumentRetention()},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);
@@ -199,6 +200,8 @@ export const Harness={async open(storage,options,context){
   commitWith:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
   closed,close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
   unloadDocuments:()=>call("unloadDocuments",{harness:id}),
+  readOnLine:callback=>readSessionLine(id,callback),
+  get documentCacheSizes(){return nativeTransport.sync("session.cache",{harness:id});},
  };
  function submissionHandle(submission){return {id:submission,status:context=>call("submission.status",{harness:id,submission},context),wait:context=>call("submission.wait",{harness:id,submission},context),abort:context=>call("submission.abort",{harness:id,submission,handle:true},context)};}
  function conversation(conversationId){return{id:conversationId,compact:(instructions,context)=>call("conversation.compact",{harness:id,conversation:conversationId,instructions},context),context:(context,options)=>call("conversationContext",{harness:id,conversation:conversationId,at:options?.at},context),fork:(at,options,context)=>call("forkConversation",{harness:id,conversation:conversationId,at,options:conversationOptions(options)},context).then(conversation),reset:async(handoff,context)=>{const entry={kind:"pi.reset",head:"self"};if(handoff!==undefined)entry.model=[{role:"user",content:handoff,timestamp:options.now?.()??Date.now()}];await call("submission.submit",{harness:id,conversation:conversationId,draft:{type:"write",entry}},context);},watch:context=>call("view.watch",{harness:id,conversation:conversationId},context).then(graphWatch),abort:(context,options)=>call("conversation.abort",{harness:id,conversation:conversationId,background:options?.background},context),agent:context=>call("conversationAgent",{harness:id,conversation:conversationId},context).then(hydrateAgent),submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change:configuration(change)},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
@@ -356,6 +359,12 @@ nativeTransport.register("compactionHook",async(args,context)=>{
 
 // Pure Session transport. It never creates a Harness or starts a scheduler.
 const sessions=new Map();
+nativeTransport.register("session.readLine",async callback=>({hostResult:valueHandle(await objectFor(callback)())}));
+function readSessionLine(id,callback){
+ const capability=temporaryHandle(callback);
+ const operation=call("session.readLine",{harness:id,callback:capability.id}).then(result=>objectFor(result.hostResult)).finally(capability.release);
+ operation.catch(()=>{});return operation;
+}
 nativeTransport.register("session.now",id=>sessions.get(id).now());
 nativeTransport.register("session.retention",id=>{const value=sessions.get(id).retention();return typeof value==="number"&&!Number.isFinite(value)?String(value):value??null;});
 nativeTransport.register("session.conversationCreated",args=>captureChange(args.tx,tx=>sessions.get(args.harness).session.deref().conversationCreated(tx,args.record)));
@@ -364,7 +373,7 @@ nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.dere
 installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
  const storageId=storageNext++;storages.set(storageId,storage);
  const expected=nativeTransport.nextId;sessions.set(expected,{session:new WeakRef(session),now,retention,setTimer});
- const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly});
+ const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly,hostTimers:setTimer!==undefined});
  let closed;
  return {
   ...documents({harness:id},session),
@@ -374,12 +383,15 @@ installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
   closed:()=>closed??=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end),
   close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
   unloadDocuments:()=>call("unloadDocuments",{harness:id}),
+  readOnLine:callback=>readSessionLine(id,callback),
   cache:()=>nativeTransport.sync("session.cache",{harness:id}),
  };
 });
 export async function shutdownSessions(){
  const native=await call("stats");
- if(native.nativeSessionOpens===0||native.nativeHarnessOpens!==0||native.phases!==0)throw new Error("Stock Session tests bypassed the native kernel or created a Harness");
+ const mixed=process.env.PI_DURABLE_NATIVE_SESSION_HARNESS==="1";
+ if(native.nativeSessionOpens===0||(!mixed&&native.nativeHarnessOpens!==0)||native.phases!==0)throw new Error("Stock Session tests bypassed the native kernel or dispatched source phases");
+ if(mixed&&(native.nativeHarnessOpens===0||native.nativeModelRequests===0||native.nativeToolCalls===0))throw new Error("Mixed Session/Harness stock tests bypassed native services");
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify({...stats,...native}));
  await nativeTransport.close();
 }

@@ -47,6 +47,10 @@ impl Hub {
                         }))
                     })),
                     read_only: request["readOnly"].as_bool().unwrap_or(false),
+                    set_timer: request["hostTimers"]
+                        .as_bool()
+                        .unwrap_or(false)
+                        .then(|| self.host_set_timer(id)),
                     conversation_created: Some(Arc::new(move |tx, record| {
                         let hub = created.upgrade();
                         Box::pin(async move {
@@ -93,6 +97,14 @@ impl Hub {
                     ("sweeps", encode(&sizes.sweep_jobs)),
                 ]);
                 Ok(Box::pin(async move { Ok(Some(value)) }))
+            }
+            "session.readLine" => {
+                let session = self.session(&request)?;
+                let callback: u64 = field(&request, "callback")?;
+                let hub = self.clone();
+                Ok(session.read_on_line(move || async move {
+                    hub.call("session.readLine", encode(&callback)).await
+                }))
             }
             other => Err(Error::message(format!("Unknown Session method {other}"))),
         }

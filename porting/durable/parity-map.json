@@ -2664,11 +2664,14 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/examples/support/session_bridge.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 21 unchanged cases pass in both retention modes, 42 executions: /tmp/pi-durable-stock-retention-verified.log. Mixed Harness cases use native generation/tools/events with zero source phases. Original host timer primitives, model collections and user callbacks remain capabilities."
       ]
     },
     {

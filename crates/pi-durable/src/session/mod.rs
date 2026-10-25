@@ -246,7 +246,8 @@ impl Session {
     pub(crate) fn guarded_storage(&self) -> Arc<dyn Storage> {
         self.inner.storage.clone()
     }
-    pub(crate) fn read_on_line<T, F, Fut>(&self, read: F) -> StorageFuture<T>
+    /// Run a read job in admission order with commits and cache sweeps.
+    pub fn read_on_line<T, F, Fut>(&self, read: F) -> StorageFuture<T>
     where
         T: Send + 'static,
         F: FnOnce() -> Fut + Send + 'static,
