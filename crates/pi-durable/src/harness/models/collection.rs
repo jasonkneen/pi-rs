@@ -111,6 +111,9 @@ pub trait ModelStream: Send {
     fn result(&mut self) -> ModelFuture<'_, AssistantValueRef>;
 }
 pub trait ModelCollection: Send + Sync {
+    fn codemode_models(&self) -> Option<Arc<dyn crate::codemode::models::CodemodeModels>> {
+        None
+    }
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>>;
     fn stream_simple(
         &self,
@@ -177,6 +180,11 @@ impl ModelStream for SdkStream {
     }
 }
 impl ModelCollection for SdkCollection {
+    fn codemode_models(&self) -> Option<Arc<dyn crate::codemode::models::CodemodeModels>> {
+        Some(Arc::new(crate::codemode::models::SdkCodemodeModels(
+            self.0.clone(),
+        )))
+    }
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
         let provider = reference
             .provider

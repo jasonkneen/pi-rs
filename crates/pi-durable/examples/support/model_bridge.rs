@@ -138,6 +138,12 @@ impl ModelStream for HostStream {
     }
 }
 impl ModelCollection for HostCollection {
+    fn codemode_models(&self) -> Option<Arc<dyn pi_durable::codemode::models::CodemodeModels>> {
+        Some(Arc::new(super::codemode_bridge::HostCodemodeModels {
+            hub: self.hub.clone(),
+            id: self.id,
+        }))
+    }
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
         let value = self.hub()?.sync(
             "models.get",

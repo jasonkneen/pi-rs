@@ -11,6 +11,9 @@ pub(super) struct ToolBridge {
     pub executions: AtomicU64,
     pub searches: AtomicU64,
     pub codemode_formats: AtomicU64,
+    pub model_effects: AtomicU64,
+    pub typed_requests: AtomicU64,
+    pub catalog_queries: AtomicU64,
     definitions: Mutex<HashMap<u64, AnyTask>>,
     contents: Mutex<HashMap<u64, ToolContent>>,
     content_hosts: Mutex<HashMap<u64, u64>>,
@@ -427,6 +430,26 @@ impl Hub {
             native.execute = Arc::new(move |args, api, context| {
                 if let Some(hub) = hub.upgrade() {
                     hub.tool.searches.fetch_add(1, Ordering::Relaxed);
+                }
+                execute(args, api, context)
+            });
+            tool.executable = Some(Arc::new(native));
+        } else if let Some(name) = value["nativeBuiltin"].to_utf8().filter(|name| {
+            [
+                pi_durable::codemode::models::CLASSIFY_TOOL,
+                pi_durable::codemode::models::GENERATE_IMAGES_TOOL,
+            ]
+            .contains(&name.as_str())
+        }) {
+            let mut native = pi_durable::codemode::models::create_model_tools()
+                .into_iter()
+                .find(|tool| tool.declaration.name.to_string_lossy() == name)
+                .unwrap();
+            let execute = native.execute.clone();
+            let hub = Arc::downgrade(self);
+            native.execute = Arc::new(move |args, api, context| {
+                if let Some(hub) = hub.upgrade() {
+                    hub.tool.model_effects.fetch_add(1, Ordering::Relaxed);
                 }
                 execute(args, api, context)
             });

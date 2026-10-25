@@ -307,9 +307,22 @@
     },
     {
       "reference": "packages/durable/src/codemode/models.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/models.rs",
+        "crates/pi-durable/src/codemode/models/tests.rs",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/examples/support/codemode_bridge.rs"
+      ],
+      "evidence": [
+        "Native typed model catalogs, header stripping, configured-model re-resolution, classifier/image context validation, hidden unsafe model tools, structured results and usage; native SDK delegates through request scopes preserving cancellation and telemetry",
+        "All seven original model cases pass unfiltered per mode, with seventeen native model-tool executions, sixteen actual provider callbacks, eleven native catalog calls and 257 native memory commits per mode",
+        "The original CodemodeCall replay driver, its four-slot scheduling, VM and provider I/O remain host capabilities in this modular gate; native replay/slot driver and embedded exports remain open",
+        "Two native regressions prove configured authority overrides script-supplied URL/headers and preserve unpaired UTF16 units in model/question/object-key errors",
+        "/tmp/pi-durable-stock-codemode-models-verified.log",
+        "/tmp/pi-durable-codemode-models-native.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/codemode/output.ts",
@@ -1536,9 +1549,22 @@
     },
     {
       "reference": "packages/durable/test/codemode-models.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/codemode/models.rs",
+        "crates/pi-durable/src/codemode/models/tests.rs",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/examples/support/codemode_bridge.rs"
+      ],
+      "evidence": [
+        "Native typed model catalogs, header stripping, configured-model re-resolution, classifier/image context validation, hidden unsafe model tools, structured results and usage; native SDK delegates through request scopes preserving cancellation and telemetry",
+        "All seven original model cases pass unfiltered per mode, with seventeen native model-tool executions, sixteen actual provider callbacks, eleven native catalog calls and 257 native memory commits per mode",
+        "The original CodemodeCall replay driver, its four-slot scheduling, VM and provider I/O remain host capabilities in this modular gate; native replay/slot driver and embedded exports remain open",
+        "Two native regressions prove configured authority overrides script-supplied URL/headers and preserve unpaired UTF16 units in model/question/object-key errors",
+        "/tmp/pi-durable-stock-codemode-models-verified.log",
+        "/tmp/pi-durable-codemode-models-native.log",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/codemode.test.ts",

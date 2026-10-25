@@ -544,6 +544,9 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method == "codemode.catalog" {
+            return self.codemode_catalog(request, context);
+        }
         if method == "codemode.format" {
             return self.format_codemode(request);
         }
@@ -1320,6 +1323,18 @@ impl Hub {
                 value.as_object_mut().unwrap().insert(
                     "nativeCodemodeFormats".into(),
                     encode(&self.tool.codemode_formats.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeModelEffects".into(),
+                    encode(&self.tool.model_effects.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeTypedRequests".into(),
+                    encode(&self.tool.typed_requests.load(Ordering::Relaxed)),
+                );
+                value.as_object_mut().unwrap().insert(
+                    "nativeCatalogQueries".into(),
+                    encode(&self.tool.catalog_queries.load(Ordering::Relaxed)),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }

@@ -175,6 +175,18 @@ impl Hub {
         context: Context,
     ) -> Result<StorageFuture<Option<JsonValue>>> {
         match method {
+            "builtin.modelExports" => {
+                use pi_durable::codemode::models::*;
+                let value = object([
+                    ("description", encode(&MODELS_DESCRIPTION)),
+                    ("catalog", encode(&CATALOG_GLOBALS)),
+                    ("prefix", encode(&CODEMODE_INTERNAL_PREFIX)),
+                    ("classify", encode(&CLASSIFY_TOOL)),
+                    ("images", encode(&GENERATE_IMAGES_TOOL)),
+                    ("concurrency", encode(&MAX_CONCURRENT_MODEL_CALLS)),
+                ]);
+                Ok(Box::pin(async move { Ok(Some(value)) }))
+            }
             "builtin.stats" => {
                 let stats = object([
                     (
@@ -244,6 +256,18 @@ impl Hub {
                     Some("bash") => create_bash_tool(Default::default()),
                     Some("powershell") => create_powershell_tool(Default::default()),
                     Some("tool_search") => pi_durable::tool_search::create_tool_search_tool(),
+                    Some(name)
+                        if [
+                            pi_durable::codemode::models::CLASSIFY_TOOL,
+                            pi_durable::codemode::models::GENERATE_IMAGES_TOOL,
+                        ]
+                        .contains(&name) =>
+                    {
+                        pi_durable::codemode::models::create_model_tools()
+                            .into_iter()
+                            .find(|tool| tool.declaration.name.to_string_lossy() == name)
+                            .unwrap()
+                    }
                     _ => return Err(Error::message("Unknown built-in tool")),
                 };
                 let mut value = encode(&tool.declaration);
