@@ -7,7 +7,6 @@ use crate::harness::{
     types::{ModelRef, UserInput},
 };
 use crate::{wire, *};
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock};
 
@@ -115,7 +114,7 @@ pub type GenerationTask =
     Task<GenerationInput, GenerationCheckpoint, GenerationResult, GenerationHooks>;
 pub type GenerationPromptInput<T, S> =
     PromptInput<Agent<T, S>, GenerationRuntime, dyn crate::env::ExecutionEnv>;
-pub type GenerationMessage = Arc<Mutex<JsonObject>>;
+pub type GenerationMessage = crate::harness::models::AssistantValueRef;
 pub type BeforeRequest = Arc<
     dyn Fn(
             Vec<Arc<JsonValue>>,
@@ -150,25 +149,51 @@ pub struct GenerationHooks {
     pub after_response: Option<AfterResponse>,
     pub on_yield: Option<OnYield>,
     pub after_tools: Option<AfterTools>,
+    pub provider: Option<Arc<dyn GenerationHookProvider>>,
+}
+pub trait GenerationHookProvider: Send + Sync {
+    fn before_request(&self) -> Result<Option<BeforeRequest>> {
+        Ok(None)
+    }
+    fn after_response(&self) -> Result<Option<AfterResponse>> {
+        Ok(None)
+    }
+    fn on_yield(&self) -> Result<Option<OnYield>> {
+        Ok(None)
+    }
+    fn after_tools(&self) -> Result<Option<AfterTools>> {
+        Ok(None)
+    }
 }
 pub(super) static BEFORE_REQUEST: LazyLock<HookKey<GenerationHooks, BeforeRequest>> =
     LazyLock::new(|| {
-        HookKey::new("beforeRequest", |h: Arc<GenerationHooks>| {
-            h.before_request.clone()
+        HookKey::try_new("beforeRequest", |h: Arc<GenerationHooks>| {
+            h.provider
+                .as_ref()
+                .map_or_else(|| Ok(h.before_request.clone()), |p| p.before_request())
         })
     });
 pub(super) static AFTER_RESPONSE: LazyLock<HookKey<GenerationHooks, AfterResponse>> =
     LazyLock::new(|| {
-        HookKey::new("afterResponse", |h: Arc<GenerationHooks>| {
-            h.after_response.clone()
+        HookKey::try_new("afterResponse", |h: Arc<GenerationHooks>| {
+            h.provider
+                .as_ref()
+                .map_or_else(|| Ok(h.after_response.clone()), |p| p.after_response())
         })
     });
-pub(super) static ON_YIELD: LazyLock<HookKey<GenerationHooks, OnYield>> =
-    LazyLock::new(|| HookKey::new("onYield", |h: Arc<GenerationHooks>| h.on_yield.clone()));
+pub(super) static ON_YIELD: LazyLock<HookKey<GenerationHooks, OnYield>> = LazyLock::new(|| {
+    HookKey::try_new("onYield", |h: Arc<GenerationHooks>| {
+        h.provider
+            .as_ref()
+            .map_or_else(|| Ok(h.on_yield.clone()), |p| p.on_yield())
+    })
+});
 pub(super) static AFTER_TOOLS: LazyLock<HookKey<GenerationHooks, AfterTools>> =
     LazyLock::new(|| {
-        HookKey::new("afterTools", |h: Arc<GenerationHooks>| {
-            h.after_tools.clone()
+        HookKey::try_new("afterTools", |h: Arc<GenerationHooks>| {
+            h.provider
+                .as_ref()
+                .map_or_else(|| Ok(h.after_tools.clone()), |p| p.after_tools())
         })
     });
 pub(super) type Running = RunningTask<GenerationInput, GenerationCheckpoint, GenerationResult>;
@@ -185,14 +210,8 @@ pub(super) struct ResponseRequest {
 pub(super) fn resolve(
     runtime: &GenerationRuntime,
     reference: &ModelRef,
-) -> Result<Option<pi_ai::Model>> {
-    let models = runtime.models()?;
-    Ok(reference
-        .provider
-        .to_string_checked()
-        .ok()
-        .zip(reference.model_id.to_string_checked().ok())
-        .and_then(|(provider, id)| models.get_model(&provider, &id)))
+) -> Result<Option<crate::harness::models::ResolvedModel>> {
+    runtime.model_collection()?.get_model(reference)
 }
 pub(super) fn joined(parts: impl IntoIterator<Item = JsonString>) -> JsonString {
     let mut text = JsonString::default();

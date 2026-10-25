@@ -10,11 +10,11 @@ use crate::harness::{
 pub(super) async fn append_assistant(
     tx: &Transaction,
     conversation: ConversationId,
-    message: JsonObject,
+    message: GenerationMessage,
 ) -> Result<EntryRecord> {
-    let provider: JsonString = wire::field(message.value(), "provider").map_err(Error::message)?;
-    let model: JsonString = wire::field(message.value(), "model").map_err(Error::message)?;
-    let usage: JsonObject = wire::field(message.value(), "usage").map_err(Error::message)?;
+    let provider: JsonString = message.required("provider")?;
+    let model: JsonString = message.required("model")?;
+    let usage: JsonObject = message.required("usage")?;
     record_usage(
         tx,
         conversation,
@@ -24,7 +24,7 @@ pub(super) async fn append_assistant(
     )
     .await?;
     let mut entry = EntryDraft::new("pi.assistant");
-    entry.model = Some(vec![message.into_value()]);
+    entry.model = Some(vec![message.copy_json()?.into_value()]);
     tx.append_entry(conversation, entry).await
 }
 pub async fn convert_partial(
@@ -38,7 +38,12 @@ pub async fn convert_partial(
         .and_then(|generation| generation.message)
     {
         message.insert("stopReason".into(), wire::encode(&"aborted"));
-        append_assistant(tx, conversation, message).await?;
+        append_assistant(
+            tx,
+            conversation,
+            crate::harness::models::AssistantValue::json(message),
+        )
+        .await?;
     }
     Ok(())
 }
@@ -153,7 +158,7 @@ fn failed(text: JsonString, reason: &str) -> Next {
 pub(super) async fn classify(
     runtime: GenerationRuntime,
     request: ResponseRequest,
-    message: JsonObject,
+    message: GenerationMessage,
     context: Context,
 ) -> Result<()> {
     runtime.signal().check()?;
@@ -165,10 +170,12 @@ pub(super) async fn classify(
         cutoff,
         ..
     } = request.clone();
-    if message.value()["stopReason"].string_equals("deferred")
-        && let Some(handle) = message.get(&JsonString::from("deferred"))
+    if message
+        .field("stopReason")?
+        .is_some_and(|value| value.string_equals("deferred"))
+        && let Some(handle) = message.field("deferred")?
     {
-        let handle = JsonObject::try_from_value(handle.clone()).map_err(Error::message)?;
+        let handle = JsonObject::try_from_value(handle).map_err(Error::message)?;
         let poll_at = (runtime.now()? + handle.value()["pollAfterMs"].as_f64().unwrap_or(5000.0))
             .max(request.poll_at.map_or(f64::NEG_INFINITY, |at| at + 1.0));
         return runtime
@@ -199,7 +206,7 @@ pub(super) async fn classify(
             )
             .await;
     }
-    let shared_message = Arc::new(parking_lot::Mutex::new(message));
+    let shared_message = message;
     let current = runtime.clone();
     let callback_context = context.clone();
     let passed = shared_message.clone();
@@ -209,15 +216,13 @@ pub(super) async fn classify(
             hook(passed.clone(), current.clone(), callback_context.clone())
         })
         .await?;
-    let message = shared_message.lock().clone();
-    let calls = message.value()["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|block| block["type"].string_equals("toolCall"))
+    let message = shared_message.clone();
+    let calls = message
+        .tool_calls()?
+        .iter()
         .map(|block| wire::decode(block).map_err(Error::message))
         .collect::<Result<Vec<crate::harness::tool::ToolCall>>>()?;
-    let stop = message.value()["stopReason"].clone();
+    let stop = message.field("stopReason")?.unwrap_or(JsonValue::Null);
     if stop.string_equals("toolUse") && !calls.is_empty() {
         return super::tools::start_tool_round(runtime, request, message, calls, context).await;
     }
@@ -228,8 +233,28 @@ pub(super) async fn classify(
         return answer(runtime, shared_message, context).await;
     }
     let settings = runtime.settings()?;
-    let provider: pi_ai::AssistantMessage =
-        wire::decode(message.value()).map_err(Error::message)?;
+    let error_text: Option<JsonString> = message
+        .field("errorMessage")?
+        .map(|value| wire::decode(&value).map_err(Error::message))
+        .transpose()?
+        .flatten();
+    let provider = pi_ai::AssistantMessage {
+        stop_reason: if stop.string_equals("error") {
+            pi_ai::StopReason::Error
+        } else {
+            pi_ai::StopReason::Pending
+        },
+        provider: message
+            .required::<JsonString>("provider")?
+            .to_string_checked()
+            .map_err(|error| Error::message(error.to_string()))?,
+        error_message: error_text
+            .as_ref()
+            .map(JsonString::to_string_checked)
+            .transpose()
+            .map_err(|error| Error::message(error.to_string()))?,
+        ..Default::default()
+    };
     let overflow = stop.string_equals("error") && pi_ai::is_context_overflow(&provider, None);
     let policy = crate::harness::compaction::compaction_policy(&settings, &reference)?;
     if overflow && compacted.is_none() && policy.enabled {
@@ -369,7 +394,6 @@ async fn answer(
         })
         .await?;
     let continuation = continuation.lock().clone();
-    let message = message.lock().clone();
     let current = runtime.clone();
     let conversation = runtime.conversation_id();
     let owner = runtime.task_id().untyped();
@@ -423,20 +447,16 @@ pub(super) async fn abort(
 ) -> Result<()> {
     if let GenerationCheckpoint::Poll(poll) = task.checkpoint()
         && let Some(model) = resolve(&runtime, &poll.model)?
-    {
-        let mut options = pi_ai::StreamOptions::default();
-        let scope =
-            crate::harness::models::RequestScope::new(&mut options, runtime.signal(), &context);
-        let handle: pi_ai::DeferredHandle =
-            wire::decode(poll.handle.value()).map_err(Error::message)?;
-        if let Err(error) = runtime
-            .models()?
-            .cancel_deferred(&model, &handle, options)
+        && let Err(error) = runtime
+            .model_collection()?
+            .cancel_deferred(
+                model,
+                poll.handle.clone(),
+                pi_chord::context::with_abort_signal(runtime.signal(), &context),
+            )
             .await
-        {
-            runtime.report_host(Error::message(error.to_string()), "models")?;
-        }
-        drop(scope);
+    {
+        runtime.report_host(error, "models")?;
     }
     let unstarted = if let GenerationCheckpoint::Tools(round) = task.checkpoint() {
         super::tools::read_calls(&runtime, round.assistant, &round.pending, &context).await?

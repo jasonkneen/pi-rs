@@ -3050,7 +3050,6 @@ dependencies = [
 name = "pi-durable"
 version = "1.3.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "futures",

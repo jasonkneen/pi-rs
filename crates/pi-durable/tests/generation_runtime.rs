@@ -18,6 +18,8 @@ use pi_durable::{
     *,
 };
 use std::{sync::Arc, time::Duration};
+#[path = "generation_runtime/collection.rs"]
+mod collection;
 
 struct Section(JsonString);
 impl RegisteredSection for Section {
@@ -50,11 +52,20 @@ struct Opened {
     storage: Arc<MemoryStorage>,
     faux: FauxProviderHandle,
     settings: Arc<Mutex<Settings>>,
+    reports: Arc<Mutex<Vec<Error>>>,
 }
 async fn open(
     retention: u64,
     configure: bool,
     extension: Option<Extension<NativeTool, Section>>,
+) -> Opened {
+    open_with_collection(retention, configure, extension, None).await
+}
+async fn open_with_collection(
+    retention: u64,
+    configure: bool,
+    extension: Option<Extension<NativeTool, Section>>,
+    model_collection: Option<pi_durable::harness::models::ModelCollectionReader>,
 ) -> Opened {
     let models = Models::default();
     let faux = faux_provider(RegisterFauxProviderOptions {
@@ -77,10 +88,14 @@ async fn open(
     })));
     let policy = settings.clone();
     let storage = Arc::new(MemoryStorage::new());
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let reported = reports.clone();
     let scheduler = TaskScheduler::open(
         storage.clone(),
         registry,
         SchedulerOptions {
+            model_collection,
+            on_report: Arc::new(move |error, _| reported.lock().push(error)),
             models: Arc::new(move || Ok(models.clone())),
             settings: Arc::new(move || Ok(policy.lock().clone())),
             settle_outcome: Arc::new(|tx, record, outcome| {
@@ -149,6 +164,7 @@ async fn open(
         storage,
         faux,
         settings,
+        reports,
     }
 }
 async fn submit(opened: &Opened, text: &str) -> SettledSubmissionRecord {

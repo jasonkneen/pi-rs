@@ -82,6 +82,7 @@ pub type EnvironmentResolver = Arc<
 pub struct SchedulerOptions {
     pub settings: SettingsReader,
     pub models: super::models::ModelsReader,
+    pub model_collection: Option<super::models::ModelCollectionReader>,
     pub env: EnvironmentResolver,
     pub conversation: Option<super::conversation::ConversationResolver>,
     pub agent: AgentResolver,
@@ -95,6 +96,7 @@ impl Default for SchedulerOptions {
         let models = pi_ai::models::Models::default();
         Self {
             models: Arc::new(move || Ok(models.clone())),
+            model_collection: None,
             env: Arc::new(|_, _| ready(Ok(None))),
             conversation: None,
             settings: Arc::new(|| Ok(resolve_settings(Default::default()))),
@@ -2317,6 +2319,12 @@ impl TaskDriver for Driver {
     }
     fn models(&self) -> Result<pi_ai::models::Models> {
         super::models::read_models(&self.scheduler.inner.options.models)
+    }
+    fn model_collection(&self) -> Result<Arc<dyn super::models::ModelCollection>> {
+        match &self.scheduler.inner.options.model_collection {
+            Some(reader) => super::models::read_collection(reader),
+            None => self.models().map(super::models::sdk_collection),
+        }
     }
     fn env(&self, context: &Context) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>> {
         let resolve = self.scheduler.inner.options.env.clone();

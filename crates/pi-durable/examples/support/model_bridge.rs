@@ -1,231 +1,292 @@
-//! Original model collections are provider capabilities; Rust owns generation.
+//! Hosted model collections preserve original objects until the native durable writer.
 use super::*;
-use pi_ai::{
-    auth::types::ProviderAuth,
-    models::{Models, Provider},
-    types::{
-        AssistantMessageEvent, AssistantMessageEventStream, DeferredHandle, Model, StreamOptions,
-        TranscriptContext,
-    },
-    utils::event_stream::AssistantMessageEventSender,
+use futures::{
+    FutureExt,
+    future::{BoxFuture, Shared},
 };
+use pi_durable::harness::{models::*, types::ModelRef};
 use std::sync::Weak;
-
 #[derive(Default)]
 pub(super) struct ModelBridge {
-    streams: Mutex<HashMap<u64, AssistantMessageEventSender>>,
+    streams: Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<AssistantValueRef>>>,
+    values: Mutex<HashMap<u64, Weak<AssistantValue>>>,
     pub requests: AtomicU64,
     pub polls: AtomicU64,
     pub cancellations: AtomicU64,
+    pub hook_calls: AtomicU64,
 }
-struct HostProvider {
+pub(super) struct HostAssistant {
+    pub hub: Weak<Hub>,
+    pub id: u64,
+}
+impl HostAssistant {
+    fn hub(&self) -> Result<Arc<Hub>> {
+        self.hub
+            .upgrade()
+            .ok_or_else(|| Error::message("Model value host closed"))
+    }
+}
+impl HostedAssistantValue for HostAssistant {
+    fn field(&self, name: &str) -> Result<Option<JsonValue>> {
+        let value = self.hub()?.sync(
+            "models.field",
+            object([("message", encode(&self.id)), ("name", encode(&name))]),
+        )?;
+        Ok(if value["present"].as_bool() == Some(true) {
+            Some(value["value"].clone())
+        } else {
+            None
+        })
+    }
+    fn set_field(&self, name: JsonString, value: Option<JsonValue>) -> Result<()> {
+        self.hub()?.sync(
+            "models.setField",
+            object([
+                ("message", encode(&self.id)),
+                ("name", encode(&name)),
+                ("present", encode(&value.is_some())),
+                ("value", value.unwrap_or(JsonValue::Null)),
+            ]),
+        )?;
+        Ok(())
+    }
+    fn copy_json(&self) -> Result<JsonObject> {
+        decode(&self.hub()?.sync("models.copy", encode(&self.id))?)
+    }
+    fn has_content(&self) -> Result<bool> {
+        decode(&self.hub()?.sync("models.hasContent", encode(&self.id))?)
+    }
+    fn tool_calls(&self) -> Result<Vec<JsonValue>> {
+        decode(&self.hub()?.sync("models.toolCalls", encode(&self.id))?)
+    }
+}
+struct HostModel(u64);
+struct HostCollection {
     hub: Weak<Hub>,
-    harness: u64,
-    id: String,
-    models: Vec<Model>,
-    auth: ProviderAuth,
+    id: u64,
 }
-struct HostAuth;
-#[async_trait::async_trait]
-impl pi_ai::auth::types::ApiKeyAuth for HostAuth {
-    fn name(&self) -> &str {
-        "Host model collection"
+impl HostCollection {
+    fn hub(&self) -> Result<Arc<Hub>> {
+        self.hub
+            .upgrade()
+            .ok_or_else(|| Error::message("Model collection host closed"))
     }
-    async fn resolve(
-        &self,
-        _: pi_ai::auth::types::ApiKeyResolveInput,
-    ) -> anyhow::Result<Option<pi_ai::auth::types::AuthResult>> {
-        Ok(Some(Default::default()))
-    }
-}
-impl HostProvider {
     fn invoke(
         &self,
         method: &'static str,
-        model: &Model,
+        model: ResolvedModel,
         request: JsonValue,
-        options: StreamOptions,
-    ) -> AssistantMessageEventStream {
-        let (sender, stream) = AssistantMessageEventStream::new();
-        let Some(hub) = self.hub.upgrade() else {
-            sender.end(Some(pi_ai::AssistantMessage {
-                stop_reason: pi_ai::StopReason::Error,
-                error_message: Some("Model host closed".into()),
-                ..Default::default()
-            }));
-            return stream;
-        };
-        if method == "streamSimple" {
-            hub.models.requests.fetch_add(1, Ordering::Relaxed);
-        } else {
-            hub.models.polls.fetch_add(1, Ordering::Relaxed);
-        }
-        let id = hub.next.fetch_add(1, Ordering::Relaxed);
-        hub.models.streams.lock().insert(id, sender.clone());
-        let operation = hub.call(
-            "models.request",
-            object([
-                ("stream", encode(&id)),
-                ("harness", encode(&self.harness)),
-                ("method", encode(&method)),
-                ("model", encode(model)),
-                ("request", request),
-                ("options", encode_options(&options)),
-                ("aborted", encode(&options.is_aborted())),
-            ]),
-        );
-        let model = model.clone();
-        tokio::spawn(async move {
-            let signal = options.signal.unwrap_or_default();
+        options: JsonObject,
+        context: Context,
+        stream: Option<u64>,
+    ) -> StorageFuture<AssistantValueRef> {
+        let operation = (|| {
+            let hub = self.hub()?;
+            let model = model.value::<HostModel>()?.0;
+            let id = stream.unwrap_or_else(|| hub.next.fetch_add(1, Ordering::Relaxed));
+            let signal = context.abort_signal().cloned();
+            let operation = hub.call_context(
+                "models.request",
+                object([
+                    ("collection", encode(&self.id)),
+                    ("stream", encode(&id)),
+                    ("method", encode(&method)),
+                    ("model", encode(&model)),
+                    ("request", request),
+                    ("options", encode(&options)),
+                    (
+                        "aborted",
+                        encode(&signal.as_ref().is_some_and(|signal| signal.aborted())),
+                    ),
+                ]),
+                &context,
+            );
+            Ok::<_, Error>((hub, id, signal, operation))
+        })();
+        Box::pin(async move {
+            let (hub, id, signal, operation) = operation?;
             tokio::pin!(operation);
-            let result = tokio::select! {
-                result=&mut operation=>result,
-                _=signal.cancelled()=>{hub.emit(object([("type",encode(&"models.signal")),("stream",encode(&id))]));operation.await}
+            let result = if let Some(signal) = signal {
+                tokio::select! {result=&mut operation=>result,_=signal.cancelled()=>{hub.emit(object([("type",encode(&"models.signal")),("stream",encode(&id))]));operation.await}}
+            } else {
+                operation.await
             };
-            let result = result
+            result
                 .and_then(|value| value.ok_or_else(|| Error::message("Model returned undefined")))
-                .and_then(|value| decode::<pi_ai::AssistantMessage>(&value));
-            let message = result.unwrap_or_else(|error| pi_ai::AssistantMessage {
-                stop_reason: pi_ai::StopReason::Error,
-                error_message: Some(error.to_string()),
-                ..pi_ai::AssistantMessage::empty_for(&model, 0)
-            });
-            sender.end(Some(message));
-            hub.models.streams.lock().remove(&id);
-        });
-        stream
+                .and_then(|value| hub.host_message(decode(&value)?))
+        })
     }
 }
-#[async_trait::async_trait]
-impl Provider for HostProvider {
-    fn id(&self) -> &str {
-        &self.id
+struct HostStream {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<AssistantValueRef>,
+    result: Shared<BoxFuture<'static, Result<AssistantValueRef>>>,
+}
+impl ModelStream for HostStream {
+    fn next(&mut self) -> ModelFuture<'_, Option<AssistantValueRef>> {
+        Box::pin(async move { Ok(self.receiver.recv().await) })
     }
-    fn name(&self) -> &str {
-        &self.id
+    fn result(&mut self) -> ModelFuture<'_, AssistantValueRef> {
+        Box::pin(self.result.clone())
     }
-    fn auth(&self) -> &ProviderAuth {
-        &self.auth
-    }
-    fn get_models(&self) -> Vec<Model> {
-        self.models.clone()
-    }
-    fn stream(
-        &self,
-        model: &Model,
-        context: &TranscriptContext,
-        options: StreamOptions,
-    ) -> AssistantMessageEventStream {
-        self.stream_simple(model, context, options)
+}
+impl ModelCollection for HostCollection {
+    fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
+        let value = self.hub()?.sync(
+            "models.get",
+            object([
+                ("collection", encode(&self.id)),
+                ("reference", encode(reference)),
+            ]),
+        )?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let window = match value["contextWindow"].to_utf8().as_deref() {
+            Some("Infinity") => f64::INFINITY,
+            Some("-Infinity") => f64::NEG_INFINITY,
+            Some("NaN") => f64::NAN,
+            _ => field(&value, "contextWindow")?,
+        };
+        Ok(Some(ResolvedModel::new(
+            reference.clone(),
+            window,
+            HostModel(field(&value, "model")?),
+        )))
     }
     fn stream_simple(
         &self,
-        model: &Model,
-        context: &TranscriptContext,
-        options: StreamOptions,
-    ) -> AssistantMessageEventStream {
-        self.invoke("streamSimple", model, encode(context), options)
-    }
-    fn supports_fetch_deferred(&self) -> bool {
-        true
+        model: ResolvedModel,
+        messages: Vec<Arc<JsonValue>>,
+        options: JsonObject,
+        context: Context,
+    ) -> StorageFuture<Box<dyn ModelStream>> {
+        let operation = (|| {
+            let hub = self.hub()?;
+            hub.models.requests.fetch_add(1, Ordering::Relaxed);
+            let id = hub.next.fetch_add(1, Ordering::Relaxed);
+            let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+            hub.models.streams.lock().insert(id, sender);
+            let operation = self.invoke(
+                "streamSimple",
+                model,
+                object([("messages", encode(&messages))]),
+                options,
+                context,
+                Some(id),
+            );
+            Ok::<_, Error>((hub, id, receiver, operation))
+        })();
+        Box::pin(async move {
+            let (hub, id, receiver, operation) = operation?;
+            let (send, result) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                let result = operation.await;
+                hub.models.streams.lock().remove(&id);
+                let _ = send.send(result);
+            });
+            let result = async move {
+                result
+                    .await
+                    .map_err(|error| Error::message(error.to_string()))?
+            }
+            .boxed()
+            .shared();
+            Ok(Box::new(HostStream { receiver, result }) as Box<dyn ModelStream>)
+        })
     }
     fn fetch_deferred(
         &self,
-        model: &Model,
-        handle: &DeferredHandle,
-        options: StreamOptions,
-    ) -> AssistantMessageEventStream {
-        self.invoke("fetchDeferred", model, encode(handle), options)
-    }
-    fn supports_cancel_deferred(&self) -> bool {
-        true
-    }
-    async fn cancel_deferred(
-        &self,
-        model: &Model,
-        handle: &DeferredHandle,
-        options: StreamOptions,
-    ) -> anyhow::Result<()> {
-        let hub = self
-            .hub
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("Model host closed"))?;
-        hub.models.cancellations.fetch_add(1, Ordering::Relaxed);
-        hub.call(
-            "models.cancel",
-            object([
-                ("harness", encode(&self.harness)),
-                ("model", encode(model)),
-                ("handle", encode(handle)),
-                ("options", encode_options(&options)),
-            ]),
+        model: ResolvedModel,
+        handle: JsonObject,
+        context: Context,
+    ) -> StorageFuture<AssistantValueRef> {
+        if let Ok(hub) = self.hub() {
+            hub.models.polls.fetch_add(1, Ordering::Relaxed);
+        }
+        self.invoke(
+            "fetchDeferred",
+            model,
+            handle.into_value(),
+            JsonObject::default(),
+            context,
+            None,
         )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(())
+    }
+    fn cancel_deferred(
+        &self,
+        model: ResolvedModel,
+        handle: JsonObject,
+        context: Context,
+    ) -> StorageFuture<()> {
+        let operation = (|| {
+            let hub = self.hub()?;
+            hub.models.cancellations.fetch_add(1, Ordering::Relaxed);
+            let id = hub.next.fetch_add(1, Ordering::Relaxed);
+            let signal = context.abort_signal().cloned();
+            let operation = hub.call_context(
+                "models.cancel",
+                object([
+                    ("collection", encode(&self.id)),
+                    ("stream", encode(&id)),
+                    ("model", encode(&model.value::<HostModel>()?.0)),
+                    ("handle", encode(&handle)),
+                    (
+                        "aborted",
+                        encode(&signal.as_ref().is_some_and(|signal| signal.aborted())),
+                    ),
+                ]),
+                &context,
+            );
+            Ok::<_, Error>((hub, id, signal, operation))
+        })();
+        Box::pin(async move {
+            let (hub, id, signal, operation) = operation?;
+            tokio::pin!(operation);
+            if let Some(signal) = signal {
+                tokio::select! {result=&mut operation=>{result?;},_=signal.cancelled()=>{hub.emit(object([("type",encode(&"models.signal")),("stream",encode(&id))]));operation.await?;}}
+            } else {
+                operation.await?;
+            }
+            Ok(())
+        })
     }
 }
 impl Hub {
-    pub(super) fn host_models(self: &Arc<Self>, harness: u64) -> Result<Models> {
-        let catalog: Vec<Model> = decode(&self.sync("models.catalog", encode(&harness))?)?;
-        let mut providers = IndexMap::<String, Vec<Model>>::new();
-        for model in catalog {
-            providers
-                .entry(model.provider.clone())
-                .or_default()
-                .push(model);
-        }
-        let models = Models::default();
-        for (id, catalog) in providers {
-            models.set_provider(Arc::new(HostProvider {
-                hub: Arc::downgrade(self),
-                harness,
-                id,
-                models: catalog,
-                auth: ProviderAuth {
-                    api_key: Some(Arc::new(HostAuth)),
-                    oauth: None,
-                },
-            }));
-        }
-        Ok(models)
+    pub(super) fn host_collection(
+        self: &Arc<Self>,
+        harness: u64,
+    ) -> Result<Arc<dyn ModelCollection>> {
+        let id = decode(&self.sync("models.collection", encode(&harness))?)?;
+        Ok(Arc::new(HostCollection {
+            hub: Arc::downgrade(self),
+            id,
+        }))
     }
-    pub(super) fn model_event(&self, value: &JsonValue) -> Result<()> {
-        let id = field::<u64>(value, "stream")?;
-        let event: AssistantMessageEvent = field(value, "event")?;
-        if let Some(sender) = self.models.streams.lock().get(&id) {
-            sender.push(event);
+    pub(super) fn host_message(self: &Arc<Self>, id: u64) -> Result<AssistantValueRef> {
+        let mut values = self.models.values.lock();
+        if let Some(value) = values.get(&id).and_then(Weak::upgrade) {
+            return Ok(value);
+        }
+        let value = AssistantValue::hosted(Arc::new(HostAssistant {
+            hub: Arc::downgrade(self),
+            id,
+        }));
+        values.insert(id, Arc::downgrade(&value));
+        Ok(value)
+    }
+    pub(super) fn message_handle(self: &Arc<Self>, value: &AssistantValueRef) -> Result<u64> {
+        if let Some(value) = value.host::<HostAssistant>() {
+            Ok(value.id)
+        } else {
+            decode(&self.sync("models.capture", encode(&value.copy_json()?))?)
+        }
+    }
+    pub(super) fn model_event(self: &Arc<Self>, value: &JsonValue) -> Result<()> {
+        let stream = field::<u64>(value, "stream")?;
+        let partial = self.host_message(field(value, "message")?)?;
+        if let Some(sender) = self.models.streams.lock().get(&stream) {
+            let _ = sender.send(partial);
         }
         Ok(())
     }
-}
-fn encode_options(options: &StreamOptions) -> JsonValue {
-    let mut value = encode(&options.extra);
-    macro_rules! field {
-        ($name:literal,$field:ident) => {
-            if let Some(field) = &options.$field {
-                value
-                    .as_object_mut()
-                    .unwrap()
-                    .insert($name.into(), encode(field));
-            }
-        };
-    }
-    field!("headers", headers);
-    field!("identity", identity);
-    field!("timeoutMs", timeout_ms);
-    field!("maxRetries", max_retries);
-    field!("maxRetryDelayMs", max_retry_delay_ms);
-    field!("temperature", temperature);
-    field!("samplingParams", sampling_params);
-    field!("maxTokens", max_tokens);
-    field!("transport", transport);
-    field!("cacheRetention", cache_retention);
-    field!("sessionId", session_id);
-    field!("metadata", metadata);
-    field!("toolChoice", tool_choice);
-    field!("reasoning", reasoning);
-    field!("deferred", deferred);
-    field!("thinkingBudgets", thinking_budgets);
-    value
 }

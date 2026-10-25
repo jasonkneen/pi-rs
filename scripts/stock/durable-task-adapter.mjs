@@ -3,7 +3,7 @@
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
-import {DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
+import {ConversationBusy,DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
 import {validateToolArguments} from "@earendil-works/pi-ai/utils/validation";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
 import {copyJson} from "@earendil-works/chord";
@@ -12,6 +12,7 @@ import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
 import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,nativeSnapshotId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
+nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
 const drafts=new Map(),viewBindings=new WeakMap();
@@ -241,20 +242,27 @@ export async function watchEvents(harness,conversation,context){
 
 const modelControllers=new Map();
 nativeTransport.event("models.signal",({stream})=>modelControllers.get(stream)?.abort(new Error("Aborted")));
-nativeTransport.register("models.catalog",id=>harnesses.get(id).currentModels().getModels());
+nativeTransport.register("models.collection",id=>handle(harnesses.get(id).currentModels()));
+nativeTransport.register("models.get",args=>{const model=objectFor(args.collection).getModel(args.reference.provider,args.reference.modelId);return model===undefined?null:{model:handle(model),contextWindow:Number.isFinite(model.contextWindow)?model.contextWindow:String(model.contextWindow)};});
+nativeTransport.register("models.field",args=>{const value=objectFor(args.message)[args.name];return value===undefined?{present:false}:{present:true,value:copyJson(value,{omitUndefinedProperties:true})};});
+nativeTransport.register("models.setField",args=>{if(args.present)objectFor(args.message)[args.name]=args.value;else delete objectFor(args.message)[args.name];return null;});
+nativeTransport.register("models.copy",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
+nativeTransport.register("models.hasContent",id=>objectFor(id).content.length!==0);
+nativeTransport.register("models.toolCalls",id=>copyJson(objectFor(id).content.filter(block=>block.type==="toolCall"),{omitUndefinedProperties:true}));
+nativeTransport.register("models.capture",value=>handle(value));
 nativeTransport.register("models.request",async args=>{
  const controller=new AbortController();modelControllers.set(args.stream,controller);if(args.aborted)controller.abort(new Error("Aborted"));
  try{
-  const models=harnesses.get(args.harness).currentModels(),options={...args.options,signal:controller.signal},model=models.getModel(args.model.provider,args.model.id);
-  if(args.method==="fetchDeferred")return copyJson(await models.fetchDeferred(model,args.request,options),{omitUndefinedProperties:true});
+  const models=objectFor(args.collection),options={...args.options,signal:controller.signal},model=objectFor(args.model);
+  if(args.method==="fetchDeferred")return handle(await models.fetchDeferred(model,args.request,options));
   const stream=models.streamSimple(model,args.request,options);
-  for await(const event of stream)nativeTransport.notify({type:"models.event",stream:args.stream,event:copyJson(event,{omitUndefinedProperties:true})});
-  return copyJson(await stream.result(),{omitUndefinedProperties:true});
+  for await(const event of stream){if(event.type!=="done"&&event.type!=="error")nativeTransport.notify({type:"models.event",stream:args.stream,message:handle(event.partial)});}
+  return handle(await stream.result());
  }finally{modelControllers.delete(args.stream);}
 });
 nativeTransport.register("models.cancel",async args=>{
- const models=harnesses.get(args.harness).currentModels(),model=models.getModel(args.model.provider,args.model.id);
- await models.cancelDeferred(model,args.handle,{...args.options,signal:new AbortController().signal});return null;
+ const controller=new AbortController();modelControllers.set(args.stream,controller);if(args.aborted)controller.abort(new Error("Aborted"));
+ try{await objectFor(args.collection).cancelDeferred(objectFor(args.model),args.handle,{signal:controller.signal});return null;}finally{modelControllers.delete(args.stream);}
 });
 function generationRuntime(args){const current=runtime(args.runtime);current.harness=args.harness;current.taskId=args.taskId;current.conversationId=args.conversationId;return current;}
 nativeTransport.register("generation.render",(args,context)=>{const read=generationRuntime(args);return objectFor(args.section).render({conversationId:args.conversationId,agent:hydrateAgent(args.agent),env:objectFor(args.environment),shown:Object.fromEntries(args.shown),read},withAbortSignal(read.signal,context??BACKGROUND_CONTEXT));});
@@ -268,3 +276,12 @@ nativeTransport.register("conversation.init",async args=>{
 });
 
 nativeTransport.register("readerTaskNames",id=>objectFor(id).snapshot().tasks().map(task=>task.definition.name));
+
+for(const method of ["beforeRequest","afterResponse","onYield","afterTools"]){
+ nativeTransport.register(`generation.${method}`,(args,context)=>{
+  const api=generationRuntime(args),callback=objectFor(args.callback),callContext=withAbortSignal(api.signal,context??BACKGROUND_CONTEXT);
+  if(method==="beforeRequest")return callback({messages:args.messages},api,callContext);
+  if(method==="afterTools")return callback(args.assistant,args.results,api,callContext);
+  return callback(objectFor(args.message),api,callContext);
+ });
+}

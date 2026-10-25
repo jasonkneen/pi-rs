@@ -4,6 +4,10 @@ use pi_ai::models::Models;
 use pi_ai::types::{CacheRetention, DeferredOption, ProviderHeaders, StreamOptions, Transport};
 use serde::Deserialize;
 use std::sync::Arc;
+mod collection;
+mod message;
+pub use collection::*;
+pub use message::*;
 
 pub type ModelsReader = Arc<dyn Fn() -> Result<Models> + Send + Sync>;
 pub fn read_models(reader: &ModelsReader) -> Result<Models> {
@@ -22,6 +26,10 @@ struct StoredStreamOptions {
     metadata: Option<serde_json::Map<String, serde_json::Value>>,
     cache_retention: Option<CacheRetention>,
     deferred: Option<DeferredOption>,
+    temperature: Option<f64>,
+    max_tokens: Option<u64>,
+    reasoning: Option<pi_ai::ThinkingLevel>,
+    session_id: Option<String>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -38,6 +46,10 @@ pub fn provider_options(value: &JsonObject) -> Result<StreamOptions> {
         metadata: parsed.metadata,
         cache_retention: parsed.cache_retention,
         deferred: parsed.deferred,
+        temperature: parsed.temperature,
+        max_tokens: parsed.max_tokens,
+        reasoning: parsed.reasoning,
+        session_id: parsed.session_id,
         extra: parsed.extra,
         ..Default::default()
     })

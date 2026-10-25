@@ -89,7 +89,7 @@ pub(super) async fn tools(
 pub(super) async fn start_tool_round(
     runtime: GenerationRuntime,
     request: ResponseRequest,
-    message: JsonObject,
+    message: GenerationMessage,
     calls: Vec<ToolCall>,
     context: Context,
 ) -> Result<()> {

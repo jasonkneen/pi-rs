@@ -14,7 +14,7 @@ function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.c
 function describeSection(section){return{id:handle(section),key:section.key,untagged:section.tag===false};}
 function describeExtension(extension){return{
  id:handle(extension),name:extension.name,tools:(extension.tools??[]).map(describeTool),sections:(extension.sections??[]).map(describeSection),tasks:(extension.tasks??[]).map(describeTask),
- hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool"})),
+ hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool",nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1"&&hook.task==="pi.generation"})),
  wraps:(extension.wraps??[]).map(wrap=>({...(Object.hasOwn(wrap,"tool")?{tool:wrap.tool}:{section:wrap.section}),callback:handle(wrap.wrap)})),
 };}
 nativeTransport.register("registry.listener",args=>{callbacks.listeners++;objectFor(args)();return null;});

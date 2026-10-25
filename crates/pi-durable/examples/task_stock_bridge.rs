@@ -93,6 +93,12 @@ fn error_value(error: &Error) -> JsonValue {
             .unwrap()
             .insert("cause".into(), error_value(cause));
     }
+    if let ErrorKind::ConversationBusy(conversation) = error.kind() {
+        value.as_object_mut().unwrap().extend([
+            ("kind".into(), encode(&"conversationBusy")),
+            ("conversationId".into(), encode(conversation)),
+        ]);
+    }
     value
 }
 type TaskRuntime = NativeRuntime<JsonValue, JsonValue, JsonValue, u64>;
@@ -123,6 +129,7 @@ struct Hub {
     transactions: Mutex<HashMap<u64, Transaction>>,
     contexts: Mutex<HashMap<u64, AbortController>>,
     phases: AtomicU64,
+    source_generation_phases: AtomicU64,
     commits: AtomicU64,
     context_reads: AtomicU64,
     compaction_reads: AtomicU64,
@@ -294,6 +301,10 @@ impl Hub {
         context: Context,
     ) -> StorageFuture<()> {
         self.phases.fetch_add(1, Ordering::Relaxed);
+        if task.record().info.kind.equals_str("pi.generation") {
+            self.source_generation_phases
+                .fetch_add(1, Ordering::Relaxed);
+        }
         let existing = self
             .runtimes
             .lock()
@@ -488,7 +499,7 @@ impl Hub {
                 };
                 self.harness_storage.lock().insert(harness, storage.clone());
                 let scheduler=TaskScheduler::open(storage,registry,SchedulerOptions{
-                    models: Arc::new(move || model_host.upgrade().ok_or_else(|| Error::message("Model host closed"))?.host_models(harness)),
+                    model_collection: Some(Arc::new(move || model_host.upgrade().ok_or_else(|| Error::message("Model host closed"))?.host_collection(harness))),
                     env:Arc::new(move |conversation,context|if has_environment {environment.build_environment(harness,conversation,context)}else{Box::pin(async {Ok(None)})}),
                     settings:Arc::new(move || if host_settings {registry_bridge::settings(&settings.sync("settings",encode(&harness))?)} else {Ok(pi_durable::harness::settings::resolve_settings(Default::default()))}),
                     settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
@@ -1123,7 +1134,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeGenerationHooks":self.models.hook_calls.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"sourceGenerationPhases":self.source_generation_phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -1188,6 +1199,7 @@ async fn main() {
         transactions: Mutex::new(HashMap::new()),
         contexts: Mutex::new(HashMap::new()),
         phases: AtomicU64::new(0),
+        source_generation_phases: AtomicU64::new(0),
         commits: AtomicU64::new(0),
         context_reads: AtomicU64::new(0),
         compaction_reads: AtomicU64::new(0),

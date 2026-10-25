@@ -1,7 +1,6 @@
 use super::{settle::*, types::*, *};
 use crate::harness::{
     live::{LIVE_DOC, LiveGeneration},
-    models::{RequestScope, provider_options},
     provider::ensure_provider_session_id,
 };
 use parking_lot::Mutex;
@@ -61,20 +60,15 @@ pub(super) async fn request(
         })
         .await?;
     let messages = messages.lock().clone();
-    let mut options = provider_options(&request.stream_options)?;
-    options.session_id = Some(
-        ensure_provider_session_id(&runtime, &context)
-            .await?
-            .to_string_checked()
-            .map_err(|error| Error::message(error.to_string()))?,
+    let mut options = request.stream_options.clone();
+    options.insert(
+        "sessionId".into(),
+        wire::encode(&ensure_provider_session_id(&runtime, &context).await?),
     );
     if !request.thinking_level.equals_str("off") {
-        options.reasoning =
-            Some(wire::decode(&wire::encode(&request.thinking_level)).map_err(Error::message)?);
+        options.insert("reasoning".into(), wire::encode(&request.thinking_level));
     }
-    let scope = RequestScope::new(&mut options, runtime.signal(), &context);
-    let message = stream_response(&runtime, &model, messages, options, attempt, &context).await;
-    drop(scope);
+    let message = stream_response(&runtime, model, messages, options, attempt, &context).await;
     classify(
         runtime,
         ResponseRequest {
@@ -146,15 +140,14 @@ pub(super) async fn poll(
     let Some(model) = resolve(&runtime, &poll.model)? else {
         return fail_no_model(&runtime, Some(poll.model), &context).await;
     };
-    let handle: pi_ai::DeferredHandle =
-        wire::decode(poll.handle.value()).map_err(Error::message)?;
-    let mut options = pi_ai::StreamOptions::default();
-    let scope = RequestScope::new(&mut options, runtime.signal(), &context);
     let message = runtime
-        .models()?
-        .fetch_deferred(&model, &handle, options)
-        .await;
-    drop(scope);
+        .model_collection()?
+        .fetch_deferred(
+            model,
+            poll.handle.clone(),
+            pi_chord::context::with_abort_signal(runtime.signal(), &context),
+        )
+        .await?;
     classify(
         runtime,
         ResponseRequest {
@@ -165,55 +158,46 @@ pub(super) async fn poll(
             messages: None,
             poll_at: Some(poll.poll_at),
         },
-        provider_message(message)?,
+        message,
         context,
     )
     .await
 }
-fn provider_message(message: pi_ai::AssistantMessage) -> Result<JsonObject> {
-    JsonObject::try_from_value(wire::encode(&pi_ai::Message::Assistant(message)))
-        .map_err(Error::message)
-}
 async fn stream_response(
     runtime: &GenerationRuntime,
-    model: &pi_ai::Model,
+    model: crate::harness::models::ResolvedModel,
     messages: Vec<Arc<JsonValue>>,
-    options: pi_ai::StreamOptions,
+    options: JsonObject,
     attempt: u64,
     context: &Context,
-) -> Result<JsonObject> {
-    let messages = messages
-        .iter()
-        .map(|value| wire::decode(value).map_err(Error::message))
-        .collect::<Result<Vec<pi_ai::Message>>>()?;
-    let mut stream = runtime.models()?.stream_simple(
-        model,
-        &pi_ai::Context {
-            messages,
-            ..Default::default()
-        },
-        options,
-    );
+) -> Result<GenerationMessage> {
     let writer = PartialWriter::new(
         runtime.clone(),
         context.clone(),
         attempt,
         runtime.settings()?.progress.partial_interval_ms,
     );
-    while let Some(event) = stream.next_event().await {
-        if !event.is_terminal() && !event.message().content.is_empty() {
-            match provider_message(event.message().clone()) {
-                Ok(partial) => writer.mark(partial),
-                Err(error) => {
-                    writer.stop().await;
-                    return Err(error);
-                }
+    let result = async {
+        let mut stream = runtime
+            .model_collection()?
+            .stream_simple(
+                model,
+                messages,
+                options,
+                pi_chord::context::with_abort_signal(runtime.signal(), context),
+            )
+            .await?;
+        while let Some(partial) = stream.next().await? {
+            if !partial.has_content()? {
+                continue;
             }
+            writer.mark(partial);
         }
+        stream.result().await
     }
-    let result = stream.result().await;
+    .await;
     writer.stop().await;
-    provider_message(result)
+    result
 }
 pub(super) fn retry_delay(policy: &JsonObject, attempt: u64) -> f64 {
     let delay = policy.value()["baseDelayMs"].as_f64().unwrap_or(0.0)
@@ -232,7 +216,7 @@ pub(super) fn retry_delay(policy: &JsonObject, attempt: u64) -> f64 {
 }
 
 struct PartialState {
-    pending: Option<JsonObject>,
+    pending: Option<GenerationMessage>,
     timer: Option<DisarmTimer>,
     timer_generation: Option<u64>,
     next: u64,
@@ -267,7 +251,7 @@ impl PartialWriter {
             changed,
         }))
     }
-    fn mark(&self, message: JsonObject) {
+    fn mark(&self, message: GenerationMessage) {
         self.0.state.lock().pending = Some(message);
         Self::schedule(&self.0);
     }
@@ -328,32 +312,35 @@ impl PartialWriter {
         let conversation = inner.runtime.conversation_id();
         let attempt = inner.attempt;
         // Admit while the timer callback owns its place on the Session queue.
-        let operation = inner.runtime.commit(
-            move |tx, _| async move {
-                let live = tx.doc(&LIVE_DOC, conversation).await?;
-                let value = wire::encode(&live.read()?);
-                let mut ops = Vec::new();
-                if value["generation"].is_null() {
-                    ops.push(Op::Set(
-                        vec!["generation".into()],
-                        wire::encode(&LiveGeneration {
-                            attempt,
-                            message: None,
-                            retry: None,
-                            deferred: None,
-                        }),
+        let operation = match partial.copy_json() {
+            Err(error) => crate::storage::ready(Err(error)),
+            Ok(partial) => inner.runtime.commit(
+                move |tx, _| async move {
+                    let live = tx.doc(&LIVE_DOC, conversation).await?;
+                    let value = wire::encode(&live.read()?);
+                    let mut ops = Vec::new();
+                    if value["generation"].is_null() {
+                        ops.push(Op::Set(
+                            vec!["generation".into()],
+                            wire::encode(&LiveGeneration {
+                                attempt,
+                                message: None,
+                                retry: None,
+                                deferred: None,
+                            }),
+                        ));
+                    }
+                    ops.extend(crate::harness::json::assign_json_ops(
+                        wire::get(&value["generation"], "message"),
+                        partial.value(),
+                        &["generation".into(), "message".into()],
                     ));
-                }
-                ops.extend(crate::harness::json::assign_json_ops(
-                    wire::get(&value["generation"], "message"),
-                    partial.value(),
-                    &["generation".into(), "message".into()],
-                ));
-                live.apply_ops(&ops)?;
-                Ok(None)
-            },
-            &inner.context,
-        );
+                    live.apply_ops(&ops)?;
+                    Ok(None)
+                },
+                &inner.context,
+            ),
+        };
         tokio::spawn(async move {
             if let Err(error) = operation.await
                 && !inner.runtime.signal().aborted()

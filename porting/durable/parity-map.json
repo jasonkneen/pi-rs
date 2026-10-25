@@ -486,14 +486,18 @@
         "crates/pi-durable/src/harness/generation/tools.rs",
         "crates/pi-durable/src/harness/generation/types.rs",
         "crates/pi-durable/tests/generation_runtime.rs",
-        "crates/pi-durable/examples/conversation.rs"
+        "crates/pi-durable/examples/conversation.rs",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/src/harness/models/message.rs",
+        "crates/pi-durable/tests/generation_runtime/collection.rs"
       ],
       "evidence": [
-        "Native typed preparation/request/retry/poll/tools/abort phases, pinned request options and cutoff, provider session IDs, coalesced trailing partials, failure policies, compaction admission, tool controls and run handover",
-        "Six native execution tests run both retention modes: input settlement/usage, unavailable models, live retry settings, owned tool successor, shared afterResponse/onYield identity and sequential unanimous termination",
-        "24 of 25 unmodified stock generation cases and all eight recovery cases pass in both retention modes with native model-request counters and no source generation phase dispatch",
-        "The stock generation file includes a direct source resolveSettings assertion; the non-JSON function-valued final message case remains unselected because the typed SDK provider transport cannot preserve a hosted invalid final value until the durable writer",
-        "Original JS model collections/provider APIs, section renderers, backend callbacks and direct definition helpers remain host capabilities; generation hook bindings, lossless SDK 1.4 alignment and complete Harness integration remain open",
+        "Native preparation/request/retry/poll/tools/abort phases, pinned request options and cutoff, provider session IDs, trailing partials, failure policies, compaction admission, tool controls and run handover",
+        "Ten native execution tests run both retention modes, including hosted final writer failures and usage rollback, shared response/yield repairs, contained partial copy errors, original collection exceptions and live collection access",
+        "All 25 unmodified stock generation cases and all eight recovery cases pass in both retention modes, with native model counters and zero source generation phases",
+        "Native generation also drives the complete stock tool, recovery, nested, restart, view, event, submission and inspection files; tool files prove original generation hook callbacks through native dispatch",
+        "Original JS model collections, section renderers, environments, backend and user callbacks remain host capabilities; the direct resolveSettings helper assertion remains source",
+        "Full SDK 1.4 lossless alignment, compaction model-collection integration and complete Harness/embedded exports remain open",
         "porting/durable/STATUS.md"
       ]
     },
@@ -627,7 +631,9 @@
         "crates/pi-durable/src/session/executor.rs",
         "crates/pi-durable/src/storage/line.rs",
         "crates/pi-durable/examples/support/memory_bridge.rs",
-        "scripts/stock/durable-memory-adapter.mjs"
+        "scripts/stock/durable-memory-adapter.mjs",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/src/harness/models/message.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -642,7 +648,8 @@
         "Per-Session FIFO polling preserves admission and wake ordering without blocking pending I/O; native executor regressions cover nested eager jobs and runtime shutdown before and after polling",
         "External callback nested admissions stay on the owning Session FIFO; graph and conversation observers recheck Session admission after hydration, including while an earlier close listener is blocked",
         "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities",
-        "Reservation and reconciliation loops run on the Session FIFO as deferred jobs, matching source queueMicrotask ordering without an extra Tokio yield"
+        "Reservation and reconciliation loops run on the Session FIFO as deferred jobs, matching source queueMicrotask ordering without an extra Tokio yield",
+        "Optional live model-collection capability preserves original host models and assistant objects, with the native pi-ai SDK as the default; arbitrary hosted values copy only at durable writers"
       ]
     },
     {
@@ -707,7 +714,7 @@
         "Seventeen native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
         "All 39 unmodified harness-tools cases and all nine unmodified harness-tools-recovery cases run against native pi.tool under both retention modes; counters require native execute and tool hook calls",
         "Fallible hook-member lookup propagates outside invocation catches; host values remain available for afterTool repair before strict JSON settlement; erased runtime keeps the same invocation guards",
-        "Stock gates retain original JS generation handlers, provider/tool/schema/environment/backend capabilities. Structured-output stock files, full native Harness/generation, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open",
+        "Stock gates use native generation and retain original JS provider/tool/schema/environment/backend capabilities. Structured-output stock files, complete native Harness integration, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open",
         "Both nested-tool stock files now pass completely: 33 call cases and 11 restart cases per mode, including native pi.tool execution, owned work, document results and native conversation view publications; event translation is now native; one direct JS helper check remains explicit host scope",
         "Nested memo/admission continuations use the owning Session FIFO even when called outside a phase poll; stock zero-retention ordering assertions exposed the old Tokio race"
       ]
@@ -1564,8 +1571,9 @@
       ],
       "evidence": [
         "All 14 original cases pass with retention=600000 and retention=0; source hash and zero pending tests checked",
-        "Native Session/scheduler/registry/memory/conversation views/event translation; original JS generation, provider and tool callbacks remain host capabilities",
+        "Native Session/scheduler/registry/memory/conversation views/event translation; original JS provider and tool callbacks remain host capabilities",
         "Native execution counters reject accidental source fallback; original test assertions, timers and timeouts remain unchanged",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1584,13 +1592,16 @@
         "crates/pi-durable/examples/support/generation_bridge.rs",
         "crates/pi-durable/examples/support/model_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
-        "scripts/check-durable-port.sh"
+        "scripts/check-durable-port.sh",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/src/harness/models/message.rs",
+        "crates/pi-durable/tests/generation_runtime/collection.rs"
       ],
       "evidence": [
-        "8 original cases pass with retention=600000 and retention=0; source hash and literal case selection verified",
-        "Native generation phases, scheduler, Session, registry and runtime; original model/provider collection, renderers and storage capabilities remain host-owned",
-        "Model request/poll/cancel counters prove native execution; the JS task-phase counter is zero for these workflows",
-        "One non-JSON hosted final-value case remains unselected in the generation file; its direct resolveSettings assertion still calls the source helper",
+        "All 8 original cases pass with retention=600000 and retention=0; source hash, literal case selection and zero pending tests verified",
+        "Native generation phases, scheduler, Session, registry and runtime; original JS model/provider collections, section renderers and storage remain host capabilities",
+        "Native model request/poll/cancel counters and zero source generation phases required",
+        "The non-JSON final-value case now faults at the native durable writer and converts the committed partial; the generation file still calls the direct source resolveSettings helper",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1603,13 +1614,16 @@
         "crates/pi-durable/examples/support/generation_bridge.rs",
         "crates/pi-durable/examples/support/model_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
-        "scripts/check-durable-port.sh"
+        "scripts/check-durable-port.sh",
+        "crates/pi-durable/src/harness/models/collection.rs",
+        "crates/pi-durable/src/harness/models/message.rs",
+        "crates/pi-durable/tests/generation_runtime/collection.rs"
       ],
       "evidence": [
-        "24 original cases pass with retention=600000 and retention=0; source hash and literal case selection verified",
-        "Native generation phases, scheduler, Session, registry and runtime; original model/provider collection, renderers and storage capabilities remain host-owned",
-        "Model request/poll/cancel counters prove native execution; the JS task-phase counter is zero for these workflows",
-        "One non-JSON hosted final-value case remains unselected in the generation file; its direct resolveSettings assertion still calls the source helper",
+        "All 25 original cases pass with retention=600000 and retention=0; source hash, literal case selection and zero pending tests verified",
+        "Native generation phases, scheduler, Session, registry and runtime; original JS model/provider collections, section renderers and storage remain host capabilities",
+        "Native model request/poll/cancel counters and zero source generation phases required",
+        "The non-JSON final-value case now faults at the native durable writer and converts the committed partial; the generation file still calls the direct source resolveSettings helper",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1641,8 +1655,10 @@
         "scripts/run-stock-durable-tasks.mjs"
       ],
       "evidence": [
-        "scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=inspect: first original case in both modes",
-        "Generation/submission case explicitly unselected until its native services land; native regression covers queued/placed filtering",
+        "Both unmodified original cases pass in both retention modes, including unsettled submissions during generation; zero pending tests",
+        "Native inspection/Session/scheduler/registry/submissions/generation; original user task callbacks and model/backend capabilities remain host-owned",
+        "Six native inspections and one model request per mode; zero source generation phases required",
+        "scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=inspect",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1674,9 +1690,10 @@
       ],
       "evidence": [
         "All 11 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/event counters are required",
-        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
         "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
         "porting/durable/STATUS.md",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "Real SQLite reopen tests prove restart abandonment, missing-definition wait and orphan behavior, replay reattachment, cleanup of earlier-attempt slots, child tasks and persistent background work"
       ]
     },
@@ -1696,9 +1713,10 @@
       ],
       "evidence": [
         "All 33 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/event counters are required",
-        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
         "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
         "porting/durable/STATUS.md",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "Direct ToolTask.definition.migrate assertion remains the exported source helper; two SQLite restart migration cases exercise the native migration and phases"
       ]
     },
@@ -1802,8 +1820,10 @@
         "crates/pi-durable/tests/submissions_reference.rs"
       ],
       "evidence": [
-        "Three of ten unmodified stock cases selected in both retention modes; seven generation-dependent cases remain unselected",
-        "Native submission admission/status/wait and backend counters required; idle passive write, transactional settlement and typed entry cases run unchanged",
+        "All ten unmodified stock cases pass with retention=600000 and retention=0; source hash, literal case selection and zero pending tests verified",
+        "Native submission admission/status/wait/abort, generation, scheduler, Session and registry; original model collections and backend capabilities remain host-owned",
+        "Fourteen admissions, nine reads, eight waits, six abort calls and six native model requests per mode; zero source generation phases required",
+        "Original SQLite close/reopen, request deduplication, wait cancellation, close races and ConversationBusy class/ID assertions unchanged",
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "cargo test -p pi-durable --test submissions --test submissions_reference",
         "porting/durable/STATUS.md"
@@ -1899,8 +1919,9 @@
       ],
       "evidence": [
         "All 9 cases execute unmodified against native Session/scheduler/registry/pi.tool in retention=600000 and retention=0; source hash and zero pending tests checked",
-        "Native counters prove tool execution and before/after hook invocation; source JS generation, tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
+        "Native counters prove tool execution and before/after hook invocation; original JS tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
         "porting/durable/STATUS.md",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "Original tests exercise actual SQLite close/reopen and a real interrupted bash command; no source assertions, flushes or timeouts changed"
       ]
     },
@@ -1919,7 +1940,8 @@
       ],
       "evidence": [
         "All 39 cases execute unmodified against native Session/scheduler/registry/pi.tool in retention=600000 and retention=0; source hash and zero pending tests checked",
-        "Native counters prove tool execution and before/after hook invocation; source JS generation, tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
+        "Native counters prove tool execution and before/after hook invocation; original JS tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "porting/durable/STATUS.md"
       ]
     },
@@ -1935,8 +1957,9 @@
       ],
       "evidence": [
         "All 14 original cases pass with retention=600000 and retention=0; source hash and zero pending tests checked",
-        "Native Session/scheduler/registry/memory/conversation views; original JS generation, provider and tool callbacks remain host capabilities",
+        "Native Session/scheduler/registry/memory/conversation views; original JS provider and tool callbacks remain host capabilities",
         "Native execution counters reject accidental source fallback; original test assertions, timers and timeouts remain unchanged",
+        "Native generation and hosted model-value classification now drive this entire stock file; original generation hooks use native dispatch; native model requests and zero source generation phases are required",
         "porting/durable/STATUS.md"
       ]
     },

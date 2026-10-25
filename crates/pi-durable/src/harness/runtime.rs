@@ -24,6 +24,7 @@ pub(crate) trait TaskDriver: Send + Sync {
     fn agent(&self, context: &Context) -> StorageFuture<super::agent::AgentView>;
     fn settings(&self) -> Result<super::settings::Settings>;
     fn models(&self) -> Result<pi_ai::models::Models>;
+    fn model_collection(&self) -> Result<Arc<dyn super::models::ModelCollection>>;
     fn env(&self, context: &Context) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>>;
     fn conversation(
         &self,
@@ -106,6 +107,9 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
     /// Read the current host collection, including through a retained runtime.
     pub fn models(&self) -> Result<pi_ai::models::Models> {
         self.driver.models()
+    }
+    pub fn model_collection(&self) -> Result<Arc<dyn super::models::ModelCollection>> {
+        self.driver.model_collection()
     }
     pub fn env(
         &self,
