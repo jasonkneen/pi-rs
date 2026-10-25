@@ -1,11 +1,15 @@
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {writeFileSync} from "node:fs";
+import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
+import {DEFAULT_HARNESS_IDENTITY} from "@earendil-works/pi-durable";
+import {validateToolArguments} from "@earendil-works/pi-ai/utils/validation";
 import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-works/chord/context";
+import {copyJson} from "@earendil-works/chord";
 import {track} from "@earendil-works/chord/delta";
 import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
-import {handle,describeTask,describeDoc,objectFor} from "./durable-native-handles.mjs";
-import {settingsRequest} from "./durable-settings-wire.mjs";
+import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
+import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,nativeSnapshotId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
@@ -28,6 +32,10 @@ const call=(method,args={},context)=>nativeTransport.request(method,args,context
 const send=frame=>nativeTransport.notify(frame);
 nativeTransport.event("signal",frame=>runtime(frame.runtime).controller.abort(new Error(frame.message)));
 nativeTransport.event("report",frame=>harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info));
+nativeTransport.register("timerFire",id=>objectFor(id)());
+nativeTransport.register("tool.prepare",({tool,arguments:args})=>(objectFor(tool).prepareArguments===undefined?args:objectFor(tool).prepareArguments(args)));
+nativeTransport.register("tool.validate",({tool,call,arguments:args})=>validateToolArguments(objectFor(tool),{...call,arguments:args}));
+nativeTransport.register("tool.execute",async(args,context)=>{const api=toolApi(args);try{return packToolResult(await objectFor(args.tool).execute(args.arguments,api,withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT)));}finally{toolApiStates.get(api).ended=true;}});
 nativeTransport.register("now",id=>harnesses.get(id)?.options.now?.()??Date.now());
 nativeTransport.register("settings",id=>{const input=harnesses.get(id)?.options.settings;return settingsRequest(typeof input==="function"?input():input);});
 nativeTransport.register("readerSnapshot",id=>nativeSnapshotId(objectFor(id).snapshot()));
@@ -37,8 +45,18 @@ nativeTransport.register("hookMember",({handlers,name})=>{const owner=objectFor(
 nativeTransport.register("hookInvoke",({callback,handler})=>objectFor(callback)(objectFor(handler)));
 for(const method of ["phase","change","storage"])nativeTransport.register(method,(args,context,frame)=>invoke(method,args,frame.abortable?(context??BACKGROUND_CONTEXT):withoutAbortSignal(context??BACKGROUND_CONTEXT)));
 function change(method,args,callback,context){const id=callbackNext++;callbacks.set(id,callback);const operation=call(method,{...args,callback:id},context).finally(()=>callbacks.delete(id));operation.catch(()=>{});return operation;}
+function configuration(change){
+ const result={...change};
+ for(const field of ["extensions","tools","modelTools"]){
+  const value=change[field];const names=items=>items.map(item=>typeof item==="object"&&item!==null?{name:item.name}:item);
+  if(Array.isArray(value))result[field]=names(value);
+  else if(value&&typeof value==="object")result[field]=Object.fromEntries(Object.entries(value).map(([key,items])=>[key,Array.isArray(items)?names(items):items]));
+ }
+ return result;
+}
 function transaction(id){return{
  doc:async(token,...args)=>{const {index,...document}=docArguments(token,args);const acquired=await call("doc.acquire",{tx:id,...document,seed:token.definition.family?args[index]:undefined});let local=drafts.get(id);if(!local){local=new Map();drafts.set(id,local);}let held=local.get(acquired.draft);if(!held){const tracker=track(acquired.value);held={tracker,change:tracker.beginChange()};local.set(acquired.draft,held);}return held.change.state;},
+ latestHeadMarker:conversation=>call("tx.latestHeadMarker",{tx:id,conversation}),
  createConversation:options=>call("tx.createConversation",{tx:id,options}),
  forkConversation:(conversation,at,options)=>call("tx.forkConversation",{tx:id,conversation,at,options}),
  createTask:(task,input,options)=>call("createTask",{tx:id,definition:describeTask(task),input,options}),
@@ -49,12 +67,13 @@ function transaction(id){return{
  scanEntries:(query,limit,cursor)=>call("scanEntries",{tx:id,query,limit,cursor}),
  scanTasks:(query,limit,cursor)=>call("scanTasks",{tx:id,query,limit,cursor}),
 };}
-function runtime(id){
+export function runtime(id){
  let held=runtimes.get(id);if(held)return held;
  const controller=new AbortController();
- held={controller,signal:controller.signal,agent:context=>call("runtimeAgent",{runtime:id},context).then(hydrateAgent),hooks:{each:(name,invoke)=>call("runtimeHooks",{runtime:id,name,callback:handle(invoke)})},get registry(){return snapshot(nativeTransport.sync("runtimeRegistry",{runtime:id}));},commit:(callback,context)=>change("commit",{runtime:id},callback,context),
+ held={controller,signal:controller.signal,get settings(){return hydrateSettings(nativeTransport.sync("runtimeSettings",{runtime:id}));},get models(){return harnesses.get(held.harness)?.currentModels();},env:context=>call("runtimeEnv",{runtime:id},context).then(id=>objectFor(id)),setTimer:(callback,delay)=>{const timer=nativeTransport.sync("runtimeTimer",{runtime:id,callback:handle(callback),delay});return()=>nativeTransport.sync("runtimeDisarmTimer",{timer});},entry:(token,entry,context)=>call("runtimeEntry",{runtime:id,kind:token.kind,entry},context),agent:context=>call("runtimeAgent",{runtime:id},context).then(hydrateAgent),hooks:{each:(name,invoke)=>call("runtimeHooks",{runtime:id,name,callback:handle(invoke)})},get registry(){return snapshot(nativeTransport.sync("runtimeRegistry",{runtime:id}));},commit:(callback,context)=>change("commit",{runtime:id},callback,context),
   memo:(name,...args)=>args.length===1?call("memo",{runtime:id,name},args[0]):call("memo",{runtime:id,name,candidate:args[0]},args[1]),
   getTask:(task,context)=>call("runtimeGetTask",{runtime:id,task},context),
+  waitForTask:(task,context)=>call("runtimeWaitForTask",{runtime:id,task},context),
   outcomes:(tasks,context)=>call("outcomes",{runtime:id,tasks},context),
   ...documents({runtime:id}),
   context:(conversation,context,options)=>call("runtimeContext",{runtime:id,conversation,at:options?.at},context),
@@ -66,7 +85,7 @@ function runtime(id){
 }
 async function invoke(method,args,context){
  if(method==="phase"){
-  stats.phases++;const[id,phase,task,runtimeId]=args;const current=runtime(runtimeId);current.taskId=task.id;current.conversationId=task.conversationId;
+  stats.phases++;const[id,phase,task,runtimeId,_serial,harnessId]=args;const current=runtime(runtimeId);current.taskId=task.id;current.conversationId=task.conversationId;current.harness=harnessId;
   const context=withAbortSignal(current.signal,BACKGROUND_CONTEXT);const definition=objectFor(id).definition;
   return (phase==="$abort"?definition.abort:definition.phases[phase])(task,current,context);
  }
@@ -94,9 +113,12 @@ export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport});
- const id=await call("open",{storage:storageId,registry,reader,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const id=await call("open",{storage:storageId,registry,reader,environment:options.env!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
- const harness={options,onReport:options.onReport,
+ const modelsOption=options.models;
+ const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);
+ const fixedModels=modelsOption&&typeof modelsOption!=="function"?withClientIdentity(modelsOption,identity):undefined;
+ const harness={options,onReport:options.onReport,currentModels:()=>fixedModels??(typeof modelsOption==="function"?withClientIdentity(modelsOption(),identity):undefined),
   submission:(submission,context)=>call("submission.get",{harness:id,submission},context).then(submission=>submission===undefined?undefined:submissionHandle(submission)),
   abortSubmission:(submission,context,conversation)=>call("submission.abort",{harness:id,submission,conversation},context),
   inspect:context=>call("inspect",{harness:id},context).then(inspect),
@@ -115,7 +137,7 @@ export const Harness={async open(storage,options,context){
   closed,close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
  };
  function submissionHandle(submission){return {id:submission,status:context=>call("submission.status",{harness:id,submission},context),wait:context=>call("submission.wait",{harness:id,submission},context),abort:context=>call("submission.abort",{harness:id,submission,handle:true},context)};}
- function conversation(conversationId){return{id:conversationId,submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
+ function conversation(conversationId){return{id:conversationId,agent:context=>call("conversationAgent",{harness:id,conversation:conversationId},context).then(hydrateAgent),submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change:configuration(change)},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
  harnesses.set(id,harness);return harness;
 }};
 const storageIds=new WeakMap();let shuttingDown=false;
@@ -133,3 +155,66 @@ async function finish(contextOnly,submissionsOnly=false){
 export async function shutdown(){await finish(false);}
 export async function shutdownContextTransport(){await finish(true);}
 export async function shutdownSubmissions(){await finish(false,true);}
+
+const toolApiStates=new WeakMap();
+function toolApi(args){
+ const state={ended:false},details=[];let cursor=0;
+ const drain=()=>{while(cursor<details.length&&details[cursor].outcome){const slot=details[cursor++];if(slot.outcome==="ok")slot.resolve();else if(slot.outcome==="error")slot.reject(slot.error);}};
+ const current=runtime(args.runtime);current.taskId=args.taskId;current.conversationId=args.conversationId;current.harness=args.harness;
+ const bound={...current,commit:(callback,context)=>change("tool.commit",{api:args.api},callback,context),createTask:(task,input,options,context)=>call("tool.createTask",{api:args.api,definition:describeTask(task),input,options},context),callId:args.callId,outputWindow:args.outputWindow??undefined,env:objectFor(args.environment),
+  output:(chunk,skipped)=>nativeTransport.sync("tool.output",{api:args.api,...(typeof chunk==="string"?{text:chunk}:{bytes:Buffer.from(chunk).toString("base64")}),skipped}),
+  diagnostic:diagnostic=>nativeTransport.sync("tool.diagnostic",{api:args.api,diagnostic}),
+  details:(value,context)=>{
+   const afterEnd=state.ended;
+   return new Promise((resolve,reject)=>{
+    const slot={resolve,reject};details.push(slot);
+    call("tool.details",{api:args.api,value},context).then(()=>{slot.outcome="ok";drain();},error=>{
+     // Cancellations and calls made after execute are independent waits; a
+     // shared progress/final commit settles its other marks in admission order.
+     if(afterEnd||context?.abortSignal?.aborted||nativeTransport.isCancellation(error)||nativeTransport.isAdmissionFailure(error)){slot.outcome="rejected";reject(error);}else{slot.outcome="error";slot.error=error;}
+     drain();
+    });
+   });
+  },
+  retainedOutput:()=>nativeTransport.sync("tool.retained",{api:args.api}),
+  executeTool:(name,toolArgs,context,options={})=>call("tool.nested",{api:args.api,name,arguments:toolArgs,options},context),
+ };
+ Object.defineProperty(bound,"models",{get:()=>current.models});
+ toolApiStates.set(bound,state);
+ return bound;
+}
+
+const nativeOutputArrays=new Map(),nativeOutputRefs=new WeakMap();
+function packToolResult(result){
+ const plain={...result},values={};
+ for(const key of ["details","structuredOutput"])if(result[key]!==undefined){try{plain[key]=copyJson(result[key],{omitUndefinedProperties:true});}catch{values[key]=valueHandle(result[key]);delete plain[key];}}
+ return {result:plain,values,contentHost:result.output&&handle(result.output),contentRef:result.output&&nativeOutputRefs.get(result.output)};
+}
+function unpackToolResult(wire){
+ const result=wire.result;
+ for(const [key,id] of Object.entries(wire.values??{}))result[key]=objectFor(id);
+ if(wire.contentHost!==undefined)result.output=objectFor(wire.contentHost);
+ else if(wire.contentRef!==undefined&&nativeOutputArrays.has(wire.contentRef))result.output=nativeOutputArrays.get(wire.contentRef);
+ if(result.output&&wire.contentRef!==undefined){nativeOutputArrays.set(wire.contentRef,result.output);nativeOutputRefs.set(result.output,wire.contentRef);}
+ return result;
+}
+function hookRuntime(args){const current=runtime(args.runtime);current.taskId=args.taskId;current.conversationId=args.conversationId;current.harness=args.harness;return current;}
+nativeTransport.register("tool.beforeHook",(args,context)=>objectFor(args.handler)(args.call,hookRuntime(args),withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT)));
+nativeTransport.register("tool.afterHook",async(args,context)=>{const result=await objectFor(args.handler)(args.call,unpackToolResult(args.result),hookRuntime(args),withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT));return result===undefined?undefined:packToolResult(result);});
+
+nativeTransport.register("environment.build",async(args,context)=>{
+ const harness=harnesses.get(args.harness),build=harness.options.env;if(build===undefined)return undefined;
+ const target={conversationId:args.conversationId,read:harness};if(args.cwd!==null)target.cwd=args.cwd;
+ const env=await build(target,context??BACKGROUND_CONTEXT);return env===undefined?undefined:{handle:handle(env),namespace:env.id,cwd:env.cwd};
+});
+nativeTransport.register("environment.call",async(args,context)=>{
+ const env=objectFor(args.environment),values=[...args.args];
+ if(args.method==="writeFile"||args.method==="appendFile")values[1]=Uint8Array.from(Buffer.from(values[1],"base64"));
+ if(args.method==="exec"&&values[1]?.onOutput!==undefined){const callback=values[1].onOutput;values[1].onOutput=(text,_context,info)=>nativeTransport.sync("environment.output",{callback,text,info});}
+ const result=await env[args.method](...values,context??BACKGROUND_CONTEXT);
+ if(args.method==="cleanup")return {ok:true,value:null};
+ if(result.ok){if(args.method==="readBinaryFile")return {ok:true,value:Buffer.from(result.value).toString("base64")};return result;}
+ return {ok:false,error:{code:result.error.code,message:result.error.message,path:result.error.path,spillPath:result.error.spillPath}};
+});
+
+nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));

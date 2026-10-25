@@ -9,7 +9,7 @@ pub(crate) fn eager<T: Send + 'static>(
     operation: impl Future<Output = Result<T>> + Send + 'static,
 ) -> StorageFuture<T> {
     let (send, receive) = tokio::sync::oneshot::channel();
-    tokio::spawn(async move {
+    crate::session::executor::spawn(async move {
         let result = std::panic::AssertUnwindSafe(operation)
             .catch_unwind()
             .await
@@ -52,5 +52,19 @@ impl MutationLine {
             let _ = finish.send(());
             result
         })
+    }
+}
+
+/// Observe an operation that is already admitted and runs independently. No
+/// extra spawned task may reorder an already-ready shared result.
+pub(crate) async fn observe<F: Future>(
+    operation: F,
+    context: &crate::Context,
+) -> std::result::Result<F::Output, pi_chord::context::AwaitError> {
+    if let Some(signal) = context.abort_signal() {
+        signal.check()?;
+        tokio::select! {biased;_ = signal.cancelled()=>Err(signal.reason().expect("cancelled signal has a reason").waiter_error().into()),result=operation=>Ok(result)}
+    } else {
+        Ok(operation.await)
     }
 }

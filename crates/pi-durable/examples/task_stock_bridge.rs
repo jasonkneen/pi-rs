@@ -38,8 +38,14 @@ mod registry_bridge;
 mod remote_storage;
 #[path = "support/submission_bridge.rs"]
 mod submission_bridge;
+#[path = "support/tool_bridge.rs"]
+mod tool_bridge;
+#[path = "support/tool_environment.rs"]
+mod tool_environment;
 static CALL_CONTEXT: LazyLock<ContextKey<u64>> =
     LazyLock::new(|| create_context_key("stock-test context"));
+static HARNESS_CONTEXT: LazyLock<ContextKey<u64>> =
+    LazyLock::new(|| create_context_key("stock-test harness"));
 fn encode(value: &impl Serialize) -> JsonValue {
     pi_chord::json::to_value(value).unwrap()
 }
@@ -61,6 +67,10 @@ fn error_value(error: &Error) -> JsonValue {
     let mut value = object([
         ("name", encode(&error.name())),
         ("message", encode(&error.message_text())),
+        (
+            "aborted",
+            encode(&matches!(error.kind(), ErrorKind::Aborted(_))),
+        ),
     ]);
     if let ErrorKind::SessionFailed { cause } | ErrorKind::DocumentCopy { cause, .. } = error.kind()
     {
@@ -73,6 +83,7 @@ fn error_value(error: &Error) -> JsonValue {
 }
 type TaskRuntime = NativeRuntime<JsonValue, JsonValue, JsonValue, u64>;
 type JsonTask = Task<JsonValue, JsonValue, JsonValue, u64>;
+type ErasedRuntime = NativeRuntime<JsonValue, JsonValue, JsonValue, ()>;
 enum Pending {
     Async(tokio::sync::oneshot::Sender<Result<Option<JsonValue>>>),
     Sync(std::sync::mpsc::Sender<Result<Option<JsonValue>>>),
@@ -87,8 +98,13 @@ struct Hub {
     input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
+    readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
     runtimes: Mutex<HashMap<u64, TaskRuntime>>,
+    native_runtimes: Mutex<HashMap<u64, ErasedRuntime>>,
+    tool: tool_bridge::ToolBridge,
+    environment: tool_environment::EnvironmentBridge,
+    host_timers: Mutex<HashMap<u64, DisarmTimer>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
     contexts: Mutex<HashMap<u64, AbortController>>,
     phases: AtomicU64,
@@ -218,16 +234,17 @@ impl Hub {
             let name = phase.clone();
             handlers.insert(
                 phase,
-                Arc::new(move |task: RunningTask, runtime: TaskRuntime, _| {
-                    hub.phase(id, name.clone(), task, runtime)
+                Arc::new(move |task: RunningTask, runtime: TaskRuntime, context| {
+                    hub.phase(id, name.clone(), task, runtime, context)
                 }) as PhaseHandler<JsonValue, JsonValue, JsonValue, u64>,
             );
         }
         let hub = self.clone();
         let initial = Arc::new(move |input: &JsonValue| hub.sync("initial", encode(&(id, input))));
         let hub = self.clone();
-        let abort = Arc::new(move |task, runtime, _| hub.phase(id, "$abort".into(), task, runtime))
-            as PhaseHandler<JsonValue, JsonValue, JsonValue, u64>;
+        let abort = Arc::new(move |task, runtime, context| {
+            hub.phase(id, "$abort".into(), task, runtime, context)
+        }) as PhaseHandler<JsonValue, JsonValue, JsonValue, u64>;
         let migrate = if description["migrate"].as_bool() == Some(true) {
             let hub = self.clone();
             Some(Arc::new(move |input, checkpoint, version| {
@@ -256,6 +273,7 @@ impl Hub {
         phase: JsonString,
         task: RunningTask,
         runtime: TaskRuntime,
+        context: Context,
     ) -> StorageFuture<()> {
         self.phases.fetch_add(1, Ordering::Relaxed);
         let existing = self
@@ -288,7 +306,14 @@ impl Hub {
         };
         let call = self.call(
             "phase",
-            encode(&(definition, phase, task.record(), id, serial)),
+            encode(&(
+                definition,
+                phase,
+                task.record(),
+                id,
+                serial,
+                context.value(&HARNESS_CONTEXT).map(|id| *id),
+            )),
         );
         Box::pin(async move {
             call.await?;
@@ -332,11 +357,19 @@ impl Hub {
             .cloned()
             .ok_or_else(|| Error::message("Unknown transaction"))
     }
-    fn runtime(&self, request: &JsonValue) -> Result<TaskRuntime> {
-        self.runtimes
+    fn runtime(&self, request: &JsonValue) -> Result<ErasedRuntime> {
+        if let Some(runtime) = self
+            .native_runtimes
             .lock()
             .get(&field::<u64>(request, "runtime")?)
             .cloned()
+        {
+            return Ok(runtime);
+        }
+        self.runtimes
+            .lock()
+            .get(&field::<u64>(request, "runtime")?)
+            .map(NativeRuntime::erased)
             .ok_or_else(|| Error::message("Unknown test runtime"))
     }
     fn context(&self, id: u64) -> Context {
@@ -356,6 +389,12 @@ impl Hub {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
         let method: String = field(&request, "method")?;
+        if method.starts_with("environment.") {
+            return self.environment_request(&method, request, context);
+        }
+        if method.starts_with("tool.") {
+            return self.tool_request(&method, request, context);
+        }
         if method.starts_with("submission.") {
             return self.submission_request(&method, request, context);
         }
@@ -387,16 +426,20 @@ impl Hub {
                 let harness: u64 = field(&request, "id")?;
                 let handle: u64 = field(&request, "storage")?;
                 let registry = self.registry_reader(&request)?;
+                self.readers.lock().insert(harness, registry.clone());
                 let report = self.clone();
                 let session_report = self.clone();
                 let clock = self.clone();
                 let settings = self.clone();
                 let resolver = self.clone();
+                let environment = self.clone();
+                let has_environment = request["environment"].as_bool() == Some(true);
                 let scheduler=TaskScheduler::open(Arc::new(remote_storage::RemoteStorage{hub:self.clone(),handle}),registry,SchedulerOptions{
+                    env:Arc::new(move |conversation,context|if has_environment {environment.build_environment(harness,conversation,context)}else{Box::pin(async {Ok(None)})}),
                     settings:Arc::new(move ||registry_bridge::settings(&settings.sync("settings",encode(&harness))?)),
                     settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
                     on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}})))),..Default::default()
-                },SessionOptions{report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&context).await?;
+                },SessionOptions{report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()),document_retention_ms:field(&request,"retention")?,..Default::default()},&with_context_value(&HARNESS_CONTEXT,harness,&context)).await?;
                 let resume = scheduler.clone();
                 let clock = self.clone();
                 let settings = self.clone();
@@ -424,14 +467,20 @@ impl Hub {
             "root" => {
                 let scheduler = self.scheduler(&request)?;
                 mapped(scheduler.session().commit(
-                    |tx| async move {
-                        Ok(
-                            if let Some(root) = tx.conversation(ROOT_CONVERSATION_ID).await? {
-                                root.id
-                            } else {
-                                tx.create_root_conversation().await?.id
-                            },
-                        )
+                    move |tx| async move {
+                        if let Some(root) = tx.conversation(ROOT_CONVERSATION_ID).await? {
+                            return Ok(root.id);
+                        }
+                        let root = tx.create_root_conversation().await?;
+                        if request["options"]["agent"].is_object() {
+                            pi_durable::harness::agent::configure(
+                                &tx,
+                                root.id,
+                                field(&request["options"], "agent")?,
+                            )
+                            .await?;
+                        }
+                        Ok(root.id)
                     },
                     &context,
                 ))
@@ -439,6 +488,49 @@ impl Hub {
             "inspect" => {
                 self.inspections.fetch_add(1, Ordering::Relaxed);
                 mapped(self.scheduler(&request)?.inspect(&context))
+            }
+            "conversationAgent" => {
+                let scheduler = self.scheduler(&request)?;
+                let harness: u64 = field(&request, "harness")?;
+                let conversation = field(&request, "conversation")?;
+                let reader = self
+                    .readers
+                    .lock()
+                    .get(&harness)
+                    .cloned()
+                    .ok_or_else(|| Error::message("Unknown reader"))?;
+                let hub = self.clone();
+                let settings = self.clone();
+                let report = self.clone();
+                Box::pin(async move {
+                    let request = pi_durable::harness::agent::AgentRequest {
+                        session: scheduler.session().clone(),
+                        conversation,
+                        snapshot: reader.snapshot()?,
+                        settings: Arc::new(move || {
+                            registry_bridge::settings(&settings.sync("settings", encode(&harness))?)
+                        }),
+                        report: Arc::new(move |error, extension| {
+                            report.emit(object([
+                                ("type", encode(&"report")),
+                                ("harness", encode(&harness)),
+                                ("error", error_value(&error)),
+                                (
+                                    "info",
+                                    object([
+                                        ("type", encode(&"extension_error")),
+                                        ("extension", encode(&extension)),
+                                    ]),
+                                ),
+                            ]))
+                        }),
+                        context,
+                    };
+                    let agent = pi_durable::harness::agent::resolve_agent_in(request)
+                        .await?
+                        .typed::<registry_bridge::ToolHandle, registry_bridge::SectionHandle>()?;
+                    Ok(Some(hub.encode_agent(agent)))
+                })
             }
             "conversation" => {
                 let id = field(&request, "conversation")?;
@@ -459,7 +551,18 @@ impl Hub {
                 };
                 let tx = self.transaction(&request)?;
                 if method == "tx.createConversation" {
-                    mapped(tx.create_conversation(ownership))
+                    Box::pin(async move {
+                        let record = tx.create_conversation(ownership).await?;
+                        if request["options"]["agent"].is_object() {
+                            pi_durable::harness::agent::configure(
+                                &tx,
+                                record.id,
+                                field(&request["options"], "agent")?,
+                            )
+                            .await?;
+                        }
+                        Ok(Some(encode(&record)))
+                    })
                 } else {
                     mapped(tx.fork_conversation(
                         field(&request, "conversation")?,
@@ -479,7 +582,18 @@ impl Hub {
                     _ => return Err(Error::message("Unknown conversation ownership")),
                 };
                 mapped(scheduler.session().commit(
-                    move |tx| async move { Ok(tx.create_conversation(ownership).await?.id) },
+                    move |tx| async move {
+                        let record = tx.create_conversation(ownership).await?;
+                        if request["options"]["agent"].is_object() {
+                            pi_durable::harness::agent::configure(
+                                &tx,
+                                record.id,
+                                field(&request["options"], "agent")?,
+                            )
+                            .await?;
+                        }
+                        Ok(record.id)
+                    },
                     &context,
                 ))
             }
@@ -512,6 +626,12 @@ impl Hub {
                 field(&request, "limit")?,
                 field(&request, "cursor")?,
             )),
+            "tx.latestHeadMarker" => {
+                let operation = self
+                    .transaction(&request)?
+                    .latest_head_marker(field(&request, "conversation")?);
+                Box::pin(async move { Ok(operation.await?.map(|entry| encode(&entry))) })
+            }
             "entry" => {
                 let operation = self.transaction(&request)?.entry(field(&request, "entry")?);
                 let kind: Option<JsonString> = field(&request, "kind")?;
@@ -594,6 +714,63 @@ impl Hub {
                     Ok(None)
                 })
             }
+            "runtimeTimer" => {
+                let runtime = self.runtime(&request)?;
+                let callback: u64 = field(&request, "callback")?;
+                let timer = self.next.fetch_add(1, Ordering::Relaxed);
+                let hub = self.clone();
+                let disarm = runtime.set_timer(
+                    move || {
+                        let operation = hub.call("timerFire", encode(&callback));
+                        tokio::spawn(async move {
+                            let _ = operation.await;
+                        });
+                    },
+                    field(&request, "delay")?,
+                );
+                self.host_timers.lock().insert(timer, disarm);
+                Box::pin(async move { Ok(Some(encode(&timer))) })
+            }
+            "runtimeDisarmTimer" => {
+                if let Some(disarm) = self.host_timers.lock().remove(&field(&request, "timer")?) {
+                    disarm();
+                }
+                Box::pin(async { Ok(None) })
+            }
+            "runtimeEnv" => {
+                let operation = self.runtime(&request)?.env(&context);
+                let hub = self.clone();
+                Box::pin(async move {
+                    Ok(operation
+                        .await?
+                        .and_then(|env| hub.environment.handle(&env))
+                        .map(|id| encode(&id)))
+                })
+            }
+            "runtimeSettings" => {
+                let runtime = self.runtime(&request)?;
+                Box::pin(async move {
+                    tokio::task::spawn_blocking(move || {
+                        Ok(Some(registry_bridge::settings_value(&runtime.settings()?)))
+                    })
+                    .await
+                    .map_err(|error| Error::message(error.to_string()))?
+                })
+            }
+            "runtimeEntry" => {
+                let operation = self
+                    .runtime(&request)?
+                    .entry(field(&request, "entry")?, &context);
+                Box::pin(async move {
+                    Ok(operation
+                        .await?
+                        .filter(|entry| {
+                            request["kind"].is_null()
+                                || entry.kind == field::<JsonString>(&request, "kind").unwrap()
+                        })
+                        .map(|entry| encode(&entry)))
+                })
+            }
             "runtimeNow" | "runtimeReport" => {
                 let runtime = self.runtime(&request)?;
                 Box::pin(async move {
@@ -643,20 +820,28 @@ impl Hub {
                         )?)
                     },
                 );
-                mapped(self.runtime(&request)?.hooks().each(&key, move |handler| {
-                    invoke.hook_calls.fetch_add(1, Ordering::Relaxed);
-                    let call = invoke.call(
-                        "hookInvoke",
-                        object([
-                            ("callback", encode(&callback)),
-                            ("handler", encode(&handler)),
-                        ]),
-                    );
-                    async move {
-                        call.await?;
-                        Ok(())
-                    }
-                }))
+                mapped(
+                    self.runtimes
+                        .lock()
+                        .get(&field::<u64>(&request, "runtime")?)
+                        .cloned()
+                        .ok_or_else(|| Error::message("No generic hooks binding"))?
+                        .hooks()
+                        .each(&key, move |handler| {
+                            invoke.hook_calls.fetch_add(1, Ordering::Relaxed);
+                            let call = invoke.call(
+                                "hookInvoke",
+                                object([
+                                    ("callback", encode(&callback)),
+                                    ("handler", encode(&handler)),
+                                ]),
+                            );
+                            async move {
+                                call.await?;
+                                Ok(())
+                            }
+                        }),
+                )
             }
             "configure" => {
                 let scheduler = self.scheduler(&request)?;
@@ -707,6 +892,10 @@ impl Hub {
                 scheduler.resume()?;
                 mapped(scheduler.wait_for_task(field(&request, "task")?, &context))
             }
+            "runtimeWaitForTask" => mapped(self.runtime(&request)?.wait_for_task(
+                TypedTaskId::<JsonValue>::from_untyped(field(&request, "task")?),
+                &context,
+            )),
             "runtimeGetTask" => {
                 let runtime = self.runtime(&request)?;
                 let operation = runtime.get_task(
@@ -795,11 +984,19 @@ impl Hub {
                     .transpose()?;
                 create.background = options["background"].as_bool().unwrap_or(false);
                 create.abandon_on_restart = options["abandonOnRestart"].as_bool().unwrap_or(false);
-                mapped(tx.create_task(&task, request["input"].clone(), create))
+                if request["definition"]["nativeTool"].as_bool() == Some(true) {
+                    mapped(tx.create_task(
+                        &pi_durable::harness::tool::TOOL_TASK,
+                        field(&request, "input")?,
+                        create,
+                    ))
+                } else {
+                    mapped(tx.create_task(&task, request["input"].clone(), create))
+                }
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -853,8 +1050,13 @@ async fn main() {
         input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
+        readers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
         runtimes: Mutex::new(HashMap::new()),
+        native_runtimes: Mutex::new(HashMap::new()),
+        tool: tool_bridge::ToolBridge::default(),
+        environment: tool_environment::EnvironmentBridge::default(),
+        host_timers: Mutex::new(HashMap::new()),
         transactions: Mutex::new(HashMap::new()),
         contexts: Mutex::new(HashMap::new()),
         phases: AtomicU64::new(0),
@@ -961,6 +1163,9 @@ async fn main() {
             if value["method"].to_utf8().is_some_and(|method| {
                 method.starts_with("registry.")
                     || method == "runtimeRegistry"
+                    || method == "runtimeTimer"
+                    || method == "runtimeDisarmTimer"
+                    || method == "runtimeSettings"
                     || method == "runtimeNow"
                     || method == "runtimeReport"
                     || (method.starts_with("graph.")

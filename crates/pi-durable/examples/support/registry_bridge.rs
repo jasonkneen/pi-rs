@@ -13,6 +13,8 @@ pub(super) struct ToolHandle {
     callers: Option<Vec<ToolCaller>>,
     #[serde(default)]
     deferred: bool,
+    #[serde(skip)]
+    pub executable: Option<Arc<dyn pi_durable::harness::tool::ExecutableTool>>,
 }
 impl RegisteredTool for ToolHandle {
     fn name(&self) -> &JsonString {
@@ -23,6 +25,9 @@ impl RegisteredTool for ToolHandle {
     }
     fn deferred(&self) -> bool {
         self.deferred
+    }
+    fn executable(self: Arc<Self>) -> Option<Arc<dyn pi_durable::harness::tool::ExecutableTool>> {
+        self.executable.clone()
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -224,19 +229,31 @@ impl Hub {
             return Ok(extension);
         }
         let mut extension = Ext::new(field::<JsonString>(description, "name")?);
-        extension.tools = field::<Vec<ToolHandle>>(description, "tools")?
-            .into_iter()
-            .map(Arc::new)
-            .collect();
+        extension.tools = field::<Vec<JsonValue>>(description, "tools")?
+            .iter()
+            .map(|value| self.host_tool(value))
+            .collect::<Result<_>>()?;
         extension.sections = field::<Vec<SectionHandle>>(description, "sections")?
             .into_iter()
             .map(Arc::new)
             .collect();
         extension.tasks = field::<Vec<JsonValue>>(description, "tasks")?
             .iter()
-            .map(|description| self.definition(description).map(|task| task.erased()))
+            .map(|description| self.stock_catalog_task(description))
             .collect::<Result<_>>()?;
         for hook in field::<Vec<JsonValue>>(description, "hooks")? {
+            if hook["nativeTool"].as_bool() == Some(true) {
+                extension.hooks.push(HookRegistration::new(
+                    "pi.tool",
+                    Arc::new(pi_durable::harness::tool::ToolHooks {
+                        provider: Some(Arc::new(super::tool_bridge::HostToolHooks {
+                            hub: Arc::downgrade(self),
+                            id: field(&hook, "handlers")?,
+                        })),
+                        ..Default::default()
+                    }),
+                ));
+            }
             extension.hooks.push(HookRegistration::new(
                 field::<JsonString>(&hook, "task")?,
                 Arc::new(field::<u64>(&hook, "handlers")?),
@@ -250,7 +267,7 @@ impl Hub {
                     name: name.clone(),
                     apply: Arc::new(move |tool| {
                         hub.registry.wrappers.fetch_add(1, Ordering::Relaxed);
-                        decode(&hub.sync(
+                        hub.host_tool(&hub.sync(
                             "registry.wrap",
                             object([
                                 ("callback", encode(&callback)),
@@ -258,7 +275,6 @@ impl Hub {
                                 ("item", encode(&tool.id)),
                             ]),
                         )?)
-                        .map(Arc::new)
                     }),
                 });
             } else {
@@ -332,7 +348,7 @@ impl Hub {
             "registry.create" => {
                 let builtins = field::<Vec<JsonValue>>(&request, "builtins")?
                     .iter()
-                    .map(|definition| self.definition(definition).map(|task| task.erased()))
+                    .map(|definition| self.stock_catalog_task(definition))
                     .collect::<Result<Vec<_>>>()?;
                 let id = self.next.fetch_add(1, Ordering::Relaxed);
                 self.registry
@@ -408,34 +424,18 @@ impl Hub {
                     })
                     .collect::<Vec<_>>(),
             ),
-            "registry.tasks" => {
-                let tasks = self.tasks.lock();
-                encode(
-                    &snapshot()?
-                        .tasks()
-                        .iter()
-                        .map(|task| {
-                            *tasks
-                                .iter()
-                                .find(|(_, held)| held.erased().same_definition(task))
-                                .unwrap()
-                                .0
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
+            "registry.tasks" => encode(
+                &snapshot()?
+                    .tasks()
+                    .iter()
+                    .map(|task| self.bound_task_id(task))
+                    .collect::<Result<Vec<_>>>()?,
+            ),
             "registry.task" => {
-                let task = snapshot()?.task(&field(&request, "name")?);
-                let tasks = self.tasks.lock();
-                return Ok(task.map(|task| {
-                    encode(
-                        tasks
-                            .iter()
-                            .find(|(_, held)| held.erased().same_definition(&task))
-                            .unwrap()
-                            .0,
-                    )
-                }));
+                return snapshot()?
+                    .task(&field(&request, "name")?)
+                    .map(|task| self.bound_task_id(&task).map(|id| Some(encode(&id))))
+                    .unwrap_or(Ok(None));
             }
             "registry.settings" => settings_value(&settings(&request)?),
             "registry.resolve" => {
@@ -469,11 +469,13 @@ impl Hub {
             "registry.hooks" => encode(
                 &agent_hooks(agent()?.as_ref(), &field(&request, "task")?)
                     .into_iter()
-                    .map(|(extension, handlers)| {
-                        object([
-                            ("extension", encode(&extension)),
-                            ("handlers", encode(handlers.downcast_ref::<u64>().unwrap())),
-                        ])
+                    .filter_map(|(extension, handlers)| {
+                        handlers.downcast_ref::<u64>().map(|handlers| {
+                            object([
+                                ("extension", encode(&extension)),
+                                ("handlers", encode(handlers)),
+                            ])
+                        })
                     })
                     .collect::<Vec<_>>(),
             ),

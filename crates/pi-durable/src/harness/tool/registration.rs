@@ -201,7 +201,7 @@ fn structured_output_error(
         (Some(schema), Some(value)) => {
             let schema = sdk_json(schema)?;
             let validator = pi_ai::utils::validation::SchemaValidator::new(&schema);
-            let value = sdk_json(value)?;
+            let value = sdk_json(&value.copy_json()?)?;
             if validator.check(&value) {
                 return Ok(None);
             }

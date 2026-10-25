@@ -1,5 +1,6 @@
 //! One ordered mutation line with durable adoption, revocable drafts and
 //! incarnation-bound observations. Storage is the sole persistence authority.
+pub(crate) mod executor;
 mod forks;
 mod guard;
 mod transaction;
@@ -118,6 +119,7 @@ struct State {
 }
 struct Inner {
     guard: Arc<GuardedStorage>,
+    executor: executor::Executor,
     storage: Arc<dyn Storage>,
     options: SessionOptions,
     timers: Timers,
@@ -169,6 +171,7 @@ impl Session {
                 timers: Timers::new(options.set_timer.clone(), options.report.clone()),
                 storage: Arc::new(Guard(guard.clone())),
                 guard: guard.clone(),
+                executor: executor::Executor::default(),
                 options,
                 state: Mutex::new(State::default()),
                 tail: Mutex::new(async {}.boxed().shared()),
@@ -230,6 +233,9 @@ impl Session {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.inner.options.now)()))
             .unwrap_or_else(|_| wall_now())
     }
+    pub(crate) fn spawn(&self, operation: impl Future<Output = ()> + Send + 'static) {
+        self.inner.executor.spawn(operation);
+    }
     fn enqueue<T, F, Fut>(&self, callback: F) -> StorageFuture<T>
     where
         T: Send + 'static,
@@ -250,14 +256,14 @@ impl Session {
             )
         };
         let session = self.clone();
-        tokio::spawn(async move {
+        self.spawn(async move {
             previous.await;
             let result = std::panic::AssertUnwindSafe(async { callback(session).await })
                 .catch_unwind()
                 .await
                 .unwrap_or_else(|p| Err(panic_error(p)));
-            let _ = done.send(());
             let _ = send.send(result);
+            let _ = done.send(());
         });
         Box::pin(async move {
             receive

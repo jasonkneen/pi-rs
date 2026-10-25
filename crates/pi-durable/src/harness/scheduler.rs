@@ -1326,7 +1326,7 @@ impl TaskScheduler {
     }
     fn start(&self, reservation: Reservation) {
         let scheduler = self.clone();
-        tokio::spawn(async move {
+        self.inner.session.spawn(async move {
             let invocation = reservation.invocation.clone();
             let result = std::panic::AssertUnwindSafe(scheduler.run(reservation))
                 .catch_unwind()
@@ -2397,7 +2397,7 @@ impl TaskDriver for Driver {
         };
         let context = context.clone();
         eager(async move {
-            match await_with_context(shared, &context).await {
+            match crate::storage::line::observe(shared, &context).await {
                 Ok(result) => result,
                 Err(pi_chord::context::AwaitError::Aborted(error)) => Err(error.into()),
                 Err(pi_chord::context::AwaitError::Task(error)) => {

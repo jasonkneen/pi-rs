@@ -4,15 +4,16 @@ import {writeFileSync} from "node:fs";
 import {GenerationTask,ToolTask,CompactionTask} from "@earendil-works/pi-durable";
 import {nativeTransport,failure} from "./durable-native-transport.mjs";
 import {captureSettings,settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
-import {handle,objectFor,describeTask} from "./durable-native-handles.mjs";
+import {handle,objectFor,describeTask,markNativeTool} from "./durable-native-handles.mjs";
+if(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1")markNativeTool(ToolTask);
 const ids=new WeakMap(),snapshots=new Map(),agents=new WeakMap(),resolvedAgents=new Map(),registries=new WeakMap();
 const callbacks={listeners:0,wrappers:0,reports:0};
 const call=(method,args={})=>nativeTransport.sync(`registry.${method}`,args);
-function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true};}
+function describeTool(tool){return{id:handle(tool),name:tool.name,callers:tool.callers,deferred:tool.deferred===true,...(process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"?{declaration:{name:tool.name,description:tool.description,parameters:tool.parameters,constrainedSampling:tool.constrainedSampling},replay:tool.replay,limits:{maxBytes:tool.outputLimits?.maxBytes??51200,maxLines:tool.outputLimits?.maxLines??2000,retain:tool.outputLimits?.retain??"head"},schema:tool.structuredOutputSchema}:{})};}
 function describeSection(section){return{id:handle(section),key:section.key};}
 function describeExtension(extension){return{
  id:handle(extension),name:extension.name,tools:(extension.tools??[]).map(describeTool),sections:(extension.sections??[]).map(describeSection),tasks:(extension.tasks??[]).map(describeTask),
- hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers)})),
+ hooks:(extension.hooks??[]).map(hook=>({task:hook.task,handlers:handle(hook.handlers),nativeTool:process.env.PI_DURABLE_NATIVE_TOOL_TASK==="1"&&hook.task==="pi.tool"})),
  wraps:(extension.wraps??[]).map(wrap=>({...(Object.hasOwn(wrap,"tool")?{tool:wrap.tool}:{section:wrap.section}),callback:handle(wrap.wrap)})),
 };}
 nativeTransport.register("registry.listener",args=>{callbacks.listeners++;objectFor(args)();return null;});

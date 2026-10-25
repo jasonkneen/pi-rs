@@ -67,6 +67,11 @@ impl<I, S, R, H> TaskRuntime<I, S, R, H> {
             marker: PhantomData,
         }
     }
+    /// Lossless JSON view for runtime bindings. It keeps the invocation driver,
+    /// admission gates and lifetimes; typed hook selection remains on the typed view.
+    pub fn erased(&self) -> TaskRuntime<JsonValue, JsonValue, JsonValue, ()> {
+        TaskRuntime::new(self.driver.clone())
+    }
     pub fn task_id(&self) -> TypedTaskId<R> {
         TypedTaskId::from_untyped(self.driver.task_id())
     }

@@ -596,7 +596,9 @@
         "crates/pi-durable/src/harness/task_graph.rs",
         "crates/pi-durable/tests/task_graph.rs",
         "crates/pi-durable/src/harness/models.rs",
-        "crates/pi-durable/tests/models_runtime.rs"
+        "crates/pi-durable/tests/models_runtime.rs",
+        "crates/pi-durable/src/session/executor.rs",
+        "crates/pi-durable/src/storage/line.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -607,7 +609,8 @@
         "Native shared agent resolution starts eagerly, survives dropped/cancelled waiters, caches errors and resets per phase and abort invocation; one live settings reader supplies runtime and scheduler policy",
         "Non-executing inspection retains task and error identities; blocked-change subscriptions drive graph refresh; successful task waits observe the entire publication",
         "Native and stock regressions prove reentrant close during phase snapshot refresh prevents the next handler",
-        "Runtime models resolve the live host getter at each access, including after invocation end/close; native compaction integration exercises them"
+        "Runtime models resolve the live host getter at each access, including after invocation end/close; native compaction integration exercises them",
+        "Per-Session FIFO polling preserves admission and wake ordering without blocking pending I/O; native executor regressions cover nested eager jobs and runtime shutdown before and after polling"
       ]
     },
     {
@@ -661,12 +664,18 @@
         "crates/pi-durable/src/harness/tool/result.rs",
         "crates/pi-durable/tests/tool_runtime.rs",
         "crates/pi-durable/tests/tool_results.rs",
-        "scripts/golden/gen-durable-tool-results.mjs"
+        "scripts/golden/gen-durable-tool-results.mjs",
+        "crates/pi-durable/src/harness/tool/value.rs",
+        "crates/pi-durable/examples/support/tool_bridge.rs",
+        "crates/pi-durable/examples/support/tool_environment.rs",
+        "scripts/run-stock-durable-tasks.mjs"
       ],
       "evidence": [
         "Native pi.tool v2 call/execute/abort phases, v1 migration, argument validation/coercion, before/after hooks, durable execution intent, dual-safe replay, throttled progress, nested admission and replay by key, receipts/usage and sibling cancellation before settlement",
-        "Twelve native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
-        "Stock harness-tools, recovery, nested-tool and structured-output execution suites are not yet mapped to the native implementation; native full Harness/generation, embedded JS registration bindings and complete lossless SDK validation and tool phase telemetry remain open"
+        "Sixteen native execution/progress integration tests and sixteen independent source result/usage traces; native record codecs preserve explicit nulls, provider extras and arbitrary UTF16",
+        "All 39 unmodified harness-tools cases and all nine unmodified harness-tools-recovery cases run against native pi.tool under both retention modes; counters require native execute and tool hook calls",
+        "Fallible hook-member lookup propagates outside invocation catches; host values remain available for afterTool repair before strict JSON settlement; erased runtime keeps the same invocation guards",
+        "Stock gates retain original JS generation handlers, provider/tool/schema/environment/backend capabilities. Nested-tool and structured-output stock files, full native Harness/generation, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open"
       ]
     },
     {
@@ -1762,15 +1771,42 @@
     },
     {
       "reference": "packages/durable/test/harness-tools-recovery.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/tool/task.rs",
+        "crates/pi-durable/tests/tool_runtime.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "crates/pi-durable/examples/support/tool_bridge.rs",
+        "crates/pi-durable/examples/support/tool_environment.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 9 cases execute unmodified against native Session/scheduler/registry/pi.tool in retention=600000 and retention=0; source hash and zero pending tests checked",
+        "Native counters prove tool execution and before/after hook invocation; source JS generation, tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
+        "porting/durable/STATUS.md",
+        "Original tests exercise actual SQLite close/reopen and a real interrupted bash command; no source assertions, flushes or timeouts changed"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-tools.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/tool/task.rs",
+        "crates/pi-durable/tests/tool_runtime.rs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "crates/pi-durable/examples/support/tool_bridge.rs",
+        "crates/pi-durable/examples/support/tool_environment.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 39 cases execute unmodified against native Session/scheduler/registry/pi.tool in retention=600000 and retention=0; source hash and zero pending tests checked",
+        "Native counters prove tool execution and before/after hook invocation; source JS generation, tool callbacks, SDK schema validation, provider, environment and backend remain host capabilities",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-view.test.ts",

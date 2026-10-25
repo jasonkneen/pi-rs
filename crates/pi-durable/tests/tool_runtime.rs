@@ -513,7 +513,7 @@ async fn nested_structured_output_is_checked_and_plain_output_is_bounded() {
         Arc::new(|_, _, _| {
             Box::pin(async {
                 Ok(ToolExecutionResult {
-                    structured_output: Some(json(r#"{"wrong":true}"#)),
+                    structured_output: Some(json(r#"{"wrong":true}"#).into()),
                     ..Default::default()
                 })
             })
@@ -865,7 +865,7 @@ async fn model_structured_output_breaks_report_as_extension_errors_even_without_
                 Box::pin(async {
                     Ok(ToolExecutionResult {
                         output: Some(Arc::new(vec![text_content("visible".into())])),
-                        structured_output: Some(JsonValue::Null),
+                        structured_output: Some(JsonValue::Null.into()),
                         ..Default::default()
                     })
                 })
@@ -1007,4 +1007,263 @@ async fn tail_window_policy_is_captured_before_building_the_environment() {
         .close(&Context::default())
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn parallel_model_calls_begin_in_admission_order_when_services_are_ready() {
+    for _ in 0..16 {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let ready = Arc::new(Semaphore::new(0));
+        let release = Arc::new(Semaphore::new(0));
+        let tools = ["a", "b"]
+            .into_iter()
+            .map(|name| {
+                let seen = seen.clone();
+                let ready = ready.clone();
+                let release = release.clone();
+                native(
+                    name,
+                    Arc::new(move |_, _, _| {
+                        seen.lock().push(name);
+                        ready.add_permits(1);
+                        let release = release.clone();
+                        Box::pin(async move {
+                            release.acquire().await.unwrap().forget();
+                            Ok(ToolExecutionResult::default())
+                        })
+                    }),
+                )
+            })
+            .collect();
+        let (scheduler, conversation) = open(tools, vec![], SchedulerOptions::default()).await;
+        let ids = scheduler
+            .session()
+            .commit(
+                move |tx| async move {
+                    let calls = ["a", "b"]
+                        .into_iter()
+                        .map(|name| ToolCall::new(name, name, json(r#"{"n":1}"#)))
+                        .collect::<Vec<_>>();
+                    let mut message = object(r#"{"role":"assistant"}"#);
+                    message.insert("content".into(), pi_chord::json::to_value(&calls).unwrap());
+                    let mut entry = EntryDraft::new("pi.assistant");
+                    entry.model = Some(vec![message.into_value()]);
+                    let entry = tx.append_entry(conversation, entry).await?;
+                    let mut ids = Vec::new();
+                    let mut slots = Vec::new();
+                    for name in ["a", "b"] {
+                        let mut options = TaskOptions::new(TaskOwnership::Conversation);
+                        options.conversation_id = Some(conversation);
+                        let id = tx
+                            .create_task(&TOOL_TASK, ToolTaskInput::model(entry.id, name), options)
+                            .await?
+                            .untyped();
+                        ids.push(id);
+                        slots.push(ToolSlot {
+                            progress: SlotProgress::new(name, name),
+                            task_id: Some(id),
+                            entry: None,
+                        });
+                    }
+                    tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
+                        live.tools = Some(slots);
+                        Ok(())
+                    })?;
+                    Ok(ids)
+                },
+                &Context::default(),
+            )
+            .await
+            .unwrap();
+        scheduler.resume().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), ready.acquire_many(2))
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+        assert_eq!(*seen.lock(), vec!["a", "b"]);
+        release.add_permits(2);
+        for id in ids {
+            settled(&scheduler, id).await;
+        }
+        scheduler
+            .session()
+            .close(&Context::default())
+            .await
+            .unwrap();
+    }
+}
+
+struct FailingHookLookup(Error);
+impl ToolHookProvider for FailingHookLookup {
+    fn before_tool(&self) -> Result<Option<BeforeTool>> {
+        Err(self.0.clone())
+    }
+    fn after_tool(&self) -> Result<Option<AfterTool>> {
+        Ok(None)
+    }
+}
+#[tokio::test]
+async fn fallible_tool_hook_selection_faults_instead_of_becoming_a_block_decision() {
+    let original = Error::host("LookupFailure", JsonString::from_utf16(vec![0xd800]));
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let capture = reports.clone();
+    let hook = ToolHooks {
+        provider: Some(Arc::new(FailingHookLookup(original.clone()))),
+        ..Default::default()
+    };
+    let tool = native(
+        "echo",
+        Arc::new(|_, _, _| panic!("a lookup failure must not execute the tool")),
+    );
+    let (scheduler, conversation) = open(
+        vec![tool],
+        vec![Arc::new(hook)],
+        SchedulerOptions {
+            on_report: Arc::new(move |error, _| capture.lock().push(error)),
+            ..Default::default()
+        },
+    )
+    .await;
+    let id = start(&scheduler, conversation, "echo", json(r#"{"n":1}"#), None).await;
+    let record = settled(&scheduler, id).await;
+    let Some(TaskOutcome::Faulted { error }) = outcome(&record) else {
+        panic!("expected fault: {record:?}")
+    };
+    assert_eq!(error.message, original.message_text());
+    assert!(
+        reports
+            .lock()
+            .iter()
+            .any(|error| error.same_error(&original))
+    );
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn erased_runtime_shares_typed_memos_and_retains_the_invocation_guards() {
+    let retained = Arc::new(Mutex::new(None));
+    let capture = retained.clone();
+    let tool = native(
+        "echo",
+        Arc::new(move |_, api, context| {
+            let runtime = api.erased();
+            assert!(runtime.same_invocation(&api.erased()));
+            *capture.lock() = Some(runtime.clone());
+            Box::pin(async move {
+                let value = json(r#"{"value":"\ud800"}"#);
+                runtime.store_memo("wire", value.clone(), &context).await?;
+                assert_eq!(api.memo::<JsonValue>("wire", &context).await?, Some(value));
+                Ok(ToolExecutionResult::default())
+            })
+        }),
+    );
+    let (scheduler, conversation) = open(vec![tool], vec![], SchedulerOptions::default()).await;
+    let id = start(&scheduler, conversation, "echo", json(r#"{"n":1}"#), None).await;
+    let record = settled(&scheduler, id).await;
+    assert!(matches!(
+        outcome(&record),
+        Some(TaskOutcome::Completed { .. })
+    ));
+    let runtime = retained.lock().clone().unwrap();
+    assert!(
+        runtime
+            .memo::<JsonValue>("wire", &Context::default())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("invocation has ended")
+    );
+    scheduler
+        .session()
+        .close(&Context::default())
+        .await
+        .unwrap();
+}
+
+struct DeferredDetails {
+    repaired: Arc<std::sync::atomic::AtomicBool>,
+    copies: Arc<AtomicUsize>,
+    error: Error,
+}
+impl HostedToolValue for DeferredDetails {
+    fn copy_json(&self) -> Result<JsonValue> {
+        self.copies.fetch_add(1, Ordering::SeqCst);
+        if self.repaired.load(Ordering::SeqCst) {
+            Ok(json(r#"{"repaired":"\ud800"}"#))
+        } else {
+            Err(self.error.clone())
+        }
+    }
+}
+#[tokio::test]
+async fn hosted_details_are_copied_at_settlement_and_hooks_can_repair_them_first() {
+    for repair in [false, true] {
+        let repaired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let copies = Arc::new(AtomicUsize::new(0));
+        let error = Error::host("JsonValueError", "Details contain a function".into());
+        let value = ToolValue::Hosted(Arc::new(DeferredDetails {
+            repaired: repaired.clone(),
+            copies: copies.clone(),
+            error,
+        }));
+        let tool = native(
+            "echo",
+            Arc::new(move |_, _, _| {
+                let value = value.clone();
+                Box::pin(async move {
+                    Ok(ToolExecutionResult {
+                        details: Some(value),
+                        ..Default::default()
+                    })
+                })
+            }),
+        );
+        let hooks = if repair {
+            vec![Arc::new(ToolHooks {
+                after_tool: Some(Arc::new(move |_, result, _, _| {
+                    assert_eq!(copies.load(Ordering::SeqCst), 0);
+                    assert!(
+                        result
+                            .details
+                            .unwrap()
+                            .hosted::<DeferredDetails>()
+                            .is_some()
+                    );
+                    repaired.store(true, Ordering::SeqCst);
+                    Box::pin(async { Ok(None) })
+                })),
+                ..Default::default()
+            })]
+        } else {
+            vec![]
+        };
+        let (scheduler, conversation) = open(vec![tool], hooks, SchedulerOptions::default()).await;
+        let id = start(&scheduler, conversation, "echo", json(r#"{"n":1}"#), None).await;
+        let record = settled(&scheduler, id).await;
+        if repair {
+            assert!(matches!(
+                outcome(&record),
+                Some(TaskOutcome::Completed { .. })
+            ));
+            assert_eq!(
+                message(&scheduler, &record).await["details"],
+                json(r#"{"repaired":"\ud800"}"#)
+            );
+        } else {
+            assert!(
+                matches!(outcome(&record), Some(TaskOutcome::Faulted { .. })),
+                "{record:?}"
+            );
+        }
+        scheduler
+            .session()
+            .close(&Context::default())
+            .await
+            .unwrap();
+    }
 }

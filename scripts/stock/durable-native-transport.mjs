@@ -3,10 +3,10 @@
 import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve;
-const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map();
+const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
 let exited;
-export function failure(value){const error=new Error(value.message);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
-function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,error:!!frame.error})+"\n");}
+export function failure(value){const error=new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
+function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,error:frame.error??false})+"\n");}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
@@ -14,8 +14,8 @@ function dispatch(frame){
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
   const handler=handlers.get(frame.method);
-  const reply=value=>{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});completions.get(frame.method)?.(frame);};
-  const reject=error=>{send({type:"callback.result",id:frame.id,error:{name:error.name,message:error.message}});completions.get(frame.method)?.(frame);};
+  const reject=error=>{send({type:"callback.result",id:frame.id,error:{name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}});completions.get(frame.method)?.(frame);};
+  const reply=value=>{try{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});}catch(error){reject(error);return;}completions.get(frame.method)?.(frame);};
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
    const value=handler(frame.args,pending.get(frame.context)?.context,frame);
@@ -44,6 +44,7 @@ function start(){
 }
 function drain(){for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}
 export const nativeTransport={
+ isCancellation:error=>cancellations.has(error),isAdmissionFailure:error=>admissionFailures.has(error),
  get nextId(){return next;},get started(){return !!worker;},get pending(){return pending.size;},
  afterCallback(method,handler){if(completions.has(method))throw new Error(`Duplicate native completion ${method}`);completions.set(method,handler);},
  register(method,handler){if(handlers.has(method))throw new Error(`Duplicate native handler ${method}`);handlers.set(method,handler);},
@@ -53,7 +54,8 @@ export const nativeTransport={
   start();const id=next++;
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
-   pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});send({id,method,...args,...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});
+   pending.set(id,{resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
+   try{send({id,method,...args,...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});}catch(error){pending.delete(id);admissionFailures.add(error);reject(error);return;}
    if(!signal?.aborted)signal?.addEventListener("abort",abort,{once:true});
   });
   // Native close can reject several waits before the held commit's reply

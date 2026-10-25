@@ -1,3 +1,4 @@
+use super::ToolValue;
 pub use crate::harness::live::{DiagnosticSeverity, ToolDiagnostic};
 use crate::{wire, *};
 use serde::{Deserialize, Serialize};
@@ -80,9 +81,9 @@ object_record!(#[derive(Default)] ToolControl {
 });
 object_record!(#[derive(Default)] ToolExecutionResult {
     optional output: ToolContent => "output",
-    optional structured_output: JsonValue => "structuredOutput",
+    optional structured_output: ToolValue => "structuredOutput",
     optional is_error: bool => "isError",
-    optional details: JsonValue => "details",
+    optional details: ToolValue => "details",
     optional diagnostics: Vec<ToolDiagnostic> => "diagnostics",
     optional usage: JsonObject => "usage",
     optional control: ToolControl => "control",

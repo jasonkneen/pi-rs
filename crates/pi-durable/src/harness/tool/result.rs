@@ -80,7 +80,7 @@ pub fn from_slot(
     ToolExecutionResult {
         output: Some(Arc::new(output)),
         is_error: Some(true),
-        details: slot.and_then(|slot| slot.details.clone()),
+        details: slot.and_then(|slot| slot.details.clone()).map(Into::into),
         diagnostics: Some(diagnostics),
         ..Default::default()
     }
@@ -89,16 +89,24 @@ pub fn nested_result(
     task_id: TaskId,
     result: &ToolExecutionResult,
     duration_ms: Option<f64>,
-) -> NestedToolExecutionResult {
-    NestedToolExecutionResult {
+) -> Result<NestedToolExecutionResult> {
+    Ok(NestedToolExecutionResult {
         task_id,
-        structured_output: result.structured_output.clone(),
+        structured_output: result
+            .structured_output
+            .as_ref()
+            .map(ToolValue::copy_json)
+            .transpose()?,
         is_error: result.is_error.unwrap_or(false),
-        details: result.details.clone(),
+        details: result
+            .details
+            .as_ref()
+            .map(ToolValue::copy_json)
+            .transpose()?,
         diagnostics: result.diagnostics.clone().unwrap_or_default(),
         usage: result.usage.clone(),
         duration_ms,
-    }
+    })
 }
 pub fn fallback_result(
     task_id: TaskId,
@@ -135,6 +143,7 @@ pub fn fallback_result(
     };
     let status: JsonString = wire::field(&wire::encode(outcome), "status").expect("outcome status");
     nested_result(task_id, &harness_error(status, text), None)
+        .expect("native error result is strict JSON")
 }
 pub fn output_value(output: &ToolContent) -> Result<JsonValue> {
     match output.as_slice() {
@@ -220,7 +229,12 @@ pub async fn append_tool_result(
     wire::put(&mut message, "toolCallId", &call.id);
     wire::put(&mut message, "toolName", &call.name);
     wire::put(&mut message, "content", &content);
-    wire::put_optional(&mut message, "details", &result.details);
+    let details = result
+        .details
+        .as_ref()
+        .map(ToolValue::copy_json)
+        .transpose()?;
+    wire::put_optional(&mut message, "details", &details);
     wire::put_optional(&mut message, "usage", &result.usage);
     wire::put(&mut message, "isError", &result.is_error.unwrap_or(false));
     wire::put_optional(&mut message, "durationMs", &duration_ms);

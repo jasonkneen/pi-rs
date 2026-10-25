@@ -49,11 +49,25 @@ pub type AfterTool = Arc<
 pub struct ToolHooks {
     pub before_tool: Option<BeforeTool>,
     pub after_tool: Option<AfterTool>,
+    pub provider: Option<Arc<dyn ToolHookProvider>>,
 }
-static BEFORE: LazyLock<HookKey<ToolHooks, BeforeTool>> =
-    LazyLock::new(|| HookKey::new("beforeTool", |h: Arc<ToolHooks>| h.before_tool.clone()));
-static AFTER: LazyLock<HookKey<ToolHooks, AfterTool>> =
-    LazyLock::new(|| HookKey::new("afterTool", |h: Arc<ToolHooks>| h.after_tool.clone()));
+/// Host member lookup is fallible and occurs outside the invocation catch.
+pub trait ToolHookProvider: Send + Sync {
+    fn before_tool(&self) -> Result<Option<BeforeTool>>;
+    fn after_tool(&self) -> Result<Option<AfterTool>>;
+}
+static BEFORE: LazyLock<HookKey<ToolHooks, BeforeTool>> = LazyLock::new(|| {
+    HookKey::try_new("beforeTool", |h: Arc<ToolHooks>| match &h.provider {
+        Some(provider) => provider.before_tool(),
+        None => Ok(h.before_tool.clone()),
+    })
+});
+static AFTER: LazyLock<HookKey<ToolHooks, AfterTool>> = LazyLock::new(|| {
+    HookKey::try_new("afterTool", |h: Arc<ToolHooks>| match &h.provider {
+        Some(provider) => provider.after_tool(),
+        None => Ok(h.after_tool.clone()),
+    })
+});
 pub static TOOL_TASK: LazyLock<ToolTask> = LazyLock::new(|| {
     define_task(TaskDefinition {
         name: "pi.tool".into(),
@@ -506,7 +520,7 @@ async fn final_result(
             )
         });
         if result.details.is_none() {
-            result.details = reported.details.as_deref().cloned();
+            result.details = reported.details.as_deref().cloned().map(Into::into);
         }
         result.diagnostics = Some(
             reported
@@ -580,7 +594,7 @@ async fn final_result(
     }
     let schema = tool.structured_output_schema();
     if input.is_nested() && schema.is_none() {
-        result.structured_output = Some(output_value(&bounded)?);
+        result.structured_output = Some(output_value(&bounded)?.into());
     }
     if input.is_nested()
         && schema.is_some()
@@ -655,7 +669,7 @@ async fn settle(
                 let mut slot = live::tool_slot(&mut state, id);
                 let result = build(slot.as_mut().map(ToolSlotMut::progress).map(|slot| &*slot));
                 let receipt = if let ToolTaskInput::Nested { parent, key, .. } = input {
-                    let nested = nested_result(id, &result, duration);
+                    let nested = nested_result(id, &result, duration)?;
                     if let Some(usage) = &nested.usage {
                         record_usage(
                             &tx,
