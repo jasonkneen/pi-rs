@@ -211,7 +211,7 @@ impl Hub {
                     ("document", encode(&document)),
                     ("callback", encode(&callback)),
                     ("snapshot", serialize(&hub, frame.value)),
-                    ("ops", encode(&frame.ops)),
+                    ("ops", hub.native_ops(&frame.ops)),
                 ]);
                 let call = hub.call_context("graphFrame", args, &frame.context);
                 activity.send_replace(Activity {

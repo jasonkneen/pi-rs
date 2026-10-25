@@ -245,7 +245,7 @@ async fn retired_documents_disappear_and_the_next_incarnation_mounts_whole() {
     let retired = frames.recv().await.unwrap();
     let recreated = frames.recv().await.unwrap();
     assert_eq!(
-        retired.ops.as_ref(),
+        retired.ops.as_slice(),
         [Op::Delete(vec!["docs".into(), "pi.live".into()])]
     );
     assert!(
@@ -255,7 +255,7 @@ async fn retired_documents_disappear_and_the_next_incarnation_mounts_whole() {
             .contains_key(&JsonString::from("pi.live"))
     );
     assert_eq!(
-        recreated.ops.as_ref(),
+        recreated.ops.as_slice(),
         [Op::Set(
             vec!["docs".into(), "pi.live".into()],
             pi_chord::json::parse(r#"{"tools":[]}"#).unwrap()

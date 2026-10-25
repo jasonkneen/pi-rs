@@ -11,7 +11,7 @@ import {BACKGROUND_CONTEXT,withAbortSignal,withoutAbortSignal} from "@earendil-w
 import {copyJson} from "@earendil-works/chord";
 import {track} from "@earendil-works/chord/delta";
 import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
-import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
+import {handle,describeTask,describeDoc,objectFor,valueHandle,temporaryHandle} from "./durable-native-handles.mjs";
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,lookupNativeSnapshot,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 nativeTransport.register("docInitial",({id,seed})=>copyJson(objectFor(id).definition.initial(seed)));
@@ -36,17 +36,26 @@ function sharedValue(node){
  sharedNodes.set(node.id,value);return value;
 }
 function graphValue(snapshot){if("shared" in snapshot)return sharedValue(snapshot.shared);if(!graphRevisions.has(snapshot.revision))graphRevisions.set(snapshot.revision,snapshot.value);return graphRevisions.get(snapshot.revision);}
-function watchValue(snapshot,document){const value=graphValue(snapshot);return document&&value===null?undefined:value;}
-nativeTransport.register("graphFrame",args=>objectFor(args.callback)(watchValue(args.snapshot,args.document),args.ops,BACKGROUND_CONTEXT));
+function watchValue(snapshot){return graphValue(snapshot);}
+nativeTransport.register("graphFrame",(args,context)=>objectFor(args.callback)(watchValue(args.snapshot),graphValue(args.ops),withoutAbortSignal(context??BACKGROUND_CONTEXT)));
 nativeTransport.afterCallback("graphFrame",frame=>nativeTransport.sync("graph.turn",{watch:frame.args.watch,serial:frame.args.serial}));
 nativeTransport.afterCallback("phase",frame=>nativeTransport.sync("phase.turn",{runtime:frame.args[3],serial:frame.args[4]}));
 nativeTransport.afterCallback("change",frame=>nativeTransport.sync("change.turn",{request:frame.args.request}));
-function graphWatch(descriptor){if(descriptor===undefined)return undefined;const watch=descriptor.watch,closed=call("graph.closed",{watch});closed.catch(()=>{});return {get value(){return watchValue(nativeTransport.sync("graph.value",{watch}),descriptor.document);},closed,start:listener=>nativeTransport.sync("graph.start",{watch,callback:handle(listener)}),stop:()=>nativeTransport.sync("graph.stop",{watch}),cancel:()=>nativeTransport.sync("graph.cancel",{watch})};}
+function graphWatch(descriptor,context,source){
+ if(descriptor===undefined)return undefined;
+ const watch=descriptor.watch,closed=call("graph.closed",{watch});closed.catch(()=>{});
+ let stopped,listener;const held={source},signal=context?.abortSignal,cancel=()=>nativeTransport.sync("graph.cancel",{watch});
+ signal?.addEventListener("abort",cancel,{once:true});
+ const release=()=>{held.source=undefined;listener?.release();signal?.removeEventListener("abort",cancel);};
+ closed.then(release,release);
+ if(signal?.aborted)cancel();
+ return {get value(){return watchValue(nativeTransport.sync("graph.value",{watch}));},closed,start:callback=>{const next=temporaryHandle(callback);try{nativeTransport.sync("graph.start",{watch,callback:next.id});listener=next;}catch(error){next.release();throw error;}},stop:()=>{if(stopped===undefined){nativeTransport.sync("graph.stop",{watch});stopped=closed;}return stopped;},cancel};
+}
 function docArguments(token,args){const definition=describeDoc(token);let index=0;const scope=definition.scope==="session"?{kind:"session"}:definition.scope==="task"?{kind:"task",taskId:args[index++]}:{kind:"conversation",conversationId:args[index++]};const address={kind:definition.kind,scope};if(definition.family)address.key=args[index++];return {definition,address,index};}
-function documents(owner){return {
+function documents(owner,source){return {
  snapshot:(token,...args)=>{const {index,...document}=docArguments(token,args);return call("doc.snapshot",{...owner,...document},args[index]).then(value=>value===undefined?undefined:graphValue(value));},
  snapshotAsOf:(token,...args)=>{const {index,...document}=docArguments(token,args);return call("doc.snapshotAsOf",{...owner,...document,at:args[index]},args[index+1]).then(value=>value===undefined?undefined:graphValue(value));},
- watchDoc:(token,...args)=>{const {index,...document}=docArguments(token,args);return call("doc.watch",{...owner,...document},args[index]).then(graphWatch);},
+ watchDoc:(token,...args)=>{const {index,...document}=docArguments(token,args);return call("doc.watch",{...owner,...document},args[index]).then(value=>graphWatch(value,args[index],source));},
 };}
 function inspect(value){for(const entry of value.tasks)if(entry.state.error)entry.state.error=error(entry.state.error);return value;}
 const stats={phases:0,commits:0,storageCalls:0};
@@ -349,16 +358,16 @@ nativeTransport.register("compactionHook",async(args,context)=>{
 const sessions=new Map();
 nativeTransport.register("session.now",id=>sessions.get(id).now());
 nativeTransport.register("session.retention",id=>{const value=sessions.get(id).retention();return typeof value==="number"&&!Number.isFinite(value)?String(value):value??null;});
-nativeTransport.register("session.conversationCreated",args=>captureChange(args.tx,tx=>sessions.get(args.harness).session.conversationCreated(tx,args.record)));
+nativeTransport.register("session.conversationCreated",args=>captureChange(args.tx,tx=>sessions.get(args.harness).session.deref().conversationCreated(tx,args.record)));
 nativeTransport.register("session.closeListener",id=>{objectFor(id)();return null;});
-nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.beforeClose());
+nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.deref().beforeClose());
 installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
  const storageId=storageNext++;storages.set(storageId,storage);
- const expected=nativeTransport.nextId;sessions.set(expected,{session,now,retention,setTimer});
+ const expected=nativeTransport.nextId;sessions.set(expected,{session:new WeakRef(session),now,retention,setTimer});
  const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly});
  let closed;
  return {
-  ...documents({harness:id}),
+  ...documents({harness:id},session),
   commitWith:(callback,context,scope)=>change("commit",{harness:id,conversation:scope?.conversationId??null},async tx=>({hostResult:valueHandle(await callback(tx))}),context).then(result=>objectFor(result.hostResult)),
   subscribeCommits:callback=>{const subscription=nativeTransport.sync("view.subscribeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},
   subscribeClose:callback=>{const subscription=nativeTransport.sync("view.subscribeClose",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},

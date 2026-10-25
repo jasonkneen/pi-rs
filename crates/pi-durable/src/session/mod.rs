@@ -113,7 +113,7 @@ struct Observer {
     id: DocumentId,
     address: String,
     version: u64,
-    watch: Watch,
+    watch: pi_chord::watch::WeakWatch,
     pinned: bool,
 }
 #[derive(Default)]
@@ -667,13 +667,13 @@ impl Session {
                     if pinned {
                         Self::unpin_locked(&mut state, record.id(), &address, now);
                     }
-                    Some((watch, None, Vec::new()))
+                    Some((watch, None, Arc::new(Vec::new())))
                 } else if let Some(version) = version {
                     let operations = if observer.version == *version {
-                        ops.as_ref().clone()
+                        ops.clone()
                     } else {
                         observer.version = *version;
-                        vec![Op::Replace(value.as_ref().clone())]
+                        Arc::new(vec![Op::Replace(value.as_ref().clone())])
                     };
                     if operations.is_empty() {
                         None
@@ -685,8 +685,11 @@ impl Session {
                 }
             };
             if let Some((watch, value, ops)) = delivery {
+                let Some(watch) = watch.upgrade() else {
+                    continue;
+                };
                 if let Some(value) = value {
-                    watch.advance(value, ops, context.clone());
+                    watch.advance_shared(value, ops, context.clone());
                 } else {
                     watch.retire(context.clone());
                 }
@@ -949,8 +952,8 @@ impl Session {
                 )
             };
             let address = address_id(&address);
-            let weak = Arc::downgrade(&session.inner);
-            let report = weak.clone();
+            let source = session.clone();
+            let report = Arc::downgrade(&session.inner);
             let mut state = session.inner.state.lock();
             session.healthy()?;
             if state.closing {
@@ -960,7 +963,7 @@ impl Session {
             let token = state.next_listener;
             let watch = Watch::new(
                 value.as_ref().clone(),
-                move || detach_observer(weak, token),
+                move || detach_observer(Arc::downgrade(&source.inner), token),
                 move |error| {
                     if let Some(inner) = report.upgrade() {
                         Session { inner }.report(Error::message(error));
@@ -975,7 +978,7 @@ impl Session {
                     id,
                     address,
                     version,
-                    watch: watch.clone(),
+                    watch: watch.downgrade(),
                     pinned: true,
                 },
             );
@@ -993,7 +996,7 @@ impl Session {
                 ),
             );
             let closing = Arc::downgrade(&session.inner);
-            let closing_watch = watch.clone();
+            let closing_watch = watch.downgrade();
             state.close_listeners.insert(
                 token,
                 Arc::new(move || {
@@ -1001,7 +1004,9 @@ impl Session {
                         .upgrade()
                         .and_then(|inner| inner.guard.failure())
                         .map(|e| e.to_string());
-                    closing_watch.end(failure);
+                    if let Some(watch) = closing_watch.upgrade() {
+                        watch.end(failure);
+                    }
                 }),
             );
             drop(state);
@@ -1286,7 +1291,9 @@ impl Session {
             }
             let failure = session.inner.guard.failure().map(|e| e.to_string());
             for observer in observers.into_values() {
-                observer.watch.end(failure.clone());
+                if let Some(watch) = observer.watch.upgrade() {
+                    watch.end(failure.clone());
+                }
             }
             let result = session.inner.guard.close_backend(context).await;
             let end = session
@@ -1450,7 +1457,7 @@ impl<T> Clone for DocumentWatch<T> {
 }
 pub struct DocumentFrame<T> {
     pub value: Option<Arc<T>>,
-    pub ops: Arc<[Op]>,
+    pub ops: Arc<Vec<Op>>,
     pub context: Context,
 }
 impl<T: DocumentState> DocumentWatch<T> {

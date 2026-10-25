@@ -29,7 +29,7 @@ pub enum WatchEnd {
 #[derive(Clone)]
 pub struct WatchFrame<T> {
     pub value: Arc<T>,
-    pub ops: Arc<[Op]>,
+    pub ops: Arc<Vec<Op>>,
     pub context: Context,
     retires: bool,
 }
@@ -59,9 +59,32 @@ struct Inner<T> {
     closed: tokio::sync::watch::Sender<Option<WatchEnd>>,
     delivery: tokio::sync::watch::Sender<u64>,
 }
+impl<T> Drop for Inner<T> {
+    fn drop(&mut self) {
+        if let Some(detach) = self.state.get_mut().detach.take() {
+            detach();
+        }
+    }
+}
 
 pub struct Watch<T = JsonValue> {
     inner: Arc<Inner<T>>,
+}
+/// Sources hold weak registrations so a watch can own its source without a cycle.
+pub struct WeakWatch<T = JsonValue> {
+    inner: Weak<Inner<T>>,
+}
+impl<T> Clone for WeakWatch<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+impl<T> WeakWatch<T> {
+    pub fn upgrade(&self) -> Option<Watch<T>> {
+        self.inner.upgrade().map(|inner| Watch { inner })
+    }
 }
 impl<T> Clone for Watch<T> {
     fn clone(&self) -> Self {
@@ -72,6 +95,11 @@ impl<T> Clone for Watch<T> {
 }
 
 impl<T: Send + Sync + 'static> Watch<T> {
+    pub fn downgrade(&self) -> WeakWatch<T> {
+        WeakWatch {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
     /// A typed immutable revision with JSON operations for exact-frame replay.
     pub fn with_frames(
         value: Arc<T>,
@@ -173,10 +201,14 @@ impl<T: Send + Sync + 'static> Watch<T> {
     }
 
     pub fn advance(&self, value: Arc<T>, ops: Vec<Op>, context: Context) {
+        self.advance_shared(value, Arc::new(ops), context);
+    }
+    /// Preserve the prepared batch's ownership through exact-frame delivery.
+    pub fn advance_shared(&self, value: Arc<T>, ops: Arc<Vec<Op>>, context: Context) {
         self.enqueue(value, ops, context, false);
     }
 
-    fn enqueue(&self, value: Arc<T>, ops: Vec<Op>, context: Context, retires: bool) {
+    fn enqueue(&self, value: Arc<T>, ops: Arc<Vec<Op>>, context: Context, retires: bool) {
         // A replacement callback belongs to the source and can acquire its locks.
         // Never call it while holding the watch mutex.
         let replace = {
@@ -202,7 +234,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
             }
             let (value, ops) = if overflowed && !retires {
                 let value = replacement.unwrap_or(value);
-                let ops = (state.overflow)(&value);
+                let ops = Arc::new((state.overflow)(&value));
                 (value, ops)
             } else {
                 (value, ops)
@@ -210,7 +242,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
             state.retired = retires;
             state.pending.push_back(WatchFrame {
                 value,
-                ops: ops.into(),
+                ops,
                 context,
                 retires,
             });
@@ -421,7 +453,7 @@ impl Watch<JsonValue> {
     pub fn retire(&self, context: Context) {
         self.enqueue(
             Arc::new(JsonValue::Null),
-            vec![Op::Replace(JsonValue::Null)],
+            Arc::new(vec![Op::Replace(JsonValue::Null)]),
             context,
             true,
         );

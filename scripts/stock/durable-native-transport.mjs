@@ -5,6 +5,7 @@ import {appendFileSync} from "node:fs";
 let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0,synchronousCallbacks=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
 const errors=new Map(),foreignErrors=new Map();let nextForeignError=1;
+const contexts=new Map();
 function captureError(value){const id=nextForeignError++;foreignErrors.set(id,value);return id;}
 let exited;
 export function failure(value){if(foreignErrors.has(value.foreignId))return foreignErrors.get(value.foreignId);const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
@@ -16,6 +17,7 @@ function dispatch(frame){
  // frames. Later asynchronous callbacks must wait for that call to return.
  if(pumping&&frame.type==="callback"&&!frame.sync){queueMicrotask(()=>dispatch(frame));return;}
  trace("receive",frame);
+ if(frame.type==="context.drop"){contexts.delete(frame.id);return;}
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
   const handler=handlers.get(frame.method);
@@ -24,7 +26,7 @@ function dispatch(frame){
   if(frame.sync)synchronousCallbacks++;
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
-   const value=handler(frame.args,pending.get(frame.context)?.context,frame);
+   const value=handler(frame.args,contexts.get(frame.context),frame);
    if(frame.sync){if(value&&typeof value.then==="function")throw new Error(`Synchronous callback returned a Promise: ${frame.method}`);reply(value);}
    else Promise.resolve(value).then(reply,reject);
   }catch(error){reject(error);}finally{if(frame.sync)synchronousCallbacks--;}
@@ -59,6 +61,7 @@ export const nativeTransport={
  notify(frame){if(worker&&!closing)send(frame);},
  request(method,args={},context){
   start();const id=next++;
+  if(context!==undefined)contexts.set(id,context);
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
    pending.set(id,{method,resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});

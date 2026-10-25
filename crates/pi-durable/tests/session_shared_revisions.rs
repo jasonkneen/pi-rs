@@ -49,6 +49,21 @@ async fn storage_publication_and_snapshots_retain_native_revisions_and_operation
         .await
         .unwrap()
         .unwrap();
+    let watch = session
+        .watch_raw(definition.clone(), address.clone(), &context)
+        .await
+        .unwrap()
+        .unwrap();
+    let (delivered, frame) = tokio::sync::oneshot::channel();
+    let delivered = Arc::new(Mutex::new(Some(delivered)));
+    watch
+        .start(move |frame| {
+            if let Some(delivered) = delivered.lock().take() {
+                delivered.send(frame).ok();
+            }
+            async { Ok(()) }
+        })
+        .unwrap();
     {
         let writes = storage.writes.lock();
         let StorageWrite::DocumentCreate { content, .. } = &writes.last().unwrap()[0] else {
@@ -92,6 +107,8 @@ async fn storage_publication_and_snapshots_retain_native_revisions_and_operation
     else {
         panic!("expected a document")
     };
+    let frame = frame.await.unwrap();
+    assert!(Arc::ptr_eq(&frame.ops, ops));
     {
         let writes = storage.writes.lock();
         let StorageWrite::DocumentChange {
@@ -116,6 +133,105 @@ async fn storage_publication_and_snapshots_retain_native_revisions_and_operation
         ));
         assert!(before["other"]["label"].string_equals("old"));
     }
+    watch.stop();
+    session.close(&context).await.unwrap();
+}
+
+#[tokio::test]
+async fn running_document_watch_owns_its_source_and_stop_releases_it() {
+    let marker = Arc::new(());
+    let retained = Arc::downgrade(&marker);
+    let session = Session::new(
+        Arc::new(MemoryStorage::default()),
+        SessionOptions {
+            document_retention_ms: f64::INFINITY,
+            report: Arc::new(move |_| {
+                let _held = &marker;
+            }),
+            ..Default::default()
+        },
+    );
+    let doc = define_doc(DocDefinition::new(
+        "owned.watch",
+        1,
+        SessionScope,
+        || Ok(JsonObject::try_from_value(parse(r#"{"count":0}"#).unwrap()).unwrap()),
+        |_, _, _| false,
+    ))
+    .unwrap();
+    let context = Context::default();
+    let token = doc.clone();
+    session
+        .commit(
+            move |tx| async move {
+                tx.doc(&token, ()).await?;
+                Ok(())
+            },
+            &context,
+        )
+        .await
+        .unwrap();
+    let watch = session
+        .watch_doc(&doc, (), &context)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(session);
+    assert!(
+        retained.upgrade().is_some(),
+        "running watch lost its source"
+    );
+    watch.stop();
+    assert!(
+        retained.upgrade().is_none(),
+        "stopped watch retained its source"
+    );
+    assert_eq!(
+        watch.value().unwrap().unwrap().value()["count"].as_u64(),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn dropping_the_last_document_watch_releases_its_cache_pin() {
+    let session = Session::new(
+        Arc::new(MemoryStorage::default()),
+        SessionOptions {
+            document_retention_ms: f64::INFINITY,
+            ..Default::default()
+        },
+    );
+    let doc = define_doc(DocDefinition::new(
+        "dropped.watch",
+        1,
+        SessionScope,
+        || Ok(JsonObject::try_from_value(parse(r#"{"count":0}"#).unwrap()).unwrap()),
+        |_, _, _| false,
+    ))
+    .unwrap();
+    let context = Context::default();
+    let token = doc.clone();
+    session
+        .commit(
+            move |tx| async move {
+                tx.doc(&token, ()).await?;
+                Ok(())
+            },
+            &context,
+        )
+        .await
+        .unwrap();
+    let watch = session
+        .watch_doc(&doc, (), &context)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.cache_sizes().attached, 1);
+    let other = watch.clone();
+    drop(watch);
+    assert_eq!(session.cache_sizes().attached, 1);
+    drop(other);
+    assert_eq!(session.cache_sizes().attached, 0);
     session.close(&context).await.unwrap();
 }
 

@@ -186,7 +186,8 @@
       ],
       "evidence": [
         "cargo test -p pi-chord",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Prepared operation batches retain the same Arc vector through native document watch delivery. Weak source registrations and detach-on-drop avoid retaining a Session after stop or final watch drop. Native and complete stock Session watch results: /tmp/pi-durable-watch-owner-final.log and /tmp/pi-durable-stock-watches-verified.log."
       ]
     },
     {
@@ -2734,11 +2735,14 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/tests/session_shared_revisions.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All 22 unchanged cases pass in both retention modes, 44 executions: /tmp/pi-durable-stock-watches-verified.log. Native operation-batch identity and Session source retention/release have direct Rust regression coverage. Host Context values and listener callbacks remain capabilities."
       ]
     },
     {

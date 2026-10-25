@@ -60,8 +60,22 @@ mod tool_bridge;
 mod tool_environment;
 #[path = "support/view_bridge.rs"]
 mod view_bridge;
-static CALL_CONTEXT: LazyLock<ContextKey<u64>> =
+static CALL_CONTEXT: LazyLock<ContextKey<HostContext>> =
     LazyLock::new(|| create_context_key("stock-test context"));
+struct HostContext {
+    id: u64,
+    hub: std::sync::Weak<Hub>,
+}
+impl Drop for HostContext {
+    fn drop(&mut self) {
+        if let Some(hub) = self.hub.upgrade() {
+            hub.emit(object([
+                ("type", encode(&"context.drop")),
+                ("id", encode(&self.id)),
+            ]));
+        }
+    }
+}
 static HARNESS_CONTEXT: LazyLock<ContextKey<u64>> =
     LazyLock::new(|| create_context_key("stock-test harness"));
 fn native_now() -> f64 {
@@ -235,7 +249,7 @@ impl Hub {
             ("args", args),
             (
                 "context",
-                encode(&context.value(&CALL_CONTEXT).map(|id| *id)),
+                encode(&context.value(&CALL_CONTEXT).map(|context| context.id)),
             ),
             ("abortable", encode(&context.abort_signal().is_some())),
         ]));
@@ -570,11 +584,18 @@ impl Hub {
             .map(NativeRuntime::erased)
             .ok_or_else(|| Error::message("Unknown test runtime"))
     }
-    fn context(&self, id: u64) -> Context {
+    fn context(self: &Arc<Self>, id: u64) -> Context {
         let controller = AbortController::new();
         let context = with_abort_signal(controller.signal(), &Context::default());
         self.contexts.lock().insert(id, controller);
-        with_context_value(&CALL_CONTEXT, id, &context)
+        with_context_value(
+            &CALL_CONTEXT,
+            HostContext {
+                id,
+                hub: Arc::downgrade(self),
+            },
+            &context,
+        )
     }
     fn begin(
         self: Arc<Self>,
