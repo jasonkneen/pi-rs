@@ -1365,6 +1365,10 @@ impl Hub {
                     "nativeCodemodeGlobals".into(),
                     encode(&self.codemode.globals.load(Ordering::Relaxed)),
                 );
+                value.as_object_mut().unwrap().insert(
+                    "nativeCodemodeCheckpointPolicies".into(),
+                    encode(&self.codemode.checkpoint_policies.load(Ordering::Relaxed)),
+                );
                 Box::pin(async move { Ok(Some(value)) })
             }
             other => {

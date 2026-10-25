@@ -1578,9 +1578,19 @@
     },
     {
       "reference": "packages/durable/test/codemode-checkpoints.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/tests/codemode_checkpoints.rs",
+        "crates/pi-durable/src/codemode/types.rs",
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+      ],
+      "evidence": [
+        "Both original checkpoint tests pass unfiltered per retention mode with 68 actual native definition-policy calls per mode; original Session and controlled backend orchestrate the stock history/fork case, and its NestedCallDoc direct assertion remains source",
+        "Two native Rust tests separately verify all three task-scoped policies, the store threshold, actual 65th-delta base replacement, historical counter 32 and fork state in both retention modes",
+        "/tmp/pi-durable-stock-codemode-checkpoints-verified.log",
+        "/tmp/pi-durable-codemode-checkpoints-native-verified.log",
+        "Complete original Session suite bindings remain open"
+      ]
     },
     {
       "reference": "packages/durable/test/codemode-describe.test.ts",

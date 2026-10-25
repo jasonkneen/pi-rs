@@ -14,6 +14,7 @@ pub(super) struct CodemodeBridge {
     pub starts: AtomicU64,
     pub deliveries: AtomicU64,
     pub globals: AtomicU64,
+    pub checkpoint_policies: AtomicU64,
 }
 #[derive(Clone)]
 struct Callbacks {
@@ -251,10 +252,24 @@ impl Hub {
                     Ok(codemode_section(&tools, &namespaces, budget)?.map(|value| encode(&value)))
                 }));
             }
-            "codemode.docCheckpoint" => encode(
-                &(request["kind"].string_equals("pi.codemode.store")
-                    && request["deltas"].as_f64().unwrap_or(0.0) >= 64.0),
-            ),
+            "codemode.docCheckpoint" => {
+                self.codemode
+                    .checkpoint_policies
+                    .fetch_add(1, Ordering::Relaxed);
+                let definition = match request["kind"].to_utf8().as_deref() {
+                    Some("pi.codemode.store") => CODEMODE_STORE_DOC.definition(),
+                    Some("pi.codemode.run") => CODEMODE_RUN_DOC.definition(),
+                    Some("pi.codemode.journal") => CODEMODE_JOURNAL_DOC.definition(),
+                    _ => return Err(Error::message("Unknown code-mode document")),
+                };
+                encode(&definition.checkpoint_when(
+                    &definition.initial(None)?,
+                    &[],
+                    CheckpointInfo {
+                        deltas_since_base: field(&request, "deltas")?,
+                    },
+                )?)
+            }
             _ => return Err(Error::message("Unknown code-mode metadata request")),
         };
         Ok(Box::pin(async { Ok(Some(value)) }))

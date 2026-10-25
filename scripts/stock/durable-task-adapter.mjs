@@ -178,11 +178,12 @@ export const Harness={async open(storage,options,context){
 }};
 const storageIds=new WeakMap();let shuttingDown=false;
 export const transport={request:call,storage(storage){let id=storageIds.get(storage);if(id===undefined){id=storageNext++;storageIds.set(storage,id);storages.set(id,storage);}return id;},release(range){if(!shuttingDown&&nativeTransport.started)send({type:"context.release",range});}};
-async function finish(contextOnly,submissionsOnly=false){
+async function finish(contextOnly,submissionsOnly=false,checkpointPolicies=false){
  shuttingDown=true;
  if(!nativeTransport.started)throw new Error("Stock task tests did not reach Rust");
  const native=await call("stats");
- if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
+ if(checkpointPolicies){if(native.nativeCodemodeCheckpointPolicies===0)throw new Error("Native checkpoint policies were bypassed");}
+ else if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
  else if(submissionsOnly){if(native.submissionAdmissions===0||native.submissionReads===0||native.submissionWaits===0||stats.storageCalls===0)throw new Error("Native submissions were bypassed");}
  else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0&&native.nativeHarnessOpens===0)||(native.commits===0&&native.nativeMemoryCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0))throw new Error("Native scheduler was bypassed");
  if(process.env.PI_DURABLE_NATIVE_DUMP_STATE)writeFileSync(process.env.PI_DURABLE_NATIVE_DUMP_STATE,JSON.stringify(await call("diagnostics"),null,2));
@@ -192,6 +193,7 @@ async function finish(contextOnly,submissionsOnly=false){
 export async function shutdown(){await finish(false);}
 export async function shutdownContextTransport(){await finish(true);}
 export async function shutdownSubmissions(){await finish(false,true);}
+export async function shutdownCodemodePolicies(){await finish(false,false,true);}
 
 const toolApiStates=new WeakMap();
 export function invokeCodemodeGlobal(args,context){const api=toolApi(args.api),global=objectFor(args.callback);return global.execute(args.present?args.args:undefined,api,withAbortSignal(runtime(args.api.runtime).signal,context??BACKGROUND_CONTEXT));}
