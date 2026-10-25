@@ -171,6 +171,7 @@ struct WakeTimer {
     at: f64,
     generation: u64,
     disarm: Option<DisarmTimer>,
+    _keepalive: tokio::sync::oneshot::Sender<()>,
 }
 struct KeptContext {
     range: Arc<super::context::ContextRange>,
@@ -267,6 +268,13 @@ struct Inner {
 #[derive(Clone)]
 pub struct TaskScheduler {
     inner: Arc<Inner>,
+}
+#[derive(Clone)]
+pub(crate) struct WeakTaskScheduler(std::sync::Weak<Inner>);
+impl WeakTaskScheduler {
+    pub(crate) fn upgrade(&self) -> Option<TaskScheduler> {
+        self.0.upgrade().map(|inner| TaskScheduler { inner })
+    }
 }
 struct Reservation {
     invocation: Arc<Invocation>,
@@ -437,6 +445,9 @@ impl TaskScheduler {
     }
     pub fn session(&self) -> Session {
         self.inner.session.clone()
+    }
+    pub(crate) fn downgrade(&self) -> WeakTaskScheduler {
+        WeakTaskScheduler(Arc::downgrade(&self.inner))
     }
     pub(crate) fn session_ref(&self) -> &Session {
         &self.inner.session
@@ -2243,21 +2254,30 @@ impl TaskScheduler {
                 let generation = state.next_wake_timer;
                 state.next_wake_timer = state.next_wake_timer.wrapping_add(1);
                 // A host or another runtime thread can fire before arming returns.
+                let (keepalive, released) = tokio::sync::oneshot::channel();
                 state.timer = Some(WakeTimer {
                     at,
                     generation,
                     disarm: None,
+                    _keepalive: keepalive,
                 });
-                (at, generation)
+                (at, generation, released)
             });
             (old, registration)
         };
         if let Some(disarm) = old.and_then(|timer| timer.disarm) {
             disarm();
         }
-        let Some((at, generation)) = registration else {
+        let Some((at, generation, released)) = registration else {
             return;
         };
+        // A foreground deadline is pending work. Retain the scheduler outside
+        // its own timer state, so runtime shutdown can drop this owner too.
+        let owner = self.clone();
+        tokio::spawn(async move {
+            let _owner = owner;
+            let _ = released.await;
+        });
         let weak = Arc::downgrade(&self.inner);
         let disarm = self.inner.timers.foreground(
             Box::new(move || {
@@ -2460,7 +2480,8 @@ impl TaskDriver for Driver {
             } else {
                 Ok(())
             }
-        });
+        })
+        .retaining(self.scheduler.clone());
         let context = context.clone();
         let call = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             resolve(id, binding, context)

@@ -31,7 +31,7 @@ use std::{
     future::Future,
     ops::Deref,
     sync::{
-        Arc, OnceLock, Weak,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -144,7 +144,6 @@ struct Inner {
     scheduler: TaskScheduler,
     submissions: Submissions,
     views: ConversationViews,
-    conversations: Arc<ConversationServices>,
     registry: Arc<dyn RegistryReader>,
     settings: SettingsReader,
     env: Option<EnvironmentFactory>,
@@ -292,6 +291,38 @@ fn safe_report(host: Option<HarnessReport>, telemetry: ContextRef) -> Report {
     })
 }
 
+fn build_environment(
+    session: &Session,
+    build: Option<EnvironmentFactory>,
+    id: ConversationId,
+    context: &Context,
+) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>> {
+    let Some(build) = build else {
+        return ready(Ok(None));
+    };
+    let state = session.snapshot(&AGENT_DOC, id, context);
+    let context = context.clone();
+    let read = session.clone();
+    eager_on(session, async move {
+        let cwd = state.await?.and_then(|state| {
+            state
+                .0
+                .get(&JsonString::from("cwd"))
+                .and_then(JsonValue::as_string)
+                .cloned()
+        });
+        build(
+            EnvTarget {
+                conversation_id: id,
+                cwd,
+                read,
+            },
+            context,
+        )
+        .await
+    })
+}
+
 impl Harness {
     pub async fn open(
         storage: Arc<dyn Storage>,
@@ -334,15 +365,16 @@ impl Harness {
         let models = options.models;
         let models: ModelsReader =
             Arc::new(move || Ok(read_models(&models)?.with_client_identity(identity.clone())));
-        let slot = Arc::new(OnceLock::<Weak<Inner>>::new());
-        let environments = slot.clone();
-        let conversations = slot.clone();
-        let conversation: ConversationResolver = Arc::new(move |id, binding, context| {
-            match conversations.get().and_then(Weak::upgrade) {
-                Some(inner) => inner.conversations.acquire(id, binding, &context),
+        let environment_session = Arc::new(OnceLock::<Session>::new());
+        let conversation_services = Arc::new(OnceLock::<Arc<ConversationServices>>::new());
+        let environments = environment_session.clone();
+        let conversations = conversation_services.clone();
+        let build = options.env.clone();
+        let conversation: ConversationResolver =
+            Arc::new(move |id, binding, context| match conversations.get() {
+                Some(services) => services.acquire(id, binding, &context),
                 None => ready(Err(Error::message("Conversation services are unavailable"))),
-            }
-        });
+            });
         let scheduler_report = report.clone();
         let session_report = report.clone();
         let timer_report = report.clone();
@@ -355,11 +387,9 @@ impl Harness {
                 settings: resolved.clone(),
                 models,
                 model_collection: options.model_collection,
-                env: Arc::new(move |id, context| {
-                    match environments.get().and_then(Weak::upgrade) {
-                        Some(inner) => Harness { inner }.build_env(id, &context),
-                        None => ready(Err(Error::message("Harness is unavailable"))),
-                    }
+                env: Arc::new(move |id, context| match environments.get() {
+                    Some(session) => build_environment(session, build.clone(), id, &context),
+                    None => ready(Err(Error::message("Harness is unavailable"))),
                 }),
                 conversation: Some(conversation),
                 on_wake: options.on_wake,
@@ -410,8 +440,10 @@ impl Harness {
             context,
         )
         .await?;
+        let _ = environment_session.set(scheduler.session());
         let result = (|| {
-            let resume = scheduler.clone();
+            let resume = scheduler.downgrade();
+            let session = scheduler.session();
             let modes = resolved.clone();
             let submissions = Submissions::new(
                 scheduler.session(),
@@ -420,28 +452,32 @@ impl Harness {
                     queue_modes: Arc::new(move || {
                         Ok(QueueModes::from(&super::settings::read_settings(&modes)?))
                     }),
-                    resume: Arc::new(move || resume.resume()),
+                    resume: Arc::new(move || {
+                        resume
+                            .upgrade()
+                            .ok_or_else(|| super::util::closed_error(&session))?
+                            .resume()
+                    }),
                     telemetry: options.telemetry,
                 },
             )?;
             let views = ConversationViews::new(scheduler.session())?;
-            let conversations = ConversationServices::new(
+            let conversations = ConversationServices::for_scheduler(
                 scheduler.session(),
                 submissions.clone(),
-                scheduler.clone(),
+                &scheduler,
             );
+            let _ = conversation_services.set(conversations);
             let inner = Arc::new(Inner {
                 scheduler: scheduler.clone(),
                 submissions,
                 views,
-                conversations,
                 registry: options.registry,
                 settings: resolved,
                 env: options.env,
                 now,
                 report,
             });
-            let _ = slot.set(Arc::downgrade(&inner));
             Ok(Self { inner })
         })();
         if result.is_err() {
@@ -681,30 +717,7 @@ impl Harness {
         id: ConversationId,
         context: &Context,
     ) -> StorageFuture<Option<Arc<dyn crate::env::ExecutionEnv>>> {
-        let Some(build) = self.inner.env.clone() else {
-            return ready(Ok(None));
-        };
-        let state = self.snapshot(&AGENT_DOC, id, context);
-        let context = context.clone();
-        let read = self.inner.scheduler.session();
-        eager_on(self, async move {
-            let cwd = state.await?.and_then(|state| {
-                state
-                    .0
-                    .get(&JsonString::from("cwd"))
-                    .and_then(JsonValue::as_string)
-                    .cloned()
-            });
-            build(
-                EnvTarget {
-                    conversation_id: id,
-                    cwd,
-                    read,
-                },
-                context,
-            )
-            .await
-        })
+        build_environment(self, self.inner.env.clone(), id, context)
     }
 }
 impl Conversation {

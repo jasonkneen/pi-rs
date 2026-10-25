@@ -1,8 +1,9 @@
 //! Invocation-bound handles over shared conversation services. Admission checks
 //! and cancellation are separate: admitted writes retain their durable outcome.
 use super::{
-    scheduler::TaskScheduler,
+    scheduler::{TaskScheduler, WeakTaskScheduler},
     submissions::{Submission, SubmissionAbort, Submissions},
+    util::closed_error,
 };
 use crate::{
     storage::{StorageFuture, line::eager, ready},
@@ -15,6 +16,7 @@ use std::sync::Arc;
 pub struct InvocationBinding {
     pub signal: AbortSignal,
     check: Arc<dyn Fn() -> Result<()> + Send + Sync>,
+    owner: Option<TaskScheduler>,
 }
 impl InvocationBinding {
     pub fn new(
@@ -24,7 +26,12 @@ impl InvocationBinding {
         Self {
             signal,
             check: Arc::new(check),
+            owner: None,
         }
+    }
+    pub(crate) fn retaining(mut self, owner: TaskScheduler) -> Self {
+        self.owner = Some(owner);
+        self
     }
     pub fn check(&self) -> Result<()> {
         (self.check)()
@@ -65,19 +72,33 @@ pub type ConversationResolver = Arc<
         + Send
         + Sync,
 >;
-/// The host owns this separately from scheduler options. Its weak resolver
-/// prevents a scheduler -> services -> scheduler reference cycle.
+/// Shared conversation operations. Scheduler-owned services use a weak handle
+/// to avoid a cycle; standalone services and invocation bindings retain it.
 pub struct ConversationServices {
     session: Session,
     submissions: Submissions,
-    tasks: TaskScheduler,
+    tasks: WeakTaskScheduler,
+    _scheduler_owner: Option<TaskScheduler>,
 }
 impl ConversationServices {
     pub fn new(session: Session, submissions: Submissions, tasks: TaskScheduler) -> Arc<Self> {
         Arc::new(Self {
             session,
             submissions,
-            tasks,
+            tasks: tasks.downgrade(),
+            _scheduler_owner: Some(tasks),
+        })
+    }
+    pub(crate) fn for_scheduler(
+        session: Session,
+        submissions: Submissions,
+        tasks: &TaskScheduler,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            session,
+            submissions,
+            tasks: tasks.downgrade(),
+            _scheduler_owner: None,
         })
     }
     pub fn resolver(self: &Arc<Self>) -> ConversationResolver {
@@ -141,17 +162,19 @@ impl ConversationHandle {
         if let Err(error) = self.binding.check() {
             return ready(Err(error));
         }
-        self.services
-            .tasks
-            .abort_conversation(self.id, background, &self.binding.context(context))
+        let Some(tasks) = self.services.tasks.upgrade() else {
+            return ready(Err(closed_error(&self.services.session)));
+        };
+        tasks.abort_conversation(self.id, background, &self.binding.context(context))
     }
     pub fn wait_for_idle(&self, context: &Context) -> StorageFuture<()> {
         if let Err(error) = self.binding.check() {
             return ready(Err(error));
         }
-        self.services
-            .tasks
-            .wait_for_idle(Some(self.id), &self.binding.context(context))
+        let Some(tasks) = self.services.tasks.upgrade() else {
+            return ready(Err(closed_error(&self.services.session)));
+        };
+        tasks.wait_for_idle(Some(self.id), &self.binding.context(context))
     }
 }
 #[derive(Clone)]

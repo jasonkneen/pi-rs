@@ -74,6 +74,45 @@ async fn scheduler(timer: crate::timers::SetTimer) -> TaskScheduler {
     .unwrap()
 }
 
+#[test]
+fn pending_foreground_timers_retain_the_scheduler_until_runtime_shutdown() {
+    let callbacks = Arc::new(Mutex::new(Vec::new()));
+    let capture = callbacks.clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let owner = runtime.block_on(async {
+        let scheduler = scheduler(Arc::new(move |callback, _, background| {
+            assert!(!background);
+            capture.lock().push(callback);
+            // A host disarm closure may share ownership of its callback slot.
+            let capture = capture.clone();
+            Some(Box::new(move || capture.lock().clear()))
+        }))
+        .await;
+        while scheduler.inner.state.lock().wake_pending {
+            tokio::task::yield_now().await;
+        }
+        scheduler.arm_timer(Some(10.0));
+        let owner = Arc::downgrade(&scheduler.inner);
+        drop(scheduler);
+        tokio::task::yield_now().await;
+        assert!(
+            owner.upgrade().is_some(),
+            "the foreground wake is still pending"
+        );
+        owner
+    });
+    drop(runtime);
+    assert!(
+        owner.upgrade().is_none(),
+        "runtime shutdown must release the scheduler even if the host retains its callback"
+    );
+    let callback = callbacks.lock().pop().unwrap();
+    callback();
+}
+
 #[tokio::test]
 async fn a_callback_fired_before_registration_returns_does_not_remain_armed() {
     let arms = Arc::new(AtomicU64::new(0));

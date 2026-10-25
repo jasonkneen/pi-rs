@@ -71,10 +71,12 @@ fn builtin_definitions_keep_identity_across_public_registry_creations() {
 }
 
 #[tokio::test]
-async fn a_retained_submission_keeps_its_harness_services_alive() {
+async fn public_submissions_and_active_work_keep_their_harness_services_alive() {
     use pi_durable::harness::{declaration::ToolDeclaration, tool::ToolExecutionResult};
     use std::sync::atomic::{AtomicBool, Ordering};
-    for via_lookup in [false, true] {
+    for mode in ["submission", "lookup", "active"] {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let seen = reports.clone();
         let reached = Arc::new(AtomicBool::new(false));
         let ran = reached.clone();
         let probe = NativeTool::new(
@@ -134,6 +136,9 @@ async fn a_retained_submission_keeps_its_harness_services_alive() {
         let lifetime = Arc::new(());
         let released = Arc::downgrade(&lifetime);
         let mut options = HarnessOptions::new(registry, models);
+        options.on_report = Some(Arc::new(move |error, _| {
+            seen.lock().push(error.to_string())
+        }));
         options.env = Some(Arc::new(move |_, _| {
             let _ = &lifetime;
             Box::pin(async { Ok(None) })
@@ -147,7 +152,7 @@ async fn a_retained_submission_keeps_its_harness_services_alive() {
             .submit(SubmissionDraft::input("probe"), &Context::default())
             .await
             .unwrap();
-        let wait = if via_lookup {
+        let wait: storage::StorageFuture<()> = if mode == "lookup" {
             let found = harness
                 .submission(submission.id, &Context::default())
                 .await
@@ -158,12 +163,18 @@ async fn a_retained_submission_keeps_its_harness_services_alive() {
             drop(found);
             drop(root);
             drop(harness);
-            wait
-        } else {
+            Box::pin(async move { wait.await.map(|_| ()) })
+        } else if mode == "submission" {
             drop(root);
             drop(harness);
             let wait = submission.wait(&Context::default());
             drop(submission);
+            Box::pin(async move { wait.await.map(|_| ()) })
+        } else {
+            let wait = harness.wait_for_idle(&Context::default());
+            drop(submission);
+            drop(root);
+            drop(harness);
             wait
         };
         gate.notify_one();
@@ -174,13 +185,149 @@ async fn a_retained_submission_keeps_its_harness_services_alive() {
         session.close(&Context::default()).await.unwrap();
         assert!(
             reached.load(Ordering::SeqCst),
-            "the retained submission must retain environment and conversation services"
+            "{mode} must keep environment and conversation services available"
         );
+        {
+            let reports = reports.lock();
+            assert!(reports.is_empty(), "{mode}: {:?}", *reports);
+        }
         assert!(
             released.upgrade().is_none(),
             "finished handles must release their Harness owner"
         );
     }
+}
+
+#[tokio::test]
+async fn sleeping_work_keeps_services_after_the_public_handles_are_dropped() {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    type Callback = Arc<Mutex<Option<timers::TimerCallback>>>;
+    let callback: Callback = Arc::default();
+    let armed = callback.clone();
+    let (send, registered) = tokio::sync::oneshot::channel();
+    let send = Arc::new(Mutex::new(Some(send)));
+    let clock = Arc::new(AtomicU64::new(100));
+    let now = clock.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let built = calls.clone();
+    let task = define_task(TaskDefinition::<JsonValue, JsonValue, JsonValue> {
+        name: "test.sleeping-services".into(),
+        version: 1,
+        initial: Arc::new(|_| Ok(object(r#"{"phase":"start"}"#).into_value())),
+        phases: IndexMap::from([
+            (
+                "start".into(),
+                Arc::new(|_, runtime: TaskRuntime, context| {
+                    Box::pin(async move {
+                        runtime
+                            .sleep_until(
+                                1000.0,
+                                object(r#"{"phase":"finish"}"#).into_value(),
+                                &context,
+                            )
+                            .await
+                    }) as storage::StorageFuture<()>
+                }) as PhaseHandler<_, _, _>,
+            ),
+            (
+                "finish".into(),
+                Arc::new(|_, runtime: TaskRuntime, context| {
+                    Box::pin(async move {
+                        assert!(runtime.env(&context).await?.is_none());
+                        assert!(
+                            runtime
+                                .conversation(runtime.conversation_id(), &context)
+                                .await?
+                                .is_some()
+                        );
+                        runtime
+                            .commit(
+                                |_, _| async {
+                                    Ok(Some(NextTaskState::Terminal {
+                                        outcome: TaskOutcome::Completed {
+                                            result: JsonValue::Null,
+                                        },
+                                    }))
+                                },
+                                &context,
+                            )
+                            .await
+                    }) as storage::StorageFuture<()>
+                }) as PhaseHandler<_, _, _>,
+            ),
+        ]),
+        abort: Arc::new(|_, _, _| Box::pin(async { Ok(()) })),
+        migrate: None,
+        hooks: None,
+    });
+    let registry = registry();
+    let mut extension = Extension::new("sleep");
+    extension.tasks.push(task.erased());
+    registry.install(Arc::new(extension)).unwrap();
+    let mut options =
+        HarnessOptions::new(registry, Models::default()).with_settings(HarnessSettings {
+            document_retention_ms: Some(f64::INFINITY),
+            context_retention_ms: Some(0.0),
+            ..Default::default()
+        });
+    options.env = Some(Arc::new(move |_, _| {
+        built.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(None) })
+    }));
+    options.now = Some(Arc::new(move || Ok(now.load(Ordering::SeqCst) as f64)));
+    options.set_timer = Some(Arc::new(move |timer, delay, background| {
+        assert!(!background);
+        assert_eq!(delay, 900.0);
+        *armed.lock() = Some(timer);
+        if let Some(send) = send.lock().take() {
+            let _ = send.send(());
+        }
+        let armed = armed.clone();
+        Some(Box::new(move || {
+            armed.lock().take();
+        }))
+    }));
+    let harness = Harness::open(Arc::new(MemoryStorage::new()), options, &Context::default())
+        .await
+        .unwrap();
+    let session = harness.scheduler().session();
+    let root = harness
+        .root(Default::default(), &Context::default())
+        .await
+        .unwrap();
+    let id = root
+        .commit(
+            move |tx| async move {
+                tx.create_task(
+                    &task,
+                    JsonValue::Null,
+                    TaskOptions::new(TaskOwnership::Conversation),
+                )
+                .await
+            },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    let wait = harness.wait_for_task(id.untyped(), &Context::default());
+    registered.await.unwrap();
+    drop(root);
+    drop(harness);
+    clock.store(1000, Ordering::SeqCst);
+    let fire = callback.lock().take().unwrap();
+    fire();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), wait)
+        .await
+        .unwrap()
+        .unwrap();
+    session.close(&Context::default()).await.unwrap();
+    assert!(matches!(
+        result.state,
+        TaskState::Terminal {
+            outcome: TaskOutcome::Completed { .. }
+        }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

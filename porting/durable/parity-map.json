@@ -529,12 +529,14 @@
         "Native public Harness and Conversation compose one Session, scheduler, submissions, views, invocation-bound conversations and current models/settings; the standalone example uses this public API",
         "Native builtin validation precedes opening storage; creation hooks initialize durable documents before user hooks, configuration and init; failed init rolls back the complete creation",
         "Public root/create/fork, agent resolution, usage aggregation, reset, compact, admission, waits, abort/retry, context/entry reads, task inspection, graph and event observations delegate to native services",
-        "Ten native tests cover current SDK models/settings/default identity, context and totals, creation order and rollback, read-only admission, dynamic retention and declined-timer fallback, safe clock/report callbacks, canonical builtin identity and retained submission lifetime",
+        "Eleven native tests cover current SDK models/settings/default identity, context and totals, creation order and rollback, read-only admission, dynamic retention and declined-timer fallback, safe clock/report callbacks, canonical builtin identity, retained submissions and active/sleeping work after public handle drops",
         "All twelve unchanged stock conversation cases run against native facade services and direct native memory in both retention modes; paused scheduling requires no source task phases",
         "The process binding now opens this native facade for stock task, generation, compaction, tool, nested, recovery, view/event, inspection, submission and read-only workflows",
-        "Remaining report variants/phase telemetry, native environment implementations, restricted environment read capabilities, arbitrary foreign JS registry agent capabilities, remaining active-work lifetime boundaries and embedded exports remain open; original user callbacks, model collections and I/O remain external capabilities in the test transport",
+        "Remaining report variants/phase telemetry, native environment implementations, restricted environment read capabilities, arbitrary foreign JS registry agent capabilities, observer-only and pending-wait lifetime boundaries and embedded exports remain open; original user callbacks, model collections and I/O remain external capabilities in the test transport",
         "porting/durable/STATUS.md",
-        "Foreground timer failures reach the Harness report callback even when zero retention avoids background document timers; all four stock report cases now run unchanged in both modes"
+        "Foreground timer failures reach the Harness report callback even when zero retention avoids background document timers; all four stock report cases now run unchanged in both modes",
+        "Scheduler-owned environment/conversation services use weak backedges and invocation-bound handles retain the scheduler; active and sleeping public-handle-drop probes pass after reproducing lost services and a lost wake",
+        "A foreground deadline retains its scheduler through firing/disarming using a runtime-owned task and weak host callback; a native shutdown regression proves release despite a host retaining a callback shared with its disarm closure"
       ]
     },
     {
@@ -1760,7 +1762,7 @@
         "Each mode proves twenty successful facade opens, thirteen direct native memory opens, one native generation request, two native generation hooks and one native tool execution; source generation and compaction phases stay zero",
         "The stock file covers failed open cleanup/cancellation, stubborn task/tool/hook joins, real SQLite reopen, repeated/cancelled close, admitted commit settlement, frame suppression, cancelled acquisitions, queued reads/waits and paused progress admission",
         "The adapter exposes the native unload_documents operation; original models, hooks, controlled backend subclasses and the public subscribeCommits instrumentation remain host capabilities; native observer lifetime tests supply additional coverage",
-        "Complete native environment implementations, active-work handle lifetime boundaries and embedded exports remain open",
+        "Complete native environment implementations, observer-only and pending-wait lifetime boundaries and embedded exports remain open",
         "porting/durable/STATUS.md"
       ]
     },
