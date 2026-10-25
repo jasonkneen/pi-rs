@@ -39,9 +39,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
-use super::execution::{
-    CodemodeSandbox, CodemodeSandboxBaseOptions, CodemodeSandboxError, VmChannel, VmEvent, VmEvents, VmLauncher,
-};
+use super::execution::{CodemodeSandbox, CodemodeSandboxBaseOptions, CodemodeSandboxError, VmChannel, VmEvent, VmEvents, VmLauncher};
 use super::host::start_thread_vm;
 use super::protocol::{HostToWorkerMessage, VmStartData, WorkerToHostMessage};
 use super::vm::{DEFAULT_LOOP_ITERATION_LIMIT, DEFAULT_RECURSION_LIMIT, VmHandle, VmLimits};
@@ -181,10 +179,7 @@ pub struct CodemodeServeOptions {
 
 /// Start `future` and poll it once right away, so its synchronous part runs now (in order with
 /// the caller's other calls); spawn the rest.
-fn start_now<T: Send + 'static>(
-    mut future: BoxFuture<'static, T>,
-    then: impl FnOnce(T) + Send + 'static,
-) {
+fn start_now<T: Send + 'static>(mut future: BoxFuture<'static, T>, then: impl FnOnce(T) + Send + 'static) {
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut cx) {
         then(value);
@@ -270,6 +265,17 @@ impl Server {
                     CodemodeOutputItem::Image { data, .. } => crate::js::utf16_len(data),
                 };
                 state.buffered.push(CodemodeRemoteMessage::Vm(WorkerToHostMessage::Output { item }));
+                if state.buffered.len() >= FLUSH_ITEMS || state.buffered_chars >= FLUSH_CHARS {
+                    let batch = Self::take_buffer(&mut state);
+                    drop(state);
+                    self.send(batch);
+                }
+            }
+            message @ WorkerToHostMessage::OutputUtf16 { .. } => {
+                if let WorkerToHostMessage::OutputUtf16 { data, .. } = &message {
+                    state.buffered_chars += data.len();
+                }
+                state.buffered.push(CodemodeRemoteMessage::Vm(message));
                 if state.buffered.len() >= FLUSH_ITEMS || state.buffered_chars >= FLUSH_CHARS {
                     let batch = Self::take_buffer(&mut state);
                     drop(state);
@@ -401,11 +407,8 @@ pub struct RemoteLauncher {
 
 impl VmLauncher for RemoteLauncher {
     fn launch(&self, data: VmStartData, events: VmEvents) -> BoxFuture<'static, Result<Box<dyn VmChannel>, String>> {
-        let state = Arc::new(ClientState {
-            stopped: AtomicBool::new(false),
-            settled: AtomicBool::new(false),
-            waiting: Mutex::new(HashMap::new()),
-        });
+        let state =
+            Arc::new(ClientState { stopped: AtomicBool::new(false), settled: AtomicBool::new(false), waiting: Mutex::new(HashMap::new()) });
         let exchange_state = state.clone();
         let exchange_events = events.clone();
         let exchange: CodemodeRemoteExchange = Arc::new(move |messages: Vec<CodemodeRemoteMessage>| {
@@ -458,10 +461,7 @@ impl VmLauncher for RemoteLauncher {
             match result {
                 Ok(()) => {
                     if !run_state.settled.load(Ordering::SeqCst) && !run_state.stopped.load(Ordering::SeqCst) {
-                        events.failure(CodemodeError::new(
-                            CodemodeErrorKind::Sandbox,
-                            "Remote sandbox returned before the script settled",
-                        ));
+                        events.failure(CodemodeError::new(CodemodeErrorKind::Sandbox, "Remote sandbox returned before the script settled"));
                     }
                 }
                 Err(error) => {

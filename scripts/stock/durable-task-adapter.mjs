@@ -187,8 +187,9 @@ async function finish(contextOnly,submissionsOnly=false,checkpointPolicies=false
  else if(submissionsOnly){if(native.submissionAdmissions===0||native.submissionReads===0||native.submissionWaits===0||stats.storageCalls===0)throw new Error("Native submissions were bypassed");}
  else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0&&native.nativeHarnessOpens===0)||(native.commits===0&&native.nativeMemoryCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0))throw new Error("Native scheduler was bypassed");
  if(process.env.PI_DURABLE_NATIVE_DUMP_STATE)writeFileSync(process.env.PI_DURABLE_NATIVE_DUMP_STATE,JSON.stringify(await call("diagnostics"),null,2));
- Object.assign(stats,native);await nativeTransport.close();
+ Object.assign(stats,native);
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify(stats));
+ await nativeTransport.close();
 }
 export async function shutdown(){await finish(false);}
 export async function shutdownContextTransport(){await finish(true);}

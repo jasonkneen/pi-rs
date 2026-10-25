@@ -569,6 +569,7 @@ pub struct CodemodeRun {
 pub(crate) trait RunControl: Send + Sync {
     fn finished(&self) -> bool;
     fn deliver(&self, seq: u64, now: f64, id: u64, outcome: CodemodeOutcome) -> Result<(), String>;
+    fn deliver_json(&self, seq: u64, now: f64, id: u64, outcome: crate::CodemodeJsonOutcome) -> Result<(), String>;
 }
 
 impl CodemodeRun {

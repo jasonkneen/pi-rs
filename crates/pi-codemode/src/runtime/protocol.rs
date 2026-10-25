@@ -44,6 +44,10 @@ pub struct VmStartData {
     pub memory_limit_bytes: Option<u64>,
     /// Snapshot for `load()`: key to JSON text.
     pub store: IndexMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lossless_json: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_json: Option<String>,
     /// Run deterministically: UTC, a virtual clock starting at `started_at` (ms since the epoch)
     /// that moves only with delivered results, randomness from `seed`, no `WeakRef`, results
     /// applied in `seq` order, and `started`/`idle` messages.
@@ -92,6 +96,13 @@ pub enum WorkerToHostMessage {
     Output {
         item: CodemodeOutputItem,
     },
+    /// UTF-16 output for a lossless JSON run. Ordinary runs retain the original protocol.
+    OutputUtf16 {
+        kind: String,
+        data: Vec<u16>,
+        #[serde(rename = "mimeType")]
+        mime_type: Vec<u16>,
+    },
     Done(DoneMessage),
     /// The VM failed outside the script's control.
     Crash {
@@ -123,6 +134,14 @@ impl WorkerToHostMessage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HostToWorkerMessage {
+    ResultUtf16 {
+        id: u64,
+        ok: bool,
+        payload: Option<Vec<u16>>,
+        seq: u64,
+        now: f64,
+        properties: Option<String>,
+    },
     Result {
         id: u64,
         ok: bool,
@@ -140,7 +159,7 @@ pub enum HostToWorkerMessage {
 impl HostToWorkerMessage {
     pub fn id(&self) -> u64 {
         match self {
-            HostToWorkerMessage::Result { id, .. } => *id,
+            HostToWorkerMessage::Result { id, .. } | HostToWorkerMessage::ResultUtf16 { id, .. } => *id,
         }
     }
 }

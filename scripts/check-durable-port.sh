@@ -8,13 +8,14 @@ trap 'rm -f "$native_output"' EXIT
 python3 scripts/durable-inventory.py "$reference" --check
 cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --check
 rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
+rustfmt --edition 2024 --check crates/pi-json/src/strict.rs crates/pi-codemode/src/json_run.rs crates/pi-codemode/tests/json_run.rs
 rustfmt --edition 2024 --check crates/pi-json/src/diff.rs crates/pi-coding-agent/src/core/tools/jsdiff.rs
-cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry
+cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-codemode -p pi-jsrt
 cargo run --locked -q -p pi-durable --example conversation -- "Hello"
 cargo test --locked -p pi-ai --test telemetry
 cargo check --locked -p pi-agent -p pi-coding-agent
 cargo test --locked -p pi-coding-agent --test extensions_platform js_models_requests_
-cargo clippy --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --all-targets -- -D warnings
+cargo clippy --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock -p pi-codemode -p pi-jsrt --all-targets -- -D warnings
 cargo clippy --locked -p pi-durable-codec-stock --target wasm32-unknown-unknown -- -D warnings
 node --experimental-strip-types scripts/golden/gen-durable-output.mjs "$reference" --check
 cargo run --locked -q -p pi-chord --example reference_deltas > "$native_output"
@@ -68,3 +69,4 @@ node scripts/run-stock-durable-context.mjs "$reference" --report=/tmp/pi-durable
 node scripts/run-stock-durable-prompt.mjs "$reference" --report=/tmp/pi-durable-stock-prompt-report.json
 node scripts/run-stock-durable-compaction.mjs "$reference" --report=/tmp/pi-durable-stock-compaction-report.json
 node scripts/run-stock-durable-registry.mjs "$reference" --report=/tmp/pi-durable-stock-registry-report.json
+printf 'Durable port checks passed.\n'

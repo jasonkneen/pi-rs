@@ -1,0 +1,213 @@
+use pi_durable::{
+    codemode::{vm::*, *},
+    *,
+};
+use std::sync::Arc;
+
+struct JsonRemote;
+impl pi_codemode::CodemodeRemote for JsonRemote {
+    fn execute(
+        &self,
+        request: pi_codemode::CodemodeRemoteRequest,
+        exchange: pi_codemode::CodemodeRemoteExchange,
+    ) -> futures::future::BoxFuture<'static, std::result::Result<(), String>> {
+        let request = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+        let wrapped: pi_codemode::CodemodeRemoteExchange = Arc::new(move |messages| {
+            let messages = serde_json::from_slice(&serde_json::to_vec(&messages).unwrap()).unwrap();
+            let reply = exchange(messages);
+            Box::pin(async move {
+                reply.await.map(|reply| {
+                    serde_json::from_slice(&serde_json::to_vec(&reply).unwrap()).unwrap()
+                })
+            })
+        });
+        Box::pin(async move {
+            pi_codemode::serve_codemode_remote(request, wrapped, Default::default()).await;
+            Ok(())
+        })
+    }
+}
+fn sandbox(remote: bool) -> NativeSandbox {
+    if remote {
+        NativeSandbox(
+            pi_codemode::CodemodeSandbox::remote(pi_codemode::RemoteCodemodeSandboxOptions::new(
+                || Ok(Arc::new(JsonRemote)),
+            ))
+            .unwrap(),
+        )
+    } else {
+        NativeSandbox::new().unwrap()
+    }
+}
+fn options() -> RunOptions {
+    RunOptions {
+        start: Start {
+            version: CODEMODE_MODULE_VERSION,
+            started_at: 123.0,
+            seed: 1,
+            fingerprint: None,
+            deadline: None,
+            tools: vec![],
+            globals: vec![],
+            namespaces: vec![],
+            max_output_tokens: 1000.0,
+            store: JsonObject::default(),
+        },
+        timeout_ms: Some(5000.0),
+        signal: pi_chord::AbortController::new().signal(),
+        on_started: Arc::new(|_| {}),
+        on_call: Arc::new(|_| panic!("No host call expected")),
+        on_idle: Arc::new(|_, _| {}),
+    }
+}
+
+#[tokio::test]
+async fn native_sandbox_preserves_unpaired_units_in_output_values_and_store_writes() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let run = sandbox
+        .start(
+            r#"text("\ud800"); store("\ud801", {value: "\udc00"}); return {"\ud802": "\udc01"};"#
+                .into(),
+            options(),
+        )
+        .unwrap();
+        let result = run.result().await.unwrap();
+        sandbox.0.close().await;
+        assert_eq!(result["ok"], JsonValue::Bool(true), "{result}");
+        assert_eq!(
+            result["output"][0]["text"].as_string().unwrap().units(),
+            &[0xd800]
+        );
+        let key = JsonString::from_utf16(vec![0xd802]);
+        assert_eq!(
+            result["value"].as_object().unwrap()[&key]
+                .as_string()
+                .unwrap()
+                .units(),
+            &[0xdc01]
+        );
+        let key = JsonString::from_utf16(vec![0xd801]);
+        assert_eq!(
+            result["storeWrites"]["set"].as_object().unwrap()[&key]["value"]
+                .as_string()
+                .unwrap()
+                .units(),
+            &[0xdc00]
+        );
+    }
+}
+
+#[tokio::test]
+async fn native_sandbox_preserves_call_arguments_results_errors_properties_and_loaded_keys() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let mut config = options();
+        config.start.tools.push(DeclaredTool {
+            name: "echo".into(),
+            js_name: "echo".into(),
+            description: "Echo".into(),
+            structured: true,
+            hidden: false,
+        });
+        let key = JsonString::from_utf16(vec![0xd801]);
+        config
+            .start
+            .store
+            .insert(key, JsonValue::String(JsonString::from_utf16(vec![0xdc02])));
+        let (send, mut calls) = tokio::sync::mpsc::unbounded_channel();
+        config.on_call = Arc::new(move |call| {
+            send.send(call).unwrap();
+        });
+        let run=sandbox.start(r#"const echoed=await tools.echo({"\ud800":"\udc00"}); try { await tools.echo(null); } catch(error) { return {echoed,message:error.message,detail:error.detail,loaded:load("\ud801")}; }"#.into(),config).unwrap();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), calls.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let key = JsonString::from_utf16(vec![0xd800]);
+        assert_eq!(
+            first.args.as_ref().unwrap().as_object().unwrap()[&key]
+                .as_string()
+                .unwrap()
+                .units(),
+            &[0xdc00]
+        );
+        run.deliver(1, 124.0, first.id, Outcome::Success(first.args))
+            .unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(5), calls.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.args, Some(JsonValue::Null));
+        let mut properties = JsonObject::default();
+        properties.insert(
+            "detail".into(),
+            JsonValue::String(JsonString::from_utf16(vec![0xdc03])),
+        );
+        run.deliver(
+            2,
+            125.0,
+            second.id,
+            Outcome::Failure {
+                message: JsonString::from_utf16(vec![0xd803]),
+                properties: Some(properties),
+            },
+        )
+        .unwrap();
+        let result = run.result().await.unwrap();
+        sandbox.0.close().await;
+        assert_eq!(result["ok"], JsonValue::Bool(true), "{result}");
+        assert_eq!(
+            result["value"]["echoed"].as_object().unwrap()[&key]
+                .as_string()
+                .unwrap()
+                .units(),
+            &[0xdc00]
+        );
+        for (field, unit) in [("message", 0xd803), ("detail", 0xdc03), ("loaded", 0xdc02)] {
+            assert_eq!(result["value"][field].as_string().unwrap().units(), &[unit]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_sandbox_preserves_script_error_fields_and_distinguishes_null_from_undefined() {
+    for remote in [false, true] {
+        let sandbox = sandbox(remote);
+        let run = sandbox
+            .start(
+                r#"throw Object.assign(new Error("\ud800"), {name:"\udc00"});"#.into(),
+                options(),
+            )
+            .unwrap();
+        let result = run.result().await.unwrap();
+        assert!(result["error"]["kind"].string_equals("script"), "{result}");
+        assert_eq!(
+            result["error"]["message"].as_string().unwrap().units(),
+            &[0xd800]
+        );
+        assert_eq!(
+            result["error"]["name"].as_string().unwrap().units(),
+            &[0xdc00]
+        );
+        let parsed=sandbox.start(r#"return [JSON.parse('"' + String.fromCharCode(0xd800) + '"').charCodeAt(0),JSON.parse("1e400") === Infinity];"#.into(),options()).unwrap().result().await.unwrap();
+        assert_eq!(parsed["value"][0], JsonValue::from(0xd800usize));
+        assert_eq!(parsed["value"][1], JsonValue::Bool(true));
+        for (code, present) in [("return null;", true), ("return undefined;", false)] {
+            let result = sandbox
+                .start(code.into(), options())
+                .unwrap()
+                .result()
+                .await
+                .unwrap();
+            assert_eq!(
+                result
+                    .as_object()
+                    .unwrap()
+                    .contains_key(&JsonString::from("value")),
+                present
+            );
+        }
+        sandbox.0.close().await;
+    }
+}

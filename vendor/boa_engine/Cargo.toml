@@ -380,6 +380,7 @@ features = [
 
 [dependencies.serde_json]
 version = "1.0.151"
+features = ["raw_value"]
 
 [dependencies.small_btree]
 version = "~0.1.0"

@@ -99,7 +99,7 @@ impl NativeSandbox {
     }
 }
 struct NativeRun {
-    handle: pi_codemode::CodemodeRunHandle,
+    handle: pi_codemode::CodemodeJsonRunHandle,
     result: Shared<BoxFuture<'static, Result<JsonValue>>>,
     watch: tokio::task::JoinHandle<()>,
     controller: pi_codemode::AbortController,
@@ -117,15 +117,12 @@ fn utf8(value: &JsonString) -> Result<String> {
         .to_string_checked()
         .map_err(|error| Error::message(error.to_string()))
 }
-fn sdk_value<T: serde::de::DeserializeOwned>(value: &JsonValue) -> Result<T> {
-    wire::decode(value).map_err(Error::message)
-}
 impl Sandbox for NativeSandbox {
     fn start(&self, code: JsonString, options: RunOptions) -> Result<Arc<dyn Run>> {
         let started = options.on_started;
         let called = options.on_call;
         let idle = options.on_idle;
-        let mut native = pi_codemode::CodemodeRunOptions::new(
+        let mut native = pi_codemode::CodemodeJsonRunOptions::new(
             options.start.started_at,
             options.start.seed,
             move |call, _| {
@@ -137,7 +134,7 @@ impl Sandbox for NativeSandbox {
                         CallTarget::Global
                     },
                     name: call.name.into(),
-                    args: call.args.map(|value| wire::encode(&value)),
+                    args: call.args,
                 })
             },
         );
@@ -167,13 +164,29 @@ impl Sandbox for NativeSandbox {
                 })
             })
             .collect::<Result<_>>()?;
-        native.store = Some(sdk_value(options.start.store.value())?);
+        native.store = Some(
+            options
+                .start
+                .store
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
         native.timeout_ms = options.timeout_ms;
         let controller = pi_codemode::AbortController::new();
+        if options.signal.aborted() {
+            controller.abort_with_reason(
+                options
+                    .signal
+                    .reason()
+                    .map(|reason| reason.waiter_error().to_string())
+                    .unwrap_or_else(|| "Operation aborted".into()),
+            );
+        }
         native.signal = Some(controller.signal());
         let run = self
             .0
-            .start(&utf8(&code)?, native)
+            .start_json(&utf8(&code)?, native)
             .map_err(|error| Error::message(error.to_string()))?;
         let handle = run.handle();
         let cancel = controller.clone();
@@ -187,9 +200,7 @@ impl Sandbox for NativeSandbox {
                     .unwrap_or_else(|| "Operation aborted".into()),
             );
         });
-        let result = async move { Ok(wire::encode(&run.result().await)) }
-            .boxed()
-            .shared();
+        let result = async move { Ok(run.result().await) }.boxed().shared();
         Ok(Arc::new(NativeRun {
             handle,
             result,
@@ -204,18 +215,14 @@ impl Run for NativeRun {
     }
     fn deliver(&self, seq: u64, at: f64, id: u64, outcome: Outcome) -> Result<()> {
         let outcome = match outcome {
-            Outcome::Success(value) => pi_codemode::CodemodeOutcome::Ok {
-                value: value.as_ref().map(sdk_value).transpose()?,
-            },
+            Outcome::Success(value) => pi_codemode::CodemodeJsonOutcome::Ok { value },
             Outcome::Failure {
                 message,
                 properties,
-            } => pi_codemode::CodemodeOutcome::Err {
-                message: utf8(&message)?,
+            } => pi_codemode::CodemodeJsonOutcome::Err {
+                message,
                 properties: properties
-                    .as_ref()
-                    .map(|value| sdk_value(value.value()))
-                    .transpose()?,
+                    .map(|value| value.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
             },
         };
         self.handle

@@ -84,7 +84,8 @@
       "rust": [
         "crates/pi-chord/src/json.rs",
         "crates/pi-chord/src/lib.rs",
-        "crates/pi-chord/tests/json.rs"
+        "crates/pi-chord/tests/json.rs",
+        "crates/pi-json/src/strict.rs"
       ],
       "evidence": [
         "cargo test -p pi-chord",
@@ -296,16 +297,21 @@
         "crates/pi-durable/src/codemode/vm.rs",
         "crates/pi-durable/src/codemode/tool.rs",
         "crates/pi-durable/tests/codemode_runtime.rs",
-        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs",
+        "crates/pi-json/src/strict.rs",
+        "crates/pi-codemode/src/json_run.rs",
+        "crates/pi-durable/tests/codemode_unicode.rs"
       ],
       "evidence": [
         "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
         "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
         "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
-        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "Native sandbox values now retain UTF16 through text, return values, prior store data, writes, host-call arguments/results and error properties on both thread and JSON-wire remote backends; source/declaration/schema rendering and provider SDK UTF8 boundaries remain open",
         "/tmp/pi-durable-stock-native-codemode-final.log",
         "/tmp/pi-durable-native-codemode-runtime-verified.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "/tmp/pi-durable-codemode-unicode-red.log",
+        "/tmp/pi-durable-codemode-unicode-parser-green.log"
       ]
     },
     {
@@ -332,16 +338,21 @@
         "crates/pi-durable/src/codemode/vm.rs",
         "crates/pi-durable/src/codemode/tool.rs",
         "crates/pi-durable/tests/codemode_runtime.rs",
-        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs",
+        "crates/pi-json/src/strict.rs",
+        "crates/pi-codemode/src/json_run.rs",
+        "crates/pi-durable/tests/codemode_unicode.rs"
       ],
       "evidence": [
         "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
         "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
         "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
-        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "Native sandbox values now retain UTF16 through text, return values, prior store data, writes, host-call arguments/results and error properties on both thread and JSON-wire remote backends; source/declaration/schema rendering and provider SDK UTF8 boundaries remain open",
         "/tmp/pi-durable-stock-native-codemode-final.log",
         "/tmp/pi-durable-native-codemode-runtime-verified.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "/tmp/pi-durable-codemode-unicode-red.log",
+        "/tmp/pi-durable-codemode-unicode-parser-green.log"
       ]
     },
     {
@@ -1636,16 +1647,21 @@
         "crates/pi-durable/src/codemode/vm.rs",
         "crates/pi-durable/src/codemode/tool.rs",
         "crates/pi-durable/tests/codemode_runtime.rs",
-        "crates/pi-durable/examples/support/codemode_vm_bridge.rs"
+        "crates/pi-durable/examples/support/codemode_vm_bridge.rs",
+        "crates/pi-json/src/strict.rs",
+        "crates/pi-codemode/src/json_run.rs",
+        "crates/pi-durable/tests/codemode_unicode.rs"
       ],
       "evidence": [
         "Native replay driver owns persisted run/journal/store, fingerprint/version/deadline refusal, acknowledged issued counts, journal-before-delivery, held-call validation, nested-call replay, global matching, four model slots, output paths and atomic result/store decisions",
         "All 41 original codemode cases pass unfiltered in both retention modes, with 70 native executions, 67 controlled VM starts, 108 native deliveries and 59 custom global callbacks per mode; source CodemodeCall is never imported",
         "The original controlled sandbox and user/provider/environment callbacks remain host capabilities in the stock gate; native Rust sandbox separately passes memory execution and real SQLite restart without repeating a finished effect in both modes",
-        "Native sandbox SDK conversion still rejects unpaired UTF16 at its existing String/serde_json boundary; complete SDK alignment, embedded exports and checkpoint test mapping remain open",
+        "Native sandbox values now retain UTF16 through text, return values, prior store data, writes, host-call arguments/results and error properties on both thread and JSON-wire remote backends; source/declaration/schema rendering and provider SDK UTF8 boundaries remain open",
         "/tmp/pi-durable-stock-native-codemode-final.log",
         "/tmp/pi-durable-native-codemode-runtime-verified.log",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "/tmp/pi-durable-codemode-unicode-red.log",
+        "/tmp/pi-durable-codemode-unicode-parser-green.log"
       ]
     },
     {

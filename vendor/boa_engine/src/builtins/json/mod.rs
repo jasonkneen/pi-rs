@@ -241,13 +241,15 @@ impl Json {
             .first()
             .cloned()
             .unwrap_or_default()
-            .to_string(context)?
-            .to_std_string()
-            .map_err(|e| JsNativeError::syntax().with_message(e.to_string()))?;
+            .to_string(context)?;
 
         // 2. Parse ! StringToCodePoints(jsonString) as a JSON text as specified in ECMA-404.
         //    Throw a SyntaxError exception if it is not a valid JSON text as defined in that specification.
-        if let Err(e) = serde_json::from_str::<serde_json::Value>(&json_string) {
+        // Raw validation checks JSON grammar without requiring Unicode scalar strings.
+        // The parser below reads the original UTF-16 source, including unpaired units.
+        if let Err(e) = serde_json::from_str::<&serde_json::value::RawValue>(
+            &json_string.to_std_string_lossy(),
+        ) {
             return Err(JsNativeError::syntax().with_message(e.to_string()).into());
         }
 
@@ -255,10 +257,13 @@ impl Json {
         let has_reviver = args.get_or_undefined(1).is_callable();
 
         // 3. Let scriptString be the string-concatenation of "(", jsonString, and ");".
-        let script_string = format!("({json_string});");
+        let script_string: Vec<u16> = once(0x28)
+            .chain(json_string.to_vec())
+            .chain([0x29, 0x3b])
+            .collect();
 
         // 4-10. Parse and evaluate the script
-        let source = Source::from_bytes(&script_string);
+        let source = Source::from_utf16(&script_string);
         let mut parser = Parser::new(source);
         parser.set_json_parse();
 

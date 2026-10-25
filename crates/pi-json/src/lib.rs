@@ -20,6 +20,7 @@
 //!   serde_json's recursion limit (128) are rejected with serde_json's message.
 
 pub mod diff;
+pub mod strict;
 pub mod utf8;
 
 use serde::de::DeserializeOwned;

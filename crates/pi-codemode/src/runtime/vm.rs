@@ -57,7 +57,7 @@ use crate::types::{CodemodeCallTarget, CodemodeDuring, CodemodeOutputItem};
 
 /// Bumped whenever this module or the prelude changes what a deterministic script observes,
 /// beyond what the fingerprint's other parts (engine version, prelude hash, limits) already capture.
-const DETERMINISTIC_VERSION: u32 = 1;
+const DETERMINISTIC_VERSION: u32 = 2;
 
 /// The engine named in the fingerprint.
 const ENGINE: &str = "boa 0.22";
@@ -149,32 +149,27 @@ pub fn spawn_vm(options: StartVmOptions) -> std::io::Result<VmHandle> {
     let (tx, rx) = mpsc::channel();
     let interrupt = Arc::new(AtomicBool::new(false));
     let thread_interrupt = interrupt.clone();
-    std::thread::Builder::new()
-        .name("pi-codemode-vm".to_string())
-        .stack_size(VM_THREAD_STACK_SIZE)
-        .spawn(move || {
-            let StartVmOptions { data, limits, post, on_exit } = options;
-            struct ExitGuard(Option<Box<dyn FnOnce() + Send>>);
-            impl Drop for ExitGuard {
-                fn drop(&mut self) {
-                    if let Some(on_exit) = self.0.take() {
-                        on_exit();
-                    }
+    std::thread::Builder::new().name("pi-codemode-vm".to_string()).stack_size(VM_THREAD_STACK_SIZE).spawn(move || {
+        let StartVmOptions { data, limits, post, on_exit } = options;
+        struct ExitGuard(Option<Box<dyn FnOnce() + Send>>);
+        impl Drop for ExitGuard {
+            fn drop(&mut self) {
+                if let Some(on_exit) = self.0.take() {
+                    on_exit();
                 }
             }
-            let _guard = ExitGuard(on_exit);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                vm_main(data, limits, post.clone(), rx, thread_interrupt)
-            }));
-            if let Err(panic) = result {
-                let message = panic
-                    .downcast_ref::<String>()
-                    .cloned()
-                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                    .unwrap_or_else(|| "unknown panic".to_string());
-                post(VmReport::Message(WorkerToHostMessage::Crash { message: format!("VM panicked: {message}") }));
-            }
-        })?;
+        }
+        let _guard = ExitGuard(on_exit);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| vm_main(data, limits, post.clone(), rx, thread_interrupt)));
+        if let Err(panic) = result {
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "unknown panic".to_string());
+            post(VmReport::Message(WorkerToHostMessage::Crash { message: format!("VM panicked: {message}") }));
+        }
+    })?;
     Ok(VmHandle { tx, interrupt })
 }
 
@@ -277,10 +272,7 @@ impl Clock for VmClock {
     fn system_time_millis(&self) -> i64 {
         match &self.virtual_clock {
             Some(clock) => clock.now.get().round() as i64,
-            None => std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0),
+            None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0),
         }
     }
 }
@@ -350,6 +342,7 @@ struct BridgeState {
     /// The result being processed, 0 during the script's first run; reported with `done`.
     current: Cell<u64>,
     deterministic: bool,
+    lossless_json: bool,
     /// A terminal message was reported; the next bridge call ends the script.
     settled: Cell<bool>,
     /// Loop iterations and promise jobs so far, and the budget for them.
@@ -439,6 +432,11 @@ fn bridge(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
         }
         "output" => {
             let what = string_arg(args, 1).unwrap_or_default();
+            if st.lossless_json {
+                let units = |index: usize| args.get(index).and_then(JsValue::as_string).map(|s| s.to_vec()).unwrap_or_default();
+                st.send(WorkerToHostMessage::OutputUtf16 { kind: what, data: units(2), mime_type: units(3) });
+                return Ok(JsValue::undefined());
+            }
             let data = string_arg(args, 2).unwrap_or_default();
             let item = match what.as_str() {
                 "image" => CodemodeOutputItem::Image { data, mime_type: string_arg(args, 3).unwrap_or_default() },
@@ -450,8 +448,7 @@ fn bridge(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
         "done" => {
             // The host stops the VM on `done`, so the `idle` of this drain never arrives: report its
             // numbers here.
-            let during =
-                st.deterministic.then(|| CodemodeDuring { seq: st.current.get(), issued: st.issued.get() });
+            let during = st.deterministic.then(|| CodemodeDuring { seq: st.current.get(), issued: st.issued.get() });
             let ok = args.get(1).is_some_and(JsValue::to_boolean);
             let mut done = if ok {
                 DoneMessage::success(string_arg(args, 2), string_arg(args, 3).unwrap_or_default())
@@ -491,11 +488,7 @@ fn math_random(_this: &JsValue, _args: &[JsValue], context: &mut Context) -> JsR
 
 fn function(context: &mut Context, name: &str, length: usize, f: boa_engine::native_function::NativeFunctionPointer) -> JsObject {
     let realm = context.realm().clone();
-    FunctionObjectBuilder::new(&realm, NativeFunction::from_fn_ptr(f))
-        .name(JsString::from(name))
-        .length(length)
-        .build()
-        .into()
+    FunctionObjectBuilder::new(&realm, NativeFunction::from_fn_ptr(f)).name(JsString::from(name)).length(length).build().into()
 }
 
 fn js_string_value(text: &str) -> JsValue {
@@ -539,9 +532,7 @@ impl Vm {
         interrupt: Arc<AtomicBool>,
     ) -> Result<Vm, String> {
         let deterministic = data.deterministic;
-        let virtual_clock = deterministic.map(|d| {
-            Rc::new(VirtualClock { started_at: d.started_at, now: Cell::new(d.started_at) })
-        });
+        let virtual_clock = deterministic.map(|d| Rc::new(VirtualClock { started_at: d.started_at, now: Cell::new(d.started_at) }));
         let started = Instant::now();
         let executor = Rc::new(Executor::default());
         let mut context = Context::builder()
@@ -566,6 +557,7 @@ impl Vm {
             issued: Cell::new(0),
             current: Cell::new(0),
             deterministic: deterministic.is_some(),
+            lossless_json: data.lossless_json,
             settled: Cell::new(false),
             ticks: Cell::new(0),
             budget: limits.interrupt_budget,
@@ -585,11 +577,7 @@ impl Vm {
             let tick = function(context, "tick", 0, tick);
             global.define_property_or_throw(
                 JsString::from(super::instrument::TICK),
-                boa_engine::property::PropertyDescriptor::builder()
-                    .value(tick)
-                    .writable(false)
-                    .enumerable(false)
-                    .configurable(false),
+                boa_engine::property::PropertyDescriptor::builder().value(tick).writable(false).enumerable(false).configurable(false),
                 context,
             )?;
             if deterministic.is_some() {
@@ -603,13 +591,12 @@ impl Vm {
                 }
             }
             let prelude = context.eval(Source::from_bytes(PRELUDE_SOURCE.as_bytes()).with_path(Path::new("codemode-prelude.js")))?;
-            let prelude = prelude
-                .as_callable()
-                .ok_or_else(|| boa_engine::JsNativeError::typ().with_message("prelude is not a function"))?;
+            let prelude =
+                prelude.as_callable().ok_or_else(|| boa_engine::JsNativeError::typ().with_message("prelude is not a function"))?;
             let bridge = function(context, "bridge", 4, bridge);
             let tools = serde_json::to_string(&data.tools).unwrap_or_else(|_| "[]".into());
             let globals = serde_json::to_string(&data.globals).unwrap_or_else(|_| "[]".into());
-            let store = serde_json::to_string(&data.store).unwrap_or_else(|_| "{}".into());
+            let store = data.store_json.clone().unwrap_or_else(|| serde_json::to_string(&data.store).unwrap_or_else(|_| "{}".into()));
             let api = prelude.call(
                 &JsValue::undefined(),
                 &[bridge.into(), js_string_value(&tools), js_string_value(&globals), js_string_value(&store)],
@@ -633,11 +620,12 @@ impl Vm {
         let abandon = member("abandon", &mut context)?;
         let fingerprint = deterministic.map(|_| {
             format!(
-                "{ENGINE}, prelude {}, deterministic {DETERMINISTIC_VERSION}, stack {}, heap {}, budget {}",
+                "{ENGINE}, prelude {}, deterministic {DETERMINISTIC_VERSION}, stack {}, heap {}, budget {}{}",
                 *PRELUDE_HASH,
                 limits.recursion_limit,
                 data.memory_limit_bytes.map_or_else(|| "none".to_string(), |bytes| bytes.to_string()),
                 limits.interrupt_budget.map_or_else(|| "none".to_string(), |budget| budget.to_string()),
+                if data.lossless_json { ", UTF16 JSON 1" } else { "" },
             )
         });
         Ok(Vm {
@@ -773,15 +761,18 @@ impl Vm {
     }
 
     fn apply(&mut self, message: &HostToWorkerMessage) -> Result<(), ()> {
-        let HostToWorkerMessage::Result { id, ok, payload, properties, .. } = message;
+        let (id, ok, payload, properties) = match message {
+            HostToWorkerMessage::Result { id, ok, payload, properties, .. } => {
+                (*id, *ok, payload.as_deref().map_or_else(JsValue::undefined, js_string_value), properties)
+            }
+            HostToWorkerMessage::ResultUtf16 { id, ok, payload, properties, .. } => {
+                (*id, *ok, payload.as_ref().map_or_else(JsValue::undefined, |v| JsValue::from(JsString::from(v.as_slice()))), properties)
+            }
+        };
         let settle = self.settle.clone();
         let api: JsValue = self.api.clone().into();
-        let args = [
-            JsValue::from(*id as f64),
-            JsValue::from(*ok),
-            payload.as_deref().map_or_else(JsValue::undefined, js_string_value),
-            properties.as_deref().map_or_else(JsValue::undefined, js_string_value),
-        ];
+        let args =
+            [JsValue::from(id as f64), JsValue::from(ok), payload, properties.as_deref().map_or_else(JsValue::undefined, js_string_value)];
         if let Err(error) = settle.call(&api, &args, &mut self.context) {
             let fatal = self.classify(&error);
             self.fail(fatal);
@@ -798,9 +789,12 @@ impl Vm {
             let _ = self.apply(&message);
             return;
         };
-        let HostToWorkerMessage::Result { id, seq, .. } = &message;
+        let (id, seq) = match &message {
+            HostToWorkerMessage::Result { id, seq, .. } => (*id, *seq),
+            HostToWorkerMessage::ResultUtf16 { id, seq, .. } => (*id, Some(*seq)),
+        };
         let seq = match seq {
-            Some(seq) if *seq >= self.next_seq && !self.early.contains_key(seq) => *seq,
+            Some(seq) if seq >= self.next_seq && !self.early.contains_key(&seq) => seq,
             _ => {
                 let expected = self.next_seq;
                 let seq = seq.map_or_else(|| "undefined".to_string(), |seq| seq.to_string());
@@ -813,12 +807,15 @@ impl Vm {
         };
         self.early.insert(seq, message);
         while let Some(next) = self.early.remove(&self.next_seq) {
-            let HostToWorkerMessage::Result { now, .. } = &next;
+            let now = match &next {
+                HostToWorkerMessage::Result { now, .. } => *now,
+                HostToWorkerMessage::ResultUtf16 { now, .. } => Some(*now),
+            };
             // Never backwards: a resumed host's clock may be behind the one that started the run.
             if let Some(now) = now
                 && now.is_finite()
             {
-                clock.now.set(clock.now.get().max(*now));
+                clock.now.set(clock.now.get().max(now));
             }
             self.state().current.set(self.next_seq);
             if self.apply(&next).is_err() {
@@ -835,10 +832,9 @@ impl Vm {
     fn stop_fatal(&self, stop: Stop) -> Fatal {
         match stop {
             Stop::Halted => Fatal::Halted,
-            Stop::Exhausted => Fatal::Exhausted(format!(
-                "Execution exceeded its interrupt budget of {}",
-                self.limits.interrupt_budget.unwrap_or_default()
-            )),
+            Stop::Exhausted => {
+                Fatal::Exhausted(format!("Execution exceeded its interrupt budget of {}", self.limits.interrupt_budget.unwrap_or_default()))
+            }
         }
     }
 

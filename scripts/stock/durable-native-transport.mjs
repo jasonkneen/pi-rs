@@ -7,7 +7,7 @@ const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(
 const errors=new Map();
 let exited;
 export function failure(value){const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
-function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({direction,type:frame.type,id:frame.id,method:frame.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,error:frame.error??false})+"\n");}
+function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE)appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,JSON.stringify({at:performance.now(),direction,type:frame.type,id:frame.id,method:frame.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n");}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
 function dispatch(frame){
