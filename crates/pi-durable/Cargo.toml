@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Interception points for unchanged upstream tests that patch transaction methods.
+# Absent from production builds.
+stock-test-probes = []
+
 [dependencies]
 pi-chord.workspace = true
 pi-ai.workspace = true

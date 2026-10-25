@@ -1,4 +1,5 @@
 import {installSessionBinding,getDefaultDocumentRetention} from "./durable-session-adapter.mjs";
+import "./durable-transaction-probes.mjs";
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
@@ -153,7 +154,7 @@ async function invoke(method,args,context){
  if(method==="storage"){
   stats.storageCalls++;const storage=storages.get(args.handle);let values=args.args;
   if(args.method==="commit"){
-   const[writes,adoption,identities]=values;for(const identity of identities??[]){const content=writes[identity.index].content;if(identity.value!==undefined)content.value=graphValue(identity.value);if(identity.ops!==undefined)content.ops=graphValue(identity.ops);}return storage.commit(writes.map(tableWrite),seq=>send({type:"storage.adopt",id:adoption,seq}),context);
+   const[writes,adoption,identities]=values;for(const identity of identities??[]){const content=writes[identity.index].content;if(identity.value!==undefined)content.value=graphValue(identity.value);if(identity.ops!==undefined)content.ops=graphValue(identity.ops);}return storage.commit(writes.map(tableWrite),seq=>nativeTransport.sync("storage.adopt",{adoption,seq}),context);
   }
   // JSON null is used only for omitted optional cursor/cutoff arguments here.
   if(args.method.startsWith("scan")||args.method==="findLatestHeadMarker")values=values.map(value=>value===null?undefined:value);
@@ -373,7 +374,8 @@ nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.dere
 installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
  const storageId=storageNext++;storages.set(storageId,storage);
  const expected=nativeTransport.nextId;sessions.set(expected,{session:new WeakRef(session),now,retention,setTimer});
- const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly,hostTimers:setTimer!==undefined});
+ const transactionProbes=process.env.PI_DURABLE_NATIVE_TRANSACTION_PROBES==="1";
+ const id=nativeTransport.sync("session.open",{storage:storageId,nativeMemory:transactionProbes?undefined:nativeMemoryHandle(storage),readOnly,hostTimers:setTimer!==undefined,transactionProbes});
  let closed;
  return {
   ...documents({harness:id},session),

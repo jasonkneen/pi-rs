@@ -2612,11 +2612,14 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "scripts/run-stock-durable-session.mjs",
+        "crates/pi-durable/tests/transaction_probes.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "All five unchanged cases pass in both retention modes: /tmp/pi-durable-stock-adoption-synchronous.log. Original prototype spies/fault injection are test-only native settlement probes behind stock-test-probes; actual adoption/discard and failure propagation remain native. Direct native regressions: /tmp/pi-durable-transaction-probes-native.log."
       ]
     },
     {

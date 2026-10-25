@@ -143,6 +143,8 @@ struct Inner {
     publication: Mutex<Shared<BoxFuture<'static, ()>>>,
     closed: tokio::sync::watch::Sender<Option<SessionEnd>>,
     close_result: tokio::sync::watch::Sender<Option<Result<()>>>,
+    #[cfg(feature = "stock-test-probes")]
+    transaction_probe: Mutex<Option<TransactionProbe>>,
 }
 #[derive(Clone)]
 pub struct Session {
@@ -204,6 +206,8 @@ impl Session {
                 publication: Mutex::new(async {}.boxed().shared()),
                 closed,
                 close_result,
+                #[cfg(feature = "stock-test-probes")]
+                transaction_probe: Mutex::new(None),
             }),
         };
         let weak = Arc::downgrade(&session.inner);
@@ -218,6 +222,13 @@ impl Session {
     }
     fn healthy(&self) -> Result<()> {
         self.inner.guard.healthy()
+    }
+    #[cfg(feature = "stock-test-probes")]
+    pub fn set_transaction_probe(
+        &self,
+        probe: impl Fn(TransactionProbePoint) -> Result<()> + Send + Sync + 'static,
+    ) {
+        *self.inner.transaction_probe.lock() = Some(Arc::new(probe));
     }
     pub fn failure(&self) -> Option<Error> {
         self.inner.guard.failure()
@@ -1323,6 +1334,11 @@ impl Session {
     }
 }
 impl TransactionHost for Session {
+    #[cfg(feature = "stock-test-probes")]
+    fn transaction_probe(&self, point: TransactionProbePoint) -> Result<()> {
+        let probe = self.inner.transaction_probe.lock().clone();
+        probe.map_or(Ok(()), |probe| probe(point))
+    }
     fn storage(&self) -> Arc<dyn Storage> {
         self.inner.storage.clone()
     }

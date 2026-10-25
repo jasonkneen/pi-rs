@@ -2,6 +2,15 @@ use crate::*;
 use pi_chord::delta::Op;
 use std::sync::Arc;
 
+#[cfg(feature = "stock-test-probes")]
+#[derive(Clone, Copy)]
+pub enum TransactionProbePoint {
+    Adopt(Seq),
+    Discard,
+}
+#[cfg(feature = "stock-test-probes")]
+pub(super) type TransactionProbe = Arc<dyn Fn(TransactionProbePoint) -> Result<()> + Send + Sync>;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransactionScope {
     pub conversation_id: Option<ConversationId>,

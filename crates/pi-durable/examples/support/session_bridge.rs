@@ -83,9 +83,32 @@ impl Hub {
                     })),
                     ..Default::default()
                 };
-                self.sessions
-                    .lock()
-                    .insert(id, Session::new(storage, options));
+                let session = Session::new(storage, options);
+                if request["transactionProbes"].as_bool() == Some(true) {
+                    #[cfg(feature = "stock-test-probes")]
+                    {
+                        let host = Arc::downgrade(self);
+                        session.set_transaction_probe(move |point| {
+                            let host = host
+                                .upgrade()
+                                .ok_or_else(|| Error::message("Session test transport closed"))?;
+                            let (method, seq) = match point {
+                                TransactionProbePoint::Adopt(seq) => ("adopt", Some(seq)),
+                                TransactionProbePoint::Discard => ("discard", None),
+                            };
+                            host.sync(
+                                "session.transactionProbe",
+                                object([("method", encode(&method)), ("seq", encode(&seq))]),
+                            )
+                            .map(|_| ())
+                        });
+                    }
+                    #[cfg(not(feature = "stock-test-probes"))]
+                    return Err(Error::message(
+                        "Transaction probes require stock-test-probes",
+                    ));
+                }
+                self.sessions.lock().insert(id, session);
                 Ok(Box::pin(async move { Ok(Some(encode(&id))) }))
             }
             "session.cache" => {

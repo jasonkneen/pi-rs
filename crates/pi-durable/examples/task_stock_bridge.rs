@@ -624,6 +624,17 @@ impl Hub {
         if method == "codemode.format" {
             return self.format_codemode(request);
         }
+        if method == "storage.adopt" {
+            let id = field(&request, "adoption")?;
+            let seq = field(&request, "seq")?;
+            let adopt = self
+                .adoptions
+                .lock()
+                .remove(&id)
+                .ok_or_else(|| Error::message("Unknown or settled storage adoption"))?;
+            adopt(seq);
+            return Ok(Box::pin(async { Ok(None) }));
+        }
         if method.starts_with("builtin.") {
             return self.builtin_request(&method, request, context);
         }
@@ -1642,7 +1653,7 @@ async fn main() {
             // Keep stdin available to receive that callback's reply.
             if matches!(
                 value["method"].to_utf8().as_deref(),
-                Some("graph.stop" | "graph.cancel")
+                Some("graph.stop" | "graph.cancel" | "storage.adopt")
             ) {
                 let (hub, runtime) = (hub.clone(), runtime.clone());
                 runtime

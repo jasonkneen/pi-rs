@@ -31,6 +31,8 @@ pub(crate) struct LoadedDocument {
 }
 pub(crate) type Loaded = Arc<Mutex<LoadedDocument>>;
 pub(crate) trait TransactionHost: Send + Sync {
+    #[cfg(feature = "stock-test-probes")]
+    fn transaction_probe(&self, point: TransactionProbePoint) -> Result<()>;
     fn storage(&self) -> Arc<dyn Storage>;
     fn now(&self) -> f64;
     fn cached(&self, address: &str) -> Option<Loaded>;
@@ -1049,6 +1051,11 @@ impl Transaction {
         result
     }
     pub(crate) fn discard(&self) {
+        #[cfg(feature = "stock-test-probes")]
+        self.inner
+            .host
+            .transaction_probe(TransactionProbePoint::Discard)
+            .unwrap_or_else(|error| std::panic::panic_any(error));
         let state = self.inner.state.lock();
         for entry in &state.documents {
             if let Some(future) = entry.acquisition.lock().as_ref()
@@ -1427,6 +1434,10 @@ impl Transaction {
         Ok(())
     }
     pub(crate) fn adopt(&self, seq: Seq, writes: &[StorageWrite]) -> Result<CommitPublication> {
+        #[cfg(feature = "stock-test-probes")]
+        self.inner
+            .host
+            .transaction_probe(TransactionProbePoint::Adopt(seq))?;
         let mut changes = Vec::new();
         for write in writes {
             match write {
