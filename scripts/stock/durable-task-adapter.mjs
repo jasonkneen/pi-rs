@@ -11,7 +11,7 @@ import {track} from "@earendil-works/chord/delta";
 import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
 import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
-import {nativeRegistryId,nativeSnapshotId,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
+import {nativeRegistryId,lookupNativeSnapshot,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
 nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
 nativeTransport.error("readOnly",value=>new ReadOnlySession(value.operation));
 let storageNext=1,callbackNext=1;
@@ -42,14 +42,17 @@ const stats={phases:0,commits:0,storageCalls:0};
 const call=(method,args={},context)=>nativeTransport.request(method,args,context);
 const send=frame=>nativeTransport.notify(frame);
 nativeTransport.event("signal",frame=>runtime(frame.runtime).controller.abort(new Error(frame.message)));
-nativeTransport.event("report",frame=>harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info));
+nativeTransport.event("report",frame=>{try{Promise.resolve(harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info)).catch(()=>{});}catch{}});
 nativeTransport.register("timerFire",id=>objectFor(id)());
 nativeTransport.register("tool.prepare",({tool,arguments:args})=>(objectFor(tool).prepareArguments===undefined?args:objectFor(tool).prepareArguments(args)));
 nativeTransport.register("tool.validate",({tool,call,arguments:args})=>validateToolArguments(objectFor(tool),{...call,arguments:args}));
 nativeTransport.register("tool.execute",async(args,context)=>{const api=toolApi(args);try{return packToolResult(await objectFor(args.tool).execute(args.arguments,api,withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT)));}finally{toolApiStates.get(api).ended=true;}});
+nativeTransport.register("onWake",({harness,wake})=>{harnesses.get(harness).options.onWake(wake);});
+nativeTransport.register("documentRetention",id=>{const input=harnesses.get(id)?.options.settings,settings=typeof input==="function"?input():input,value=settings?.documentRetentionMs;return typeof value!=="number"?null:Number.isFinite(value)?value:String(value);});
+nativeTransport.register("conversationCreated",args=>captureChange(args.tx,tx=>harnesses.get(args.harness).options.conversationCreated(tx,args.record)));
 nativeTransport.register("now",id=>harnesses.get(id)?.options.now?.()??Date.now());
 nativeTransport.register("settings",id=>{const input=harnesses.get(id)?.options.settings;return settingsRequest(typeof input==="function"?input():input);});
-nativeTransport.register("readerSnapshot",id=>nativeSnapshotId(objectFor(id).snapshot()));
+nativeTransport.register("readerSnapshot",id=>{const value=objectFor(id).snapshot();return lookupNativeSnapshot(value)??{tasks:value.tasks().map(describeTask)};});
 nativeTransport.register("readerSubscribe",([id,listener])=>handle(objectFor(id).subscribe(()=>nativeTransport.sync("registry.notifyReader",{listener}))));
 nativeTransport.register("readerUnsubscribe",id=>objectFor(id)());
 nativeTransport.register("hookMember",({handlers,name})=>{const owner=objectFor(handlers),member=owner[name];return typeof member==="function"?handle(member.bind(owner)):null;});
@@ -103,15 +106,7 @@ async function invoke(method,args,context){
   const context=withAbortSignal(current.signal,BACKGROUND_CONTEXT);const definition=objectFor(id).definition;
   return (phase==="$abort"?definition.abort:definition.phases[phase])(task,current,context);
  }
- if(method==="change"){
-  try{
-   const result=await callbacks.get(args.callback)(transaction(args.tx),args.current??undefined);
-   // JS captures edits to its proxy. Rust owns replay, validation, prepare,
-   // persistence, adoption and publication of every document revision.
-   for(const [draft,held] of drafts.get(args.tx)??[]){const prepared=held.change.prepare();await call("doc.apply",{draft,ops:prepared.ops});}
-   return result;
-  }finally{if(drafts.has(args.tx)){for(const held of drafts.get(args.tx).values())held.change.abort();drafts.delete(args.tx);nativeTransport.sync("doc.release",{tx:args.tx});}}
- }
+ if(method==="change")return captureChange(args.tx,tx=>callbacks.get(args.callback)(tx,args.current??undefined));
  if(method==="storage"){
   stats.storageCalls++;const storage=storages.get(args.handle);let values=args.args;
   if(args.method==="commit"){
@@ -123,11 +118,20 @@ async function invoke(method,args,context){
  }
  throw new Error(`Unknown native callback ${method}`);
 }
+async function captureChange(tx,callback){
+  try{
+   const result=await callback(transaction(tx));
+   // JS captures edits to its proxy. Rust owns replay, validation, prepare,
+   // persistence, adoption and publication of every document revision.
+   for(const [draft,held] of drafts.get(tx)??[]){const prepared=held.change.prepare();await call("doc.apply",{draft,ops:prepared.ops});}
+   return result;
+  }finally{if(drafts.has(tx)){for(const held of drafts.get(tx).values())held.change.abort();drafts.delete(tx);nativeTransport.sync("doc.release",{tx:tx});}}
+}
 export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
- const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);
@@ -145,6 +149,8 @@ export const Harness={async open(storage,options,context){
   createConversation:async(options,context)=>conversation(await call("createConversation",{harness:id,options:conversationOptions(options)},context)),
   waitForIdle:context=>call("waitForIdle",{harness:id,conversation:null},context),
   getTask:(task,context)=>call("getTask",{harness:id,task},context),
+  retryTask:(task,context)=>call("retryTask",{harness:id,task},context),
+  usage:context=>call("usage",{harness:id},context),
   waitForTask:(task,context)=>call("waitForTask",{harness:id,task},context),
   abortTask:(task,context)=>call("abortTask",{harness:id,task},context),
   commit:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
@@ -163,7 +169,7 @@ async function finish(contextOnly,submissionsOnly=false){
  const native=await call("stats");
  if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
  else if(submissionsOnly){if(native.submissionAdmissions===0||native.submissionReads===0||native.submissionWaits===0||stats.storageCalls===0)throw new Error("Native submissions were bypassed");}
- else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0)||(native.commits===0&&native.nativeMemoryCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0))throw new Error("Native scheduler was bypassed");
+ else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0&&native.nativeHarnessOpens===0)||(native.commits===0&&native.nativeMemoryCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0))throw new Error("Native scheduler was bypassed");
  if(process.env.PI_DURABLE_NATIVE_DUMP_STATE)writeFileSync(process.env.PI_DURABLE_NATIVE_DUMP_STATE,JSON.stringify(await call("diagnostics"),null,2));
  Object.assign(stats,native);await nativeTransport.close();
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify(stats));
@@ -274,15 +280,11 @@ nativeTransport.register("models.cancel",async args=>{
 function generationRuntime(args){const current=runtime(args.runtime);current.harness=args.harness;current.taskId=args.taskId;current.conversationId=args.conversationId;return current;}
 nativeTransport.register("generation.render",(args,context)=>{const read=generationRuntime(args);return objectFor(args.section).render({conversationId:args.conversationId,agent:hydrateAgent(args.agent),env:objectFor(args.environment),shown:Object.fromEntries(args.shown),read},withAbortSignal(read.signal,context??BACKGROUND_CONTEXT));});
 
-function conversationOptions(options){if(options===undefined)return undefined;return {...options,init:options.init===undefined?undefined:handle(options.init)};}
+function conversationOptions(options){if(options===undefined)return undefined;return {...options,agent:options.agent===undefined?undefined:configuration(options.agent),init:options.init===undefined?undefined:handle(options.init)};}
 nativeTransport.register("conversation.init",async args=>{
- try{await objectFor(args.callback)(transaction(args.tx),args.conversation);
-  for(const [draft,held]of drafts.get(args.tx)??[]){const prepared=held.change.prepare();await call("doc.apply",{draft,ops:prepared.ops});}
- }finally{if(drafts.has(args.tx)){for(const held of drafts.get(args.tx).values())held.change.abort();drafts.delete(args.tx);nativeTransport.sync("doc.release",{tx:args.tx});}}
+ await captureChange(args.tx,tx=>objectFor(args.callback)(tx,args.conversation));
  return null;
 });
-
-nativeTransport.register("readerTaskNames",id=>objectFor(id).snapshot().tasks().map(task=>task.definition.name));
 
 for(const method of ["beforeRequest","afterResponse","onYield","afterTools"]){
  nativeTransport.register(`generation.${method}`,(args,context)=>{

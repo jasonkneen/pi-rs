@@ -397,6 +397,9 @@ impl TaskScheduler {
     pub fn session(&self) -> Session {
         self.inner.session.clone()
     }
+    pub(crate) fn session_ref(&self) -> &Session {
+        &self.inner.session
+    }
     pub fn index_sizes(&self) -> IndexSizes {
         self.inner.tree.sizes()
     }

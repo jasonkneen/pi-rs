@@ -73,7 +73,23 @@ impl RegistryReader for HostReader {
             .registry
             .reader_snapshots
             .fetch_add(1, Ordering::Relaxed);
-        let id: u64 = decode(&self.hub.sync("readerSnapshot", encode(&self.handle))?)?;
+        let snapshot = self.hub.sync("readerSnapshot", encode(&self.handle))?;
+        if let Some(tasks) = snapshot["tasks"].as_array() {
+            let catalog = pi_durable::harness::catalog::TaskCatalog::default();
+            catalog.replace(
+                tasks
+                    .iter()
+                    .map(|task| {
+                        Ok(pi_durable::harness::catalog::InstalledTask {
+                            task: self.hub.stock_catalog_task(task)?,
+                            extension: None,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            )?;
+            return Ok(RegistryView::from_catalog(catalog.snapshot()));
+        }
+        let id: u64 = decode(&snapshot)?;
         self.hub
             .registry
             .snapshots
@@ -544,6 +560,9 @@ impl Hub {
     }
 }
 pub(super) fn settings(request: &JsonValue) -> Result<Settings> {
+    Ok(resolve_settings(settings_input(request)?))
+}
+pub(super) fn settings_input(request: &JsonValue) -> Result<HarnessSettings> {
     let mut input: HarnessSettings = decode(&request["settings"])?;
     if let Some(numbers) = request["runtimeNumbers"].as_object() {
         for (key, tag) in numbers {
@@ -574,7 +593,7 @@ pub(super) fn settings(request: &JsonValue) -> Result<Settings> {
             }
         }
     }
-    Ok(resolve_settings(input))
+    Ok(input)
 }
 pub(super) fn settings_value(settings: &Settings) -> JsonValue {
     fn number(value: f64) -> JsonValue {

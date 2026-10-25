@@ -283,30 +283,13 @@ impl Hub {
     pub(super) fn build_environment(
         self: &Arc<Self>,
         harness: u64,
-        conversation: ConversationId,
+        target: pi_durable::EnvTarget,
         context: Context,
     ) -> StorageFuture<Option<Arc<dyn ExecutionEnv>>> {
         let hub = self.clone();
         Box::pin(async move {
-            let scheduler = hub
-                .schedulers
-                .lock()
-                .get(&harness)
-                .cloned()
-                .ok_or_else(|| Error::message("Unknown environment harness"))?;
-            let agent = scheduler
-                .session()
-                .snapshot(
-                    &pi_durable::harness::agent::AGENT_DOC,
-                    conversation,
-                    &context,
-                )
-                .await?;
-            let cwd = agent
-                .as_ref()
-                .and_then(|state| state.0.get(&JsonString::from("cwd")))
-                .cloned()
-                .unwrap_or(JsonValue::Null);
+            let conversation = target.conversation_id;
+            let cwd = encode(&target.cwd);
             let Some(description) = hub
                 .call_context(
                     "environment.build",

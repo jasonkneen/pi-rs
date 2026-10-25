@@ -55,7 +55,9 @@ Active work is tracked in `porting/durable/PLAN.md`, `STATUS.md` and `parity-map
 The new `pi-chord` crate implements JSON/delta/context/watch/output and SQLite contracts.
 The `pi-durable` crate includes persisted records, document definitions, native memory/JSONL/SQLite
 storage, Sessions/transactions, scheduling, registry, views/events, submissions and executable
-generation/compaction/tool services. Native tests and unmodified pinned stock suites validate
-these paths. The complete Harness facade, native environments/codemode, full SDK 1.4 alignment,
-IndexedDB and embedded exports remain open; see the detailed ledger for coverage boundaries.
+generation/compaction/tool services, composed by a public native Harness/Conversation API.
+Native tests and unmodified pinned stock suites, including all twelve conversation cases,
+validate these paths. Exact reports/phase telemetry, remaining active-work lifetimes, native
+environments/codemode, full SDK 1.4 alignment, IndexedDB and embedded exports remain open;
+see the detailed ledger for coverage boundaries.
 This entry does not claim complete durable parity.

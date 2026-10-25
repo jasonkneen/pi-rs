@@ -34,6 +34,11 @@ pub use harness::types::{
     UserInput, WhenBusy,
 };
 pub use harness::usage::{USAGE_DOC, UsageState, usage_doc};
+pub use harness::{
+    Conversation, ConversationCreateOptions, ConversationCreated, ConversationEntryQuery,
+    ConversationInit, ConversationOptions, EnvTarget, EnvironmentFactory, Harness, HarnessOptions,
+    create_registry,
+};
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};
 pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
 pub use session::*;

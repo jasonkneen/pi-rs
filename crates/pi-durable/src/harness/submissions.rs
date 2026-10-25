@@ -41,6 +41,9 @@ pub struct Submissions {
 pub struct Submission {
     pub id: SubmissionId,
     submissions: Submissions,
+    // Public Harness handles also own the services used by later task phases.
+    // The core service never stores handles, so this cannot form a cycle.
+    harness: Option<super::Harness>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +106,7 @@ impl Submissions {
         Submission {
             id,
             submissions: self.clone(),
+            harness: None,
         }
     }
     pub fn submit(
@@ -229,20 +233,34 @@ impl Submissions {
     }
 }
 impl Submission {
+    pub(crate) fn retaining(mut self, harness: super::Harness) -> Self {
+        self.harness = Some(harness);
+        self
+    }
+    fn keep_alive<T: Send + 'static>(&self, operation: StorageFuture<T>) -> StorageFuture<T> {
+        let Some(harness) = self.harness.clone() else {
+            return operation;
+        };
+        crate::storage::line::eager_on(&self.submissions.inner.session, async move {
+            let result = operation.await;
+            drop(harness);
+            result
+        })
+    }
     pub fn status(&self, context: &Context) -> StorageFuture<SubmissionRecord> {
-        self.submissions.status(self.id, context)
+        self.keep_alive(self.submissions.status(self.id, context))
     }
     pub fn wait(&self, context: &Context) -> StorageFuture<SettledSubmissionRecord> {
-        self.submissions.wait(self.id, context)
+        self.keep_alive(self.submissions.wait(self.id, context))
     }
     pub fn abort(&self, context: &Context) -> StorageFuture<SubmissionAbort> {
         let operation = self.submissions.abort(self.id, context, None);
         let id = self.id;
-        eager(async move {
+        self.keep_alive(eager(async move {
             operation
                 .await?
                 .ok_or_else(|| Error::message(format!("Submission {id} does not exist")))
-        })
+        }))
     }
 }
 pub async fn admit_submission(

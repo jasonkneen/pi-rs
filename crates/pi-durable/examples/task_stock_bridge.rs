@@ -131,6 +131,7 @@ struct Hub {
     input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
+    harnesses: Mutex<HashMap<u64, pi_durable::Harness>>,
     harness_storage: Mutex<HashMap<u64, Arc<dyn Storage>>>,
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
@@ -149,7 +150,7 @@ struct Hub {
     compaction_reads: AtomicU64,
     registry_reads: AtomicU64,
     agent_reads: AtomicU64,
-    agent_resolutions: AtomicU64,
+    harness_opens: AtomicU64,
     hook_calls: AtomicU64,
     prompt: prompt_bridge::PromptBridge,
     registry: registry_bridge::RegistryBridge,
@@ -392,6 +393,51 @@ impl Hub {
             result
         })
     }
+    fn created(
+        self: &Arc<Self>,
+        harness: u64,
+        tx: Transaction,
+        record: ConversationRecord,
+    ) -> StorageFuture<()> {
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        self.transactions.lock().insert(id, tx);
+        let call = self.call(
+            "conversationCreated",
+            object([
+                ("harness", encode(&harness)),
+                ("tx", encode(&id)),
+                ("record", encode(&record)),
+            ]),
+        );
+        let host = self.clone();
+        Box::pin(async move {
+            let result = call.await;
+            host.transactions.lock().remove(&id);
+            result?;
+            Ok(())
+        })
+    }
+    fn facade(&self, request: &JsonValue) -> Result<pi_durable::Harness> {
+        self.harnesses
+            .lock()
+            .get(&field::<u64>(request, "harness")?)
+            .cloned()
+            .ok_or_else(|| Error::message("Unknown native Harness"))
+    }
+    fn conversation_options(
+        self: &Arc<Self>,
+        value: &JsonValue,
+    ) -> Result<pi_durable::ConversationOptions> {
+        let init: Option<u64> = field(value, "init")?;
+        let host = self.clone();
+        Ok(pi_durable::ConversationOptions {
+            agent: field(value, "agent")?,
+            init: init.map(|callback| {
+                Arc::new(move |tx, id| host.init_conversation(Some(callback), tx, id))
+                    as pi_durable::ConversationInit
+            }),
+        })
+    }
     fn scheduler(&self, request: &JsonValue) -> Result<TaskScheduler> {
         self.schedulers
             .lock()
@@ -480,34 +526,8 @@ impl Hub {
             "open" => Box::pin(async move {
                 let harness: u64 = field(&request, "id")?;
                 let handle: u64 = field(&request, "storage")?;
-                if request["nativeGeneration"].as_bool() == Some(true)
-                    && let Some(reader) = field::<Option<u64>>(&request, "reader")?
-                {
-                    let names: Vec<JsonString> =
-                        decode(&self.sync("readerTaskNames", encode(&reader))?)?;
-                    let missing = ["pi.generation", "pi.tool", "pi.compaction"]
-                        .into_iter()
-                        .filter(|name| !names.iter().any(|held| held.equals_str(name)))
-                        .collect::<Vec<_>>();
-                    if !missing.is_empty() {
-                        return Err(Error::message(format!(
-                            "Registry lacks built-in tasks {}; create it with createRegistry()",
-                            missing.join(", ")
-                        )));
-                    }
-                }
                 let registry = self.registry_reader(&request)?;
                 self.readers.lock().insert(harness, registry.clone());
-                let report = self.clone();
-                let session_report = self.clone();
-                let clock = self.clone();
-                let settings = self.clone();
-                let resolver = self.clone();
-                let environment = self.clone();
-                let model_host = Arc::downgrade(&self);
-                let has_environment = request["environment"].as_bool() == Some(true);
-                let host_clock = request["clock"].as_bool() == Some(true);
-                let host_settings = request["settings"].as_bool() == Some(true);
                 let storage: Arc<dyn Storage> = if let Some(id) = request["nativeMemory"].as_u64() {
                     self.memory.direct_opens.fetch_add(1, Ordering::Relaxed);
                     self.memory_storage(id)?
@@ -518,74 +538,99 @@ impl Hub {
                     })
                 };
                 self.harness_storage.lock().insert(harness, storage.clone());
-                let scheduler=TaskScheduler::open(storage,registry,SchedulerOptions{
-                    model_collection: Some(Arc::new(move || model_host.upgrade().ok_or_else(|| Error::message("Model host closed"))?.host_collection(harness))),
-                    env:Arc::new(move |conversation,context|if has_environment {environment.build_environment(harness,conversation,context)}else{Box::pin(async {Ok(None)})}),
-                    settings:Arc::new(move || if host_settings {registry_bridge::settings(&settings.sync("settings",encode(&harness))?)} else {Ok(pi_durable::harness::settings::resolve_settings(Default::default()))}),
-                    settle_outcome:Arc::new(|tx,record,outcome|Box::pin(pi_durable::harness::live::settle_scheduler_outcome(tx,record,outcome))),withdraw_inputs:Arc::new(|tx,conversation|Box::pin(async move {pi_durable::harness::inbox::withdraw_queued_inputs(&tx,conversation,"aborted").await})),agent:Arc::new(move |request| {resolver.agent_resolutions.fetch_add(1,Ordering::Relaxed);pi_durable::harness::agent::resolve_agent_in(request)}),
-                    on_report:Arc::new(move|error,info|report.emit(encode(&serde_json::json!({"type":"report","harness":harness,"error":{"name":error.name(),"message":error.to_string()},"info":{"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}})))),..Default::default()
-                },SessionOptions{read_only:request["readOnly"].as_bool()==Some(true),report:Arc::new(move |error| session_report.emit(object([("type",encode(&"report")),("harness",encode(&harness)),("error",error_value(&error)),("info",encode(&serde_json::json!({"type":"session_failed"})))]))),conversation_created:Some(Arc::new(|tx,record|Box::pin(async move { pi_durable::harness::create_conversation_documents(&tx,record).await }))),now:Arc::new(move||if host_clock {decode(&clock.sync("now",encode(&harness)).unwrap()).unwrap()} else {native_now()}),document_retention_ms:field(&request,"retention")?,..Default::default()},&with_context_value(&HARNESS_CONTEXT,harness,&context)).await?;
-                let resume = scheduler.clone();
-                let clock = self.clone();
-                let settings = self.clone();
-                let submissions = Submissions::new(
-                    scheduler.session().clone(),
-                    SubmissionsOptions {
-                        now: Arc::new(move || {
-                            if host_clock {
-                                decode(&clock.sync("now", encode(&harness)).unwrap()).unwrap()
-                            } else {
-                                native_now()
-                            }
-                        }),
-                        queue_modes: Arc::new(move || {
-                            if host_settings {
-                                registry_bridge::settings(
-                                    &settings.sync("settings", encode(&harness))?,
-                                )
-                                .map(|settings| QueueModes::from(&settings))
-                            } else {
-                                Ok(QueueModes::from(
-                                    &pi_durable::harness::settings::resolve_settings(
-                                        Default::default(),
-                                    ),
-                                ))
-                            }
-                        }),
-                        resume: Arc::new(move || resume.resume()),
-                        telemetry: pi_telemetry::noop_telemetry_context(),
-                    },
-                )?;
+                let mut options =
+                    pi_durable::HarnessOptions::new(registry, pi_ai::models::Models::default());
+                let models = Arc::downgrade(&self);
+                options.model_collection = Some(Arc::new(move || {
+                    models
+                        .upgrade()
+                        .ok_or_else(|| Error::message("Model host closed"))?
+                        .host_collection(harness)
+                }));
+                if request["environment"].as_bool() == Some(true) {
+                    let host = self.clone();
+                    options.env = Some(Arc::new(move |target, context| {
+                        host.build_environment(harness, target, context)
+                    }));
+                }
+                if request["clock"].as_bool() == Some(true) {
+                    let host = self.clone();
+                    options.now = Some(Arc::new(move || {
+                        decode(&host.sync("now", encode(&harness))?)
+                    }));
+                }
+                if request["settings"].as_bool() == Some(true) {
+                    let host = self.clone();
+                    options.settings = Arc::new(move || {
+                        registry_bridge::settings_input(&host.sync("settings", encode(&harness))?)
+                    });
+                    let host = self.clone();
+                    options.document_retention_reader = Some(Arc::new(move || {
+                        let value = host.sync("documentRetention", encode(&harness))?;
+                        if value.is_null() {
+                            return Ok(None);
+                        }
+                        match value.to_utf8().as_deref() {
+                            Some("Infinity") => Ok(Some(f64::INFINITY)),
+                            Some("-Infinity") => Ok(Some(f64::NEG_INFINITY)),
+                            Some("NaN") => Ok(Some(f64::NAN)),
+                            _ => decode(&value).map(Some),
+                        }
+                    }));
+                }
+                options.default_document_retention_ms = field(&request, "retention")?;
+                options.read_only = request["readOnly"].as_bool() == Some(true);
+                if request["onWake"].as_bool() == Some(true) {
+                    let host = self.clone();
+                    options.on_wake = Some(Arc::new(move |wake| {
+                        let mut value = object([("active", encode(&wake.active))]);
+                        if let Some(at) = wake.at {
+                            value
+                                .as_object_mut()
+                                .unwrap()
+                                .insert("at".into(), encode(&at));
+                        }
+                        host.sync(
+                            "onWake",
+                            object([("harness", encode(&harness)), ("wake", value)]),
+                        )?;
+                        Ok(())
+                    }));
+                }
+                if request["conversationCreated"].as_bool() == Some(true) {
+                    let host = self.clone();
+                    options.conversation_created = Some(Arc::new(move |tx, record| {
+                        host.created(harness, tx, record)
+                    }));
+                }
+                let host = self.clone();
+                options.on_report = Some(Arc::new(move |error, info| {
+                    host.emit(object([
+                    ("type", encode(&"report")), ("harness", encode(&harness)), ("error", error_value(&error)),
+                    ("info", encode(&serde_json::json!({"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}))),
+                ]))
+                }));
+                let facade = pi_durable::Harness::open(
+                    storage,
+                    options,
+                    &with_context_value(&HARNESS_CONTEXT, harness, &context),
+                )
+                .await?;
+                let scheduler = facade.scheduler().clone();
                 self.submissions
                     .services
                     .lock()
-                    .insert(harness, submissions);
+                    .insert(harness, facade.submissions().clone());
+                self.harnesses.lock().insert(harness, facade);
+                self.harness_opens.fetch_add(1, Ordering::Relaxed);
                 self.schedulers.lock().insert(harness, scheduler);
                 Ok(Some(encode(&harness)))
             }),
             "root" => {
-                let scheduler = self.scheduler(&request)?;
-                let hub = self.clone();
-                mapped(scheduler.session().commit(
-                    move |tx| async move {
-                        if let Some(root) = tx.conversation(ROOT_CONVERSATION_ID).await? {
-                            return Ok(root.id);
-                        }
-                        let root = tx.create_root_conversation().await?;
-                        if request["options"]["agent"].is_object() {
-                            pi_durable::harness::agent::configure(
-                                &tx,
-                                root.id,
-                                field(&request["options"], "agent")?,
-                            )
-                            .await?;
-                        }
-                        hub.init_conversation(field(&request["options"], "init")?, tx, root.id)
-                            .await?;
-                        Ok(root.id)
-                    },
-                    &context,
-                ))
+                let root = self
+                    .facade(&request)?
+                    .root(self.conversation_options(&request["options"])?, &context);
+                Box::pin(async move { Ok(Some(encode(&root.await?.id))) })
             }
             "wake" => {
                 let wake = self.scheduler(&request)?.wake();
@@ -603,46 +648,14 @@ impl Hub {
                 mapped(self.scheduler(&request)?.inspect(&context))
             }
             "conversationAgent" => {
-                let scheduler = self.scheduler(&request)?;
-                let harness: u64 = field(&request, "harness")?;
-                let conversation = field(&request, "conversation")?;
-                let reader = self
-                    .readers
-                    .lock()
-                    .get(&harness)
-                    .cloned()
-                    .ok_or_else(|| Error::message("Unknown reader"))?;
-                let hub = self.clone();
-                let settings = self.clone();
-                let report = self.clone();
+                let agent = self.facade(&request)?.resolve_agent(
+                    field(&request, "conversation")?,
+                    None,
+                    &context,
+                );
+                let host = self.clone();
                 Box::pin(async move {
-                    let request = pi_durable::harness::agent::AgentRequest {
-                        session: scheduler.session().clone(),
-                        conversation,
-                        snapshot: reader.snapshot()?,
-                        settings: Arc::new(move || {
-                            registry_bridge::settings(&settings.sync("settings", encode(&harness))?)
-                        }),
-                        report: Arc::new(move |error, extension| {
-                            report.emit(object([
-                                ("type", encode(&"report")),
-                                ("harness", encode(&harness)),
-                                ("error", error_value(&error)),
-                                (
-                                    "info",
-                                    object([
-                                        ("type", encode(&"extension_error")),
-                                        ("extension", encode(&extension)),
-                                    ]),
-                                ),
-                            ]))
-                        }),
-                        context,
-                    };
-                    let agent = pi_durable::harness::agent::resolve_agent_in(request)
-                        .await?
-                        .typed::<registry_bridge::ToolHandle, registry_bridge::SectionHandle>()?;
-                    Ok(Some(hub.encode_agent(agent)))
+                    Ok(Some(host.encode_agent(agent.await?.typed::<registry_bridge::ToolHandle, registry_bridge::SectionHandle>()?)))
                 })
             }
             "conversation" => {
@@ -708,8 +721,7 @@ impl Hub {
                 }
             }
             "createConversation" | "forkConversation" => {
-                let scheduler = self.scheduler(&request)?;
-                let hub = self.clone();
+                let facade = self.facade(&request)?;
                 let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
                     Some("ownerless") => ConversationOwnership::Ownerless,
                     Some("task") => ConversationOwnership::Task(field(
@@ -718,33 +730,33 @@ impl Hub {
                     )?),
                     _ => return Err(Error::message("Unknown conversation ownership")),
                 };
-                mapped(scheduler.session().commit(
-                    move |tx| async move {
-                        let record = if method == "forkConversation" {
-                            tx.fork_conversation(
-                                field(&request, "conversation")?,
-                                field(&request, "at")?,
-                                ownership,
-                            )
+                let options = self.conversation_options(&request["options"])?;
+                let options = pi_durable::ConversationCreateOptions {
+                    ownership,
+                    agent: options.agent,
+                    init: options.init,
+                };
+                let operation = if method == "createConversation" {
+                    facade.create_conversation(options, &context)
+                } else {
+                    let conversation =
+                        facade.conversation(field(&request, "conversation")?, &context);
+                    let at = field(&request, "at")?;
+                    Box::pin(async move {
+                        conversation
                             .await?
-                        } else {
-                            tx.create_conversation(ownership).await?
-                        };
-                        if request["options"]["agent"].is_object() {
-                            pi_durable::harness::agent::configure(
-                                &tx,
-                                record.id,
-                                field(&request["options"], "agent")?,
-                            )
-                            .await?;
-                        }
-                        hub.init_conversation(field(&request["options"], "init")?, tx, record.id)
-                            .await?;
-                        Ok(record.id)
-                    },
-                    &context,
-                ))
+                            .ok_or_else(|| Error::message("Conversation does not exist"))?
+                            .fork(at, options, &context)
+                            .await
+                    })
+                };
+                Box::pin(async move { Ok(Some(encode(&operation.await?.id))) })
             }
+            "usage" => mapped(self.facade(&request)?.usage(&context)),
+            "retryTask" => mapped(
+                self.facade(&request)?
+                    .retry_task(field(&request, "task")?, &context),
+            ),
             "conversation.compact" => {
                 mapped(pi_durable::harness::compaction::compact_conversation(
                     &self.scheduler(&request)?,
@@ -1205,7 +1217,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelCompletions":self.models.completions.load(Ordering::Relaxed),"nativeCompactionHooks":self.models.compaction_hooks.load(Ordering::Relaxed),"sourceCompactionPhases":self.source_compaction_phases.load(Ordering::Relaxed),"nativeGenerationHooks":self.models.hook_calls.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"sourceGenerationPhases":self.source_generation_phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelCompletions":self.models.completions.load(Ordering::Relaxed),"nativeCompactionHooks":self.models.compaction_hooks.load(Ordering::Relaxed),"sourceCompactionPhases":self.source_compaction_phases.load(Ordering::Relaxed),"nativeGenerationHooks":self.models.hook_calls.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"sourceGenerationPhases":self.source_generation_phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"nativeHarnessOpens":self.harness_opens.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -1259,6 +1271,7 @@ async fn main() {
         input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
+        harnesses: Mutex::new(HashMap::new()),
         harness_storage: Mutex::new(HashMap::new()),
         readers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
@@ -1277,7 +1290,7 @@ async fn main() {
         compaction_reads: AtomicU64::new(0),
         registry_reads: AtomicU64::new(0),
         agent_reads: AtomicU64::new(0),
-        agent_resolutions: AtomicU64::new(0),
+        harness_opens: AtomicU64::new(0),
         hook_calls: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
         prompt: prompt_bridge::PromptBridge::default(),

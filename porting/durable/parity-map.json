@@ -498,7 +498,8 @@
         "crates/pi-durable/examples/conversation.rs",
         "crates/pi-durable/src/harness/models/collection.rs",
         "crates/pi-durable/src/harness/models/message.rs",
-        "crates/pi-durable/tests/generation_runtime/collection.rs"
+        "crates/pi-durable/tests/generation_runtime/collection.rs",
+        "crates/pi-durable/tests/harness.rs"
       ],
       "evidence": [
         "Native preparation/request/retry/poll/tools/abort phases, pinned request options and cutoff, provider session IDs, trailing partials, failure policies, compaction admission, tool controls and run handover",
@@ -508,7 +509,8 @@
         "Original JS model collections, section renderers, environments, backend and user callbacks remain host capabilities; the direct resolveSettings helper assertion remains source",
         "Full SDK 1.4 lossless alignment and complete Harness/embedded exports remain open",
         "Hosted model metadata stays lazy: generation reads contextWindow only in preparation; compaction ignores it and reads a positive maxTokens getter twice before pinning the limit; used getter errors and nonfinite checkpoint values fault before a provider call",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "The public registry factory retains one canonical generation definition for each native tool/section type pair, matching shared builtin identity across independent registries"
       ]
     },
     {
@@ -518,12 +520,19 @@
         "crates/pi-durable/src/harness/inspect.rs",
         "crates/pi-durable/src/harness/task_graph.rs",
         "crates/pi-durable/src/harness/scheduler.rs",
-        "crates/pi-durable/src/harness/mod.rs"
+        "crates/pi-durable/src/harness/mod.rs",
+        "crates/pi-durable/src/harness/harness.rs",
+        "crates/pi-durable/tests/harness.rs",
+        "crates/pi-durable/examples/conversation.rs"
       ],
       "evidence": [
-        "Native Session, scheduler, generation, compaction, submissions, registry, context, views/events, inspection and graph services have stock coverage; complete public Harness facade is still pending",
-        "Native conversation document initialization creates live, inbox, usage and provider state before the agent hook; manual compaction resumes scheduling before its native admission",
-        "Original user callbacks, model collections and I/O remain external capabilities in the test transport; native environment construction, telemetry and embedded exports remain incomplete",
+        "Native public Harness and Conversation compose one Session, scheduler, submissions, views, invocation-bound conversations and current models/settings; the standalone example uses this public API",
+        "Native builtin validation precedes opening storage; creation hooks initialize durable documents before user hooks, configuration and init; failed init rolls back the complete creation",
+        "Public root/create/fork, agent resolution, usage aggregation, reset, compact, admission, waits, abort/retry, context/entry reads, task inspection, graph and event observations delegate to native services",
+        "Nine native tests cover current SDK models/settings/default identity, context and totals, creation order and rollback, read-only admission, dynamic retention and declined-timer fallback, safe clock/report callbacks, canonical builtin identity and retained submission lifetime",
+        "All twelve unchanged stock conversation cases run against native facade services and direct native memory in both retention modes; paused scheduling requires no source task phases",
+        "The process binding now opens this native facade for stock task, generation, compaction, tool, nested, recovery, view/event, inspection, submission and read-only workflows",
+        "Complete report metadata/phase telemetry, native environment implementations, restricted environment read capabilities, arbitrary foreign JS registry agent capabilities, remaining active-work lifetime boundaries and embedded exports remain open; original user callbacks, model collections and I/O remain external capabilities in the test transport",
         "porting/durable/STATUS.md"
       ]
     },
@@ -611,13 +620,15 @@
         "crates/pi-durable/src/harness/registry.rs",
         "crates/pi-durable/src/harness/catalog.rs",
         "crates/pi-durable/tests/registry.rs",
-        "crates/pi-durable/src/harness/reader.rs"
+        "crates/pi-durable/src/harness/reader.rs",
+        "crates/pi-durable/src/harness/harness.rs",
+        "crates/pi-durable/tests/harness.rs"
       ],
       "evidence": [
         "Native atomic extension publication, immutable snapshots, validation, task lookup, subscriptions and replacement ordering",
         "scripts/run-stock-durable-registry.mjs: all 10 unmodified cases in both retention modes",
-        "Actual builtin definitions supplied by the host; native builtins and embedded bindings pending",
-        "Live RegistryReader integration, fallible snapshots/subscriptions, retained typed phase snapshots and close disposal are native"
+        "Live RegistryReader integration, fallible snapshots/subscriptions, retained typed phase snapshots and close disposal are native",
+        "Public create_registry supplies canonical native generation/tool/compaction definitions; the modular registry stock gate retains original JS definitions as host capabilities; embedded bindings remain open"
       ]
     },
     {
@@ -679,7 +690,8 @@
       "rust": [
         "crates/pi-durable/src/harness/submissions.rs",
         "crates/pi-durable/tests/submissions.rs",
-        "crates/pi-durable/tests/submissions_reference.rs"
+        "crates/pi-durable/tests/submissions_reference.rs",
+        "crates/pi-durable/tests/harness.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
@@ -687,7 +699,8 @@
         "porting/durable/STATUS.md",
         "Native eager admission/get/status/wait/abort controller; request deduplication, display-only bypass, busy rejection, queued/idle placement, scoped withdrawal, content-free tracing and settled receipt refinement",
         "Wait registration is ordered with publication and close; admitted waits retain their service observer after external handles are dropped",
-        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution"
+        "28 independent reference scenarios and 198 state/result observations in both retention modes; generated from original pinned source modules without generation execution",
+        "Public Harness submission handles and their admitted status/wait/abort operations retain the owning Harness services; a gated native tool regression proves submit/get handle lifetimes and release without a reference cycle"
       ]
     },
     {
@@ -889,12 +902,15 @@
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
         "crates/pi-durable/tests/session_reference.rs",
-        "crates/pi-durable/tests/dynamic_documents.rs"
+        "crates/pi-durable/tests/dynamic_documents.rs",
+        "crates/pi-durable/tests/harness.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts",
+        "Optional fallible live retention readers contain errors and invalid values, shorten an already armed eviction timer and preserve default fallback; typed session reports distinguish listener, failed storage and timer errors",
+        "A deterministic native regression reproduced five retained documents after switching to zero retention when the host had declined timers; all due evictions now queue directly on the Session line before considering background timer availability, matching the reference"
       ]
     },
     {
@@ -1584,9 +1600,21 @@
     },
     {
       "reference": "packages/durable/test/harness-conversations.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "crates/pi-durable/src/harness/harness.rs",
+        "crates/pi-durable/tests/harness.rs"
+      ],
+      "evidence": [
+        "scripts/run-stock-durable-tasks.mjs --suite=conversations executes all twelve original literal cases at pinned source bytes, with original assertions and timers, under retention 600000 and 0",
+        "Each mode proves thirteen successful native public Harness opens, eight direct native memory opens, thirty-two document reads, fifteen document writes and one document watch; all workflows deliberately leave scheduling paused",
+        "Native creation, configuration, init rollback, fork replay, retained document identity and dynamic retention decisions are exercised; original JS registrations/hooks and the plain Session bootstrap remain host capabilities",
+        "Native API tests additionally prove SDK model identity, usage totals, invocation-bound services and retained submission ownership without a JavaScript host",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-events.test.ts",

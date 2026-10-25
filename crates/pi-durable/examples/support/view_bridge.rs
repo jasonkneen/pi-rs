@@ -1,10 +1,8 @@
 //! Native conversation view and event acquisition for unmodified stock tests.
 use super::*;
-use pi_durable::harness::view::*;
 
 #[derive(Default)]
 pub(super) struct ViewBridge {
-    services: Mutex<HashMap<u64, ConversationViews>>,
     subscriptions: Mutex<HashMap<u64, Subscription>>,
     pub reads: AtomicU64,
     pub event_reads: AtomicU64,
@@ -46,17 +44,7 @@ impl Hub {
             self.views.subscriptions.lock().insert(id, subscription);
             return Ok(Box::pin(async move { Ok(Some(encode(&id))) }));
         }
-        let harness: u64 = field(&request, "harness")?;
-        let views = {
-            let mut services = self.views.services.lock();
-            if let Some(views) = services.get(&harness) {
-                views.clone()
-            } else {
-                let views = ConversationViews::new(self.scheduler(&request)?.session().clone())?;
-                services.insert(harness, views.clone());
-                views
-            }
-        };
+        let views = self.facade(&request)?.views().clone();
         self.views.reads.fetch_add(1, Ordering::Relaxed);
         let conversation = field(&request, "conversation")?;
         if method == "view.events" {

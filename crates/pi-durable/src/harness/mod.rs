@@ -6,8 +6,16 @@ pub mod context;
 pub mod conversation;
 pub mod declaration;
 pub mod events;
+#[path = "harness.rs"]
+mod facade;
 pub mod generation;
 pub mod hooks;
+pub use facade::{
+    Conversation, ConversationCreateOptions, ConversationCreated, ConversationEntryQuery,
+    ConversationInit, ConversationOptions, EnvTarget, EnvironmentFactory, Harness, HarnessOptions,
+    HarnessReport, HarnessSettingsReader, HostClock, create_registry, default_harness_identity,
+    safe_now,
+};
 pub mod inbox;
 pub mod inspect;
 pub mod json;

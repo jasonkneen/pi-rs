@@ -10,11 +10,25 @@ use pi_chord::delta::Op;
 pub use prepare::{Threshold, threshold_compaction};
 pub use settle::convert_partial;
 use std::sync::Arc;
+use std::{any::TypeId, collections::HashMap, sync::LazyLock};
 pub use types::*;
 
 pub const GENERATION_KIND: &str = "pi.generation";
 pub const GENERATION_VERSION: u64 = 1;
 pub fn generation_task<T, S>() -> GenerationTask
+where
+    T: super::registry::RegisteredTool + super::declaration::DeclaredTool,
+    S: super::prompt::PromptSection<GenerationPromptInput<T, S>>,
+{
+    static TASKS: LazyLock<parking_lot::Mutex<HashMap<TypeId, GenerationTask>>> =
+        LazyLock::new(Default::default);
+    TASKS
+        .lock()
+        .entry(TypeId::of::<(T, S)>())
+        .or_insert_with(build_generation_task::<T, S>)
+        .clone()
+}
+fn build_generation_task<T, S>() -> GenerationTask
 where
     T: super::registry::RegisteredTool + super::declaration::DeclaredTool,
     S: super::prompt::PromptSection<GenerationPromptInput<T, S>>,

@@ -71,12 +71,22 @@ type CloseListener = Arc<dyn Fn() + Send + Sync>;
 type ConversationHook =
     Arc<dyn Fn(Transaction, ConversationRecord) -> StorageFuture<()> + Send + Sync>;
 type BeforeClose = Arc<dyn Fn(Session) -> StorageFuture<()> + Send + Sync>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionReportKind {
+    Listener,
+    Failed,
+    Timer,
+}
+pub type SessionReport = Arc<dyn Fn(Error, SessionReportKind, Option<Context>) + Send + Sync>;
+pub type DocumentRetentionReader = Arc<dyn Fn() -> Result<Option<f64>> + Send + Sync>;
 #[derive(Clone)]
 pub struct SessionOptions {
     pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
     pub document_retention_ms: f64,
+    pub document_retention_reader: Option<DocumentRetentionReader>,
     pub set_timer: Option<SetTimer>,
     pub report: Report,
+    pub report_event: Option<SessionReport>,
     pub read_only: bool,
     pub conversation_created: Option<ConversationHook>,
     pub before_close: Option<BeforeClose>,
@@ -86,8 +96,10 @@ impl Default for SessionOptions {
         Self {
             now: Arc::new(wall_now),
             document_retention_ms: 600_000.0,
+            document_retention_reader: None,
             set_timer: None,
             report: Arc::new(|_| {}),
+            report_event: None,
             read_only: false,
             conversation_created: None,
             before_close: None,
@@ -112,6 +124,7 @@ struct State {
     close_listeners: IndexMap<u64, CloseListener>,
     next_listener: u64,
     timer: Option<DisarmTimer>,
+    timer_at: Option<f64>,
     timer_generation: u64,
     sweep_pending: bool,
     background_unavailable: bool,
@@ -163,11 +176,22 @@ impl Session {
             options.document_retention_ms = 600_000.0;
         }
         let guard = GuardedStorage::new(storage);
+        let timer_report = options.report.clone();
+        let timer_event = options.report_event.clone();
         let (closed, _) = tokio::sync::watch::channel(None);
         let (close_result, _) = tokio::sync::watch::channel(None);
         let session = Self {
             inner: Arc::new(Inner {
-                timers: Timers::new(options.set_timer.clone(), options.report.clone()),
+                timers: Timers::new(
+                    options.set_timer.clone(),
+                    Arc::new(move |error| {
+                        if let Some(report) = &timer_event {
+                            report(error, SessionReportKind::Timer, None);
+                        } else {
+                            timer_report(error);
+                        }
+                    }),
+                ),
                 storage: Arc::new(Guard(guard.clone())),
                 guard: guard.clone(),
                 executor: executor::Executor::default(),
@@ -184,7 +208,7 @@ impl Session {
             if let Some(inner) = weak.upgrade() {
                 let session = Session { inner };
                 session.begin_close(Context::default());
-                session.report(error);
+                session.report_kind(error, SessionReportKind::Failed, None);
             }
         }));
         session
@@ -224,9 +248,36 @@ impl Session {
         }
     }
     pub(crate) fn report(&self, error: Error) {
+        self.report_kind(error, SessionReportKind::Listener, None);
+    }
+    fn report_kind(&self, error: Error, kind: SessionReportKind, context: Option<Context>) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (self.inner.options.report)(error)
+            if let Some(report) = &self.inner.options.report_event {
+                report(error, kind, context);
+            } else {
+                (self.inner.options.report)(error);
+            }
         }));
+    }
+    fn document_retention(&self) -> f64 {
+        let fallback = self.inner.options.document_retention_ms;
+        let value = self
+            .inner
+            .options
+            .document_retention_reader
+            .as_ref()
+            .and_then(|reader| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader()))
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten()
+            })
+            .unwrap_or(fallback);
+        if value.is_nan() || value < 0.0 {
+            fallback
+        } else {
+            value
+        }
     }
     fn now(&self) -> f64 {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.inner.options.now)()))
@@ -562,7 +613,7 @@ impl Session {
                     if internal {
                         self.inner.guard.fail(error)
                     } else {
-                        self.report(error)
+                        self.report_kind(error, SessionReportKind::Listener, Some(context.clone()))
                     }
                 }
             }
@@ -980,7 +1031,7 @@ impl Session {
     }
     fn touch(&self, address: &str) {
         let now = self.now();
-        let retention = self.inner.options.document_retention_ms;
+        let retention = self.document_retention();
         {
             let mut s = self.inner.state.lock();
             let Some(id) = s.cache.get(address).map(|l| l.lock().record.id()) else {
@@ -1001,7 +1052,7 @@ impl Session {
         self.arm_sweep();
     }
     fn sweep(&self) {
-        let cutoff = self.now() - self.inner.options.document_retention_ms;
+        let cutoff = self.now() - self.document_retention();
         let timer = {
             let mut s = self.inner.state.lock();
             let expired = s
@@ -1015,6 +1066,7 @@ impl Session {
                 s.cache.remove(&address);
             }
             s.sweep_pending = false;
+            s.timer_at = None;
             s.timer_generation += 1;
             s.timer.take()
         };
@@ -1024,23 +1076,35 @@ impl Session {
         self.arm_sweep();
     }
     fn arm_sweep(&self) {
-        let retention = self.inner.options.document_retention_ms;
+        let retention = self.document_retention();
         if !retention.is_finite() {
             return;
         }
         let now = self.now();
-        let (generation, delay) = {
+        let (generation, delay, old) = {
             let mut s = self.inner.state.lock();
-            if s.closing || s.background_unavailable || s.sweep_pending || s.timer.is_some() {
+            if s.closing || s.sweep_pending {
                 return;
             }
             let Some((_, at)) = s.idle.first() else {
                 return;
             };
-            let delay = (*at + retention - now).max(0.0);
+            let at = *at + retention;
+            if s.background_unavailable && at > now {
+                return;
+            }
+            if s.timer.is_some() && s.timer_at.is_some_and(|current| current <= at) {
+                return;
+            }
+            let old = s.timer.take();
+            s.timer_at = Some(at);
+            let delay = (at - now).max(0.0);
             s.timer_generation += 1;
-            (s.timer_generation, delay)
+            (s.timer_generation, delay, old)
         };
+        if let Some(disarm) = old {
+            disarm();
+        }
         let weak = Arc::downgrade(&self.inner);
         let callback = Box::new(move || {
             if let Some(inner) = weak.upgrade() {
@@ -1051,6 +1115,7 @@ impl Session {
                         return;
                     }
                     state.timer = None;
+                    state.timer_at = None;
                     state.sweep_pending = true;
                 }
                 drop(session.enqueue(move |session| async move {
@@ -1065,9 +1130,9 @@ impl Session {
                 }));
             }
         });
-        // Zero retention uses the mutation line's next turn even on hosts that
-        // decline background timers; cold reads must not retain idle trackers.
-        if retention == 0.0 {
+        // Due evictions use the mutation line's next turn even on hosts that
+        // decline background timers, including a live decrease to zero.
+        if delay <= 0.0 {
             callback();
             return;
         }
@@ -1076,6 +1141,7 @@ impl Session {
         if state.timer_generation == generation && !state.sweep_pending {
             if timer.is_none() {
                 state.background_unavailable = true;
+                state.timer_at = None;
             }
             state.timer = timer;
         } else {
