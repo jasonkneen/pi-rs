@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 fn rt_in(dir: &std::path::Path) -> JsRuntime {
     JsRuntime::new(RuntimeOptions {
-        cwd: Some(dir.to_path_buf()),
+        // Compare external pwd against the physical cwd, as Node does after chdir.
+        cwd: Some(dir.canonicalize().unwrap()),
         ..Default::default()
     })
     .unwrap()
@@ -343,7 +344,8 @@ async fn process_object() {
     assert_eq!(v["env"], json!("value"));
     assert_eq!(v["path"], json!(null));
     assert_eq!(v["argv"], json!(["pi", "ext.ts"]));
-    assert_eq!(v["platform"], json!("linux"));
+    let platform=match std::env::consts::OS { "macos"=>"darwin", "windows"=>"win32", other=>other };
+    assert_eq!(v["platform"], json!(platform));
     assert_eq!(v["hr"], json!(true));
     assert_eq!(v["exitErr"], json!("ERR_PROCESS_EXIT"));
     assert_eq!(v["global"], json!(true));

@@ -199,7 +199,7 @@ console.log(process.kill(process.pid, 0), process.listenerCount("SIGKILL"));
     let out = Command::new(NODE_BIN).arg(&sig).output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "uv_signal_start EINVAL EINVAL -22 uv_signal_start\nTypeError Unknown signal: SIGFOO ERR_UNKNOWN_SIGNAL\nkill ESRCH ESRCH -3 kill\ntrue 0\ngot [\"SIGUSR2\",12]\n"
+        format!("uv_signal_start EINVAL EINVAL -22 uv_signal_start\nTypeError Unknown signal: SIGFOO ERR_UNKNOWN_SIGNAL\nkill ESRCH ESRCH -3 kill\ntrue 0\ngot [\"SIGUSR2\",{}]\n", libc::SIGUSR2)
     );
     assert_eq!(out.status.signal(), Some(libc::SIGUSR2));
 
