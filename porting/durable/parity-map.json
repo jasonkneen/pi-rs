@@ -913,7 +913,8 @@
         "porting/durable/STATUS.md",
         "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts",
         "Optional fallible live retention readers contain errors and invalid values, shorten an already armed eviction timer and preserve default fallback; typed session reports distinguish listener, failed storage and timer errors",
-        "A deterministic native regression reproduced five retained documents after switching to zero retention when the host had declined timers; all due evictions now queue directly on the Session line before considering background timer availability, matching the reference"
+        "A deterministic native regression reproduced five retained documents after switching to zero retention when the host had declined timers; all due evictions now queue directly on the Session line before considering background timer availability, matching the reference",
+        "Observer registration checks health and the close seal atomically after loading an existing document; an absent queued watch still returns None, while a cached snapshot preserves its call-time revision; two native regressions fail before the fix and pass afterward, alongside all fourteen original lifecycle cases in both modes"
       ]
     },
     {
@@ -1744,9 +1745,24 @@
     },
     {
       "reference": "packages/durable/test/harness-lifecycle.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "crates/pi-durable/src/session/mod.rs",
+        "crates/pi-durable/tests/session.rs",
+        "crates/pi-durable/src/harness/harness.rs"
+      ],
+      "evidence": [
+        "All fourteen original lifecycle cases pass unchanged at the pinned bytes in retention 600000 and 0; original assertions, flushes, failure injections and timeout limits are retained",
+        "Stock failure reproduced native document watch attachment after close sealed admission; registration now rechecks health and closing atomically under the observer-state lock; queued existing and in-flight loaded watches have native red/green regressions",
+        "Each mode proves twenty successful facade opens, thirteen direct native memory opens, one native generation request, two native generation hooks and one native tool execution; source generation and compaction phases stay zero",
+        "The stock file covers failed open cleanup/cancellation, stubborn task/tool/hook joins, real SQLite reopen, repeated/cancelled close, admitted commit settlement, frame suppression, cancelled acquisitions, queued reads/waits and paused progress admission",
+        "The adapter exposes the native unload_documents operation; original models, hooks, controlled backend subclasses and the public subscribeCommits instrumentation remain host capabilities; native observer lifetime tests supply additional coverage",
+        "Complete native environment implementations, active-work handle lifetime boundaries and embedded exports remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-live-deltas.test.ts",

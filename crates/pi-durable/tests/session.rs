@@ -375,6 +375,68 @@ async fn historical_snapshots_use_entry_commit_and_incarnation_and_follow_ancest
 }
 
 #[tokio::test]
+async fn queued_reads_survive_the_close_seal_but_existing_document_watches_cannot_attach() {
+    let (storage, session) = open();
+    bump(&session).await.unwrap();
+    let gate = Arc::new(Gate::default());
+    *storage.commit_gate.lock() = Some(gate.clone());
+    let held = session.commit(
+        |tx| async move {
+            tx.doc(&counter(), ()).await?.update(|counter| {
+                counter.count += 1;
+                Ok(())
+            })
+        },
+        &Context::default(),
+    );
+    gate.entered().await;
+    let snapshot = session.snapshot(&counter(), (), &Context::default());
+    let watch = session.watch_doc(&counter(), (), &Context::default());
+    let absent = define_doc(DocDefinition::new(
+        "absent",
+        1,
+        SessionScope,
+        || Ok(Counter { count: 0 }),
+        |_, _, _| false,
+    ))
+    .unwrap();
+    let absent_watch = session.watch_doc(&absent, (), &Context::default());
+    let closing = session.close(&Context::default());
+    gate.release();
+    held.await.unwrap();
+    // A cached snapshot captures its revision at the call, as in the source.
+    assert_eq!(snapshot.await.unwrap().unwrap().count, 1);
+    assert!(absent_watch.await.unwrap().is_none());
+    let acquired = watch.await;
+    closing.await.unwrap();
+    assert!(
+        matches!(acquired, Err(ref error) if error.to_string().contains("closed")),
+        "an existing document cannot gain an observer after close sealed admission"
+    );
+    assert_eq!(session.cache_sizes().attached, 0);
+}
+
+#[tokio::test]
+async fn a_document_watch_loading_during_close_cannot_attach_after_its_read_finishes() {
+    let (storage, session) = open();
+    bump(&session).await.unwrap();
+    session.unload_documents().await.unwrap();
+    let gate = Arc::new(Gate::default());
+    *storage.find_gate.lock() = Some(gate.clone());
+    let watch = session.watch_doc(&counter(), (), &Context::default());
+    gate.entered().await;
+    let closing = session.close(&Context::default());
+    gate.release();
+    let acquired = watch.await;
+    closing.await.unwrap();
+    assert!(
+        matches!(acquired, Err(ref error) if error.to_string().contains("closed")),
+        "finishing a pre-close read must not attach a post-close observer"
+    );
+    assert_eq!(session.cache_sizes().attached, 0);
+}
+
+#[tokio::test]
 async fn close_waiter_cancellation_does_not_cancel_cleanup_and_subscriptions_reject_after_seal() {
     let (storage, session) = open();
     let gate = Arc::new(Gate::default());

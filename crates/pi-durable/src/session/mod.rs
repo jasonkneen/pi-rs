@@ -937,6 +937,10 @@ impl Session {
             let weak = Arc::downgrade(&session.inner);
             let report = weak.clone();
             let mut state = session.inner.state.lock();
+            session.healthy()?;
+            if state.closing {
+                return Err(Error::message("Session is closed"));
+            }
             state.next_listener += 1;
             let token = state.next_listener;
             let watch = Watch::new(

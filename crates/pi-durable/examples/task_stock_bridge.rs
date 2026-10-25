@@ -1127,6 +1127,7 @@ impl Hub {
                 Box::pin(async { Ok(None) })
             }
             "close" => mapped(self.scheduler(&request)?.session().close(&context)),
+            "unloadDocuments" => mapped(self.facade(&request)?.unload_documents()),
             "closed" => {
                 let session = self.scheduler(&request)?.session().clone();
                 Box::pin(async move {
