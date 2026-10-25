@@ -8,9 +8,11 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[derive(Clone)]
 pub struct NativeFileSystem {
-    cwd: RwLock<PathBuf>,
+    cwd: std::sync::Arc<RwLock<PathBuf>>,
     opener: Option<FileOpener>,
+    shell: super::native_shell::NativeShell,
 }
 impl NativeFileSystem {
     pub fn new(cwd: impl Into<PathBuf>) -> FileResult<Self> {
@@ -23,8 +25,9 @@ impl NativeFileSystem {
                 .join(cwd)
         };
         Ok(Self {
-            cwd: RwLock::new(normalize(&cwd)),
+            cwd: std::sync::Arc::new(RwLock::new(normalize(&cwd))),
             opener: None,
+            shell: Default::default(),
         })
     }
     pub fn with_file_opener(cwd: impl Into<PathBuf>, opener: FileOpener) -> FileResult<Self> {
@@ -32,11 +35,19 @@ impl NativeFileSystem {
         filesystem.opener = Some(opener);
         Ok(filesystem)
     }
+    pub fn with_shell_options(mut self, options: super::native_shell::NativeShellOptions) -> Self {
+        self.shell.options = options;
+        self
+    }
+    pub fn with_shell_host(mut self, host: super::native_shell::ShellHost) -> Self {
+        self.shell.options.host = Some(std::sync::Arc::new(move || host.clone()));
+        self
+    }
     pub fn set_cwd(&self, cwd: impl AsRef<Path>) {
         let cwd = self.resolve(cwd.as_ref());
         *self.cwd.write() = cwd;
     }
-    fn resolve(&self, path: &Path) -> PathBuf {
+    pub(super) fn resolve(&self, path: &Path) -> PathBuf {
         let mut path = path.to_path_buf();
         if path == Path::new("~") {
             if let Some(home) = dirs::home_dir() {
@@ -126,6 +137,21 @@ impl NativeFileSystem {
         })
     }
 }
+impl super::shell::Shell for NativeFileSystem {
+    fn exec(
+        &self,
+        command: super::shell::ShellCommand,
+        options: super::shell::ShellExecOptions,
+        context: &Context,
+    ) -> super::shell::ExecutionFuture<super::shell::ShellExecResult> {
+        self.shell.exec(self.clone(), command, options, context)
+    }
+    fn cleanup(&self, _context: &Context) -> super::shell::ExecutionFuture<()> {
+        self.shell.cleanup()
+    }
+}
+/// The local filesystem and shell share one environment authority.
+pub type NativeExecutionEnv = NativeFileSystem;
 fn check(context: &Context, path: &Path) -> FileResult<()> {
     context
         .check()

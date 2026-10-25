@@ -364,13 +364,15 @@
         "crates/pi-durable/src/env/filesystem.rs",
         "crates/pi-durable/src/env/shell.rs",
         "crates/pi-durable/src/env/readers.rs",
-        "crates/pi-durable/src/env/line_scan.rs"
+        "crates/pi-durable/src/env/line_scan.rs",
+        "crates/pi-durable/src/env/native_shell.rs",
+        "crates/pi-durable/tests/native_shell.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Portable filesystem contracts now include positional binary readers, streaming LF readers, directory pagination and opened-file I/O capabilities; native shell execution, watch contracts and full environment integration remain pending"
+        "Portable filesystem and shell capabilities include opened readers, spill-stream I/O and native process execution; watch contracts and full environment/tool/binding integration remain open"
       ]
     },
     {
@@ -398,15 +400,18 @@
         "crates/pi-durable/src/env/native.rs",
         "crates/pi-durable/src/env/readers.rs",
         "crates/pi-durable/tests/env.rs",
-        "crates/pi-durable/examples/env_stock_bridge.rs"
+        "crates/pi-durable/examples/env_stock_bridge.rs",
+        "crates/pi-durable/src/env/native_shell.rs",
+        "crates/pi-durable/tests/native_shell.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
         "Native filesystem provides metadata, canonical/home/file URL paths, private temporary paths, descriptor-bound positional reads, bounded line scans, nonblocking regular-file admission and final-component no-follow checks",
-        "All 24 stock filesystem/text-reader cases pass in both modes, including original fsync failure and pending-read cancellation injections through opened-file host callbacks; 18 stock conformance/reader cases run over real native file handles per mode",
-        "Native process execution, file watching, spill behavior, native tools and embedded exports remain pending"
+        "The complete unchanged env-node.test.ts passes 52 cases per mode with one original platform skip; env-node-spill.test.ts passes its delayed-write case in both modes; 32 original reader/shell conformance cases pass per mode over native file handles",
+        "Native shell supports script/argv, bash/legacy WSL selection, live environment merging, timeout/abort/cleanup, stream-specific decoders, raw-byte spilling with bounded queues and post-exit stdio lifetime. Seven native tests cover cwd admission snapshots, process-tree cancellation, direct argv, numeric spill thresholds and delayed backpressure",
+        "File watching, native built-in tools, physical Windows execution and embedded exports remain open; five original Windows path-emulation cases execute native configuration policy on the local host"
       ]
     },
     {
@@ -1379,38 +1384,52 @@
         "scripts/stock/durable-env-adapter.mjs",
         "crates/pi-durable/examples/env_stock_bridge.rs",
         "crates/pi-durable/src/env/native.rs",
-        "crates/pi-durable/src/env/readers.rs"
+        "crates/pi-durable/src/env/readers.rs",
+        "crates/pi-durable/src/env/native_shell.rs",
+        "crates/pi-durable/tests/native_shell.rs"
       ],
       "evidence": [
-        "18 original cases pass per mode: all eight basic binary/directory reader contracts in both original registrations plus large positional reads and FIFO refusal",
-        "Each mode proves 18 successful native filesystem opens, 168 native operations and 22 binary reads, with zero host opened-file callbacks",
-        "The original runner-independent Source case bodies drive real native file handles; the native export of the environment conformance factory remains pending",
-        "The other 33 shell-dependent symlink, watch and execution cases remain unselected",
+        "32 original cases pass per mode: binary/directory readers, argv safety, stream identity, cwd/exit/error behavior, output windows, timeout/abort and symlinks in both registrations, plus large reads and FIFO refusal",
+        "Each mode proves 32 native opens, 208 native operations, 26 binary reads and 20 shell calls, with zero host opened-file callbacks",
+        "Original runner-independent Source case bodies drive native handles and processes; native export of the conformance factory remains pending",
+        "The remaining 19 local watch cases remain unselected; physical Windows execution is unverified",
         "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/env-node-spill.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "scripts/run-stock-durable-env.mjs",
+        "scripts/stock/durable-env-adapter.mjs",
+        "crates/pi-durable/examples/env_stock_bridge.rs",
+        "crates/pi-durable/src/env/native_shell.rs",
+        "crates/pi-durable/tests/native_shell.rs"
+      ],
+      "evidence": [
+        "Entire unchanged file passes in both modes on the local Unix host; the original Windows skip remains intact",
+        "Original vi.mock delayed writes and rejected-write assertion execute through opened-stream I/O capabilities, while native code owns subprocess lifetime, backpressure and complete raw-byte preservation",
+        "Each mode proves one native shell call, two output callbacks and seven spill I/O callbacks; adapter initialization is deferred so the original hoisted mock remains effective",
+        "scripts/run-stock-durable-env.mjs --suite=spill; /tmp/pi-durable-stock-env-spill-report.json; porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/env-node.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "scripts/run-stock-durable-env.mjs",
         "scripts/stock/durable-env-adapter.mjs",
         "crates/pi-durable/examples/env_stock_bridge.rs",
         "crates/pi-durable/src/env/native.rs",
-        "crates/pi-durable/src/env/readers.rs"
+        "crates/pi-durable/src/env/readers.rs",
+        "crates/pi-durable/src/env/native_shell.rs",
+        "crates/pi-durable/tests/native_shell.rs"
       ],
       "evidence": [
-        "All 24 original filesystem/text-reader cases pass in both retention modes without editing tests, assertions, injected I/O failures or timing limits",
-        "Each mode proves 24 successful native filesystem opens, 159 native operations, 17 native text reader calls and 48 original opened-file callbacks",
-        "Native OS operations handle paths, writes, metadata and persistence; original opened-file callbacks preserve fsync spying/failure and held-read cancellation while all reader state and decoding remain in Rust",
-        "The other 29 shell/spill/Windows cases remain unselected until native process execution and its fault bindings are implemented",
-        "porting/durable/STATUS.md"
+        "Complete unchanged and unfiltered file: 52 passing cases and one original Windows-only skip per retention mode",
+        "Native counters prove 59 environment opens, 34 shell calls, process output callbacks and filesystem/text operations; native shell processes execute actual commands",
+        "Original opened-file callbacks retain fsync/read fault injection, and original overridden createTempFile callbacks retain spill failures; process, decoding, cancellation and spill decisions stay in Rust",
+        "scripts/run-stock-durable-env.mjs --suite=all; /tmp/pi-durable-stock-env-shell-report.json; porting/durable/STATUS.md"
       ]
     },
     {

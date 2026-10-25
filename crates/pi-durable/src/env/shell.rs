@@ -94,8 +94,8 @@ wire::raw_serde!(ShellCommand);
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellSpillOptions {
-    pub after_bytes: usize,
-    pub after_lines: usize,
+    pub after_bytes: f64,
+    pub after_lines: f64,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

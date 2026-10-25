@@ -36,6 +36,8 @@ struct Hub {
     opens: AtomicU64,
     text_reads: AtomicU64,
     binary_reads: AtomicU64,
+    shell_calls: AtomicU64,
+    shell_outputs: AtomicU64,
 }
 fn code(value: FileErrorCode) -> &'static str {
     match value {
@@ -125,7 +127,7 @@ impl Hub {
         let method = request["method"].as_str().unwrap();
         if method == "stats" {
             return Ok(
-                json!({"opens":self.opens.load(Ordering::Relaxed),"calls":self.calls.load(Ordering::Relaxed),"textReads":self.text_reads.load(Ordering::Relaxed),"binaryReads":self.binary_reads.load(Ordering::Relaxed)}),
+                json!({"opens":self.opens.load(Ordering::Relaxed),"calls":self.calls.load(Ordering::Relaxed),"textReads":self.text_reads.load(Ordering::Relaxed),"binaryReads":self.binary_reads.load(Ordering::Relaxed),"shellCalls":self.shell_calls.load(Ordering::Relaxed),"shellOutputs":self.shell_outputs.load(Ordering::Relaxed)}),
             );
         }
         if method == "fs.new" {
@@ -151,11 +153,52 @@ impl Hub {
                 None
             };
             let cwd = request["cwd"].as_str().unwrap();
-            let filesystem = Arc::new(match opener {
-                Some(opener) => NativeFileSystem::with_file_opener(cwd, opener)?,
-                None => NativeFileSystem::new(cwd)?,
-            });
             let id = self.next.fetch_add(1, Ordering::Relaxed);
+            let weak = Arc::downgrade(&self);
+            let options = NativeShellOptions {
+                shell_path: request["shellPath"].as_str().map(PathBuf::from),
+                environment: request["shellEnv"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(key, value)| (key.into(), value.as_str().map(Into::into)))
+                    .collect(),
+                temp_file: Some(Arc::new(move |context| {
+                    let operation = weak.upgrade().unwrap().call(
+                        "shell.temp",
+                        json!({"environment":id}),
+                        &context,
+                    );
+                    Box::pin(async move { Ok(PathBuf::from(operation.await?.as_str().unwrap())) })
+                })),
+                spill_opener: if request["hostSpill"].as_bool() == Some(true) {
+                    let hub = Arc::downgrade(&self);
+                    Some(Arc::new(move |path| {
+                        let owner = hub.upgrade().unwrap();
+                        let operation =
+                            owner.call("spill.open", json!({"path":path}), &Context::default());
+                        let hub = hub.clone();
+                        Box::pin(async move {
+                            let id = operation
+                                .await
+                                .map_err(host_execution_error)?
+                                .as_u64()
+                                .unwrap();
+                            Ok(Arc::new(HostSpill { hub, id }) as Arc<dyn ShellSpillWriter>)
+                        })
+                    }))
+                } else {
+                    None
+                },
+                ..Default::default()
+            };
+            let filesystem = Arc::new(
+                (match opener {
+                    Some(opener) => NativeFileSystem::with_file_opener(cwd, opener)?,
+                    None => NativeFileSystem::new(cwd)?,
+                })
+                .with_shell_options(options),
+            );
             let value = json!({"id":id,"namespace":filesystem.id()});
             self.filesystems.lock().insert(id, filesystem);
             self.opens.fetch_add(1, Ordering::Relaxed);
@@ -342,7 +385,13 @@ impl Hub {
                     )
                     .await?
             )),
-            "fs.cleanup" => Ok(Value::Null),
+            "fs.cleanup" => {
+                filesystem
+                    .cleanup(&context)
+                    .await
+                    .map_err(|error| failed(&error.to_string()))?;
+                Ok(Value::Null)
+            }
             "fs.openText" | "fs.openBinary" | "fs.openDir" => {
                 let reader = match method {
                     "fs.openText" => {
@@ -365,6 +414,122 @@ impl Hub {
             }
             _ => Err(failed("Unknown native filesystem operation")),
         }
+    }
+    async fn exec(self: Arc<Self>, request: Value, context: Context) -> ExecutionResult<Value> {
+        self.shell_calls.fetch_add(1, Ordering::Relaxed);
+        let filesystem = self
+            .filesystems
+            .lock()
+            .get(&request["fs"].as_u64().unwrap())
+            .cloned()
+            .ok_or_else(|| {
+                ExecutionError::new(ExecutionErrorCode::Unknown, "Unknown environment")
+            })?;
+        let host = &request["host"];
+        let filesystem = filesystem.as_ref().clone().with_shell_host(ShellHost {
+            cwd: host["cwd"].as_str().unwrap().into(),
+            platform: if host["platform"].as_str() == Some("win32") {
+                ShellPlatform::Windows
+            } else {
+                ShellPlatform::Unix
+            },
+            environment: host["env"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter_map(|(key, value)| value.as_str().map(|value| (key.into(), value.into())))
+                .collect(),
+        });
+        let command: ShellCommand =
+            serde_json::from_value(request["command"].clone()).map_err(|error| {
+                ExecutionError::new(ExecutionErrorCode::SpawnError, error.to_string())
+            })?;
+        let input = &request["options"];
+        let mut options = ShellExecOptions {
+            cwd: input["cwd"].as_str().map(PathBuf::from),
+            env: input
+                .get("env")
+                .map(|env| serde_json::from_value(env.clone()).unwrap()),
+            inherit_env: input["inheritEnv"].as_bool(),
+            timeout: input.get("timeout").map(number),
+            spill: input.get("spill").map(|spill| ShellSpillOptions {
+                after_bytes: number(&spill["afterBytes"]),
+                after_lines: number(&spill["afterLines"]),
+            }),
+            ..Default::default()
+        };
+        if let Some(callback) = input["onOutput"].as_u64() {
+            let weak = Arc::downgrade(&self);
+            options.on_output = Some(Arc::new(move |text, context, info| {
+                let hub = weak.upgrade().unwrap();
+                hub.shell_outputs.fetch_add(1, Ordering::Relaxed);
+                let operation=hub.call("shell.output",json!({"callback":callback,"text":text.to_string_lossy(),"stream":match info.stream{ShellStream::Stdout=>"stdout",ShellStream::Stderr=>"stderr"}}),&context);
+                // A synchronous host callback must leave Tokio's cooperative
+                // poll budget before waiting for its transport response.
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(operation)
+                })
+                .map_err(|error| {
+                    ExecutionError::new(ExecutionErrorCode::CallbackError, error.to_string())
+                })?;
+                Ok(())
+            }));
+        }
+        let result = filesystem.exec(command, options, &context).await?;
+        Ok(json!({"exitCode":result.exit_code,"spillPath":result.spill_path}))
+    }
+}
+fn execution_error(error: ExecutionError) -> Value {
+    let code = match error.code() {
+        ExecutionErrorCode::Aborted => "aborted",
+        ExecutionErrorCode::Timeout => "timeout",
+        ExecutionErrorCode::ShellUnavailable => "shell_unavailable",
+        ExecutionErrorCode::SpawnError => "spawn_error",
+        ExecutionErrorCode::CallbackError => "callback_error",
+        ExecutionErrorCode::Unknown => "unknown",
+    };
+    json!({"kind":"execution","name":"ExecutionError","code":code,"message":error.to_string(),"spillPath":error.spill_path()})
+}
+fn host_execution_error(error: FileError) -> ExecutionError {
+    ExecutionError::new(ExecutionErrorCode::Unknown, error.to_string()).with_cause(Arc::new(error))
+}
+struct HostSpill {
+    hub: std::sync::Weak<Hub>,
+    id: u64,
+}
+impl HostSpill {
+    fn call(&self, method: &str, args: Value) -> ExecutionFuture<Value> {
+        let operation = self
+            .hub
+            .upgrade()
+            .unwrap()
+            .call(method, args, &Context::default());
+        Box::pin(async move { operation.await.map_err(host_execution_error) })
+    }
+    fn wait(&self, method: &str) -> ExecutionFuture<()> {
+        let operation = self.call(method, json!({"stream":self.id}));
+        Box::pin(async move {
+            operation.await?;
+            Ok(())
+        })
+    }
+}
+impl ShellSpillWriter for HostSpill {
+    fn write(&self, bytes: Vec<u8>) -> ExecutionFuture<bool> {
+        let operation = self.call(
+            "spill.write",
+            json!({"stream":self.id,"bytes":STANDARD.encode(bytes)}),
+        );
+        Box::pin(async move { Ok(operation.await?.as_bool().unwrap()) })
+    }
+    fn drain(&self) -> ExecutionFuture<()> {
+        self.wait("spill.drain")
+    }
+    fn finish(&self) -> ExecutionFuture<()> {
+        self.wait("spill.finish")
+    }
+    fn settled(&self) -> ExecutionFuture<()> {
+        self.wait("spill.settled")
     }
 }
 struct HostFile {
@@ -424,6 +589,8 @@ async fn main() {
         opens: AtomicU64::new(0),
         text_reads: AtomicU64::new(0),
         binary_reads: AtomicU64::new(0),
+        shell_calls: AtomicU64::new(0),
+        shell_outputs: AtomicU64::new(0),
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move||{
@@ -438,8 +605,12 @@ async fn main() {
             let context=with_context_value(&REQUEST,id,&with_abort_signal(controller.signal(),&Context::default()));
             hub.contexts.lock().insert(id,controller);
             let hub=hub.clone();runtime.spawn(async move{
-                let result=hub.clone().handle(request,context).await;
-                hub.emit(match result {Ok(value)=>json!({"id":id,"value":value}),Err(error)=>json!({"id":id,"error":{"kind":"file","name":"FileError","code":code(error.code()),"message":error.to_string(),"path":error.path()}})});
+                let result=if request["method"].as_str()==Some("fs.exec") {
+                    hub.clone().exec(request,context).await.map_err(execution_error)
+                } else {
+                    hub.clone().handle(request,context).await.map_err(|error|json!({"kind":"file","name":"FileError","code":code(error.code()),"message":error.to_string(),"path":error.path()}))
+                };
+                hub.emit(match result {Ok(value)=>json!({"id":id,"value":value}),Err(error)=>json!({"id":id,"error":error})});
                 hub.contexts.lock().remove(&id);
             });
         }
