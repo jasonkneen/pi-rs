@@ -717,6 +717,9 @@ struct InMemorySpan {
 }
 
 impl TelemetryContext for InMemorySpan {
+    fn update_attributes(&self, attributes: SpanAttributes) {
+        self.set_attributes(attributes);
+    }
     fn record_event(&self, name: &str, attributes: SpanAttributes) {
         TelemetrySpan::add_event(self, name, attributes);
     }

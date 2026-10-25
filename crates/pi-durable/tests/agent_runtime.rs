@@ -502,7 +502,7 @@ async fn hooks_bind_their_owners_skip_missing_members_and_continue_after_reporte
         &task,
         registry,
         SchedulerOptions {
-            on_report: Arc::new(move |error, info| out.lock().push((error.to_string(), info))),
+            on_report: Arc::new(move |error, info, _| out.lock().push((error.to_string(), info))),
             ..Default::default()
         },
     )
@@ -605,7 +605,7 @@ async fn a_hook_failure_after_signalling_propagates_without_reporting_or_running
         &task,
         registry,
         SchedulerOptions {
-            on_report: Arc::new(move |_, _| {
+            on_report: Arc::new(move |_, _, _| {
                 out.fetch_add(1, Ordering::Relaxed);
             }),
             ..Default::default()

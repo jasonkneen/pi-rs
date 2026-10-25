@@ -22,6 +22,8 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
+#[path = "support/bound_conversation_bridge.rs"]
+mod bound_conversation_bridge;
 #[path = "support/builtin_bridge.rs"]
 mod builtin_bridge;
 #[path = "support/codemode_bridge.rs"]
@@ -54,6 +56,8 @@ mod session_bridge;
 mod strict_bridge;
 #[path = "support/submission_bridge.rs"]
 mod submission_bridge;
+#[path = "support/telemetry_bridge.rs"]
+mod telemetry_bridge;
 #[path = "support/tool_bridge.rs"]
 mod tool_bridge;
 #[path = "support/tool_environment.rs"]
@@ -187,6 +191,7 @@ struct Hub {
     tool: tool_bridge::ToolBridge,
     environment: tool_environment::EnvironmentBridge,
     builtin: builtin_bridge::BuiltinBridge,
+    bound: bound_conversation_bridge::BoundBridge,
     codemode: codemode_vm_bridge::CodemodeBridge,
     host_timers: Mutex<HashMap<u64, DisarmTimer>>,
     host_timer_callbacks: Mutex<HashMap<u64, pi_durable::timers::TimerCallback>>,
@@ -252,6 +257,10 @@ impl Hub {
                 encode(&context.value(&CALL_CONTEXT).map(|context| context.id)),
             ),
             ("abortable", encode(&context.abort_signal().is_some())),
+            (
+                "telemetry",
+                encode(&telemetry_bridge::id(context.telemetry().as_ref())),
+            ),
         ]));
         Box::pin(async move {
             receive
@@ -607,6 +616,17 @@ impl Hub {
         ) -> StorageFuture<Option<JsonValue>> {
             Box::pin(async move { Ok(Some(encode(&operation.await?))) })
         }
+        let context = if request
+            .as_object()
+            .is_some_and(|fields| fields.contains_key(&JsonString::from("telemetry")))
+        {
+            pi_chord::context::with_telemetry(
+                telemetry_bridge::context(&self, &request["telemetry"]),
+                &context,
+            )
+        } else {
+            context
+        };
         let method: String = field(&request, "method")?;
         if [
             "codemode.declaration",
@@ -646,6 +666,9 @@ impl Hub {
         }
         if method.starts_with("environment.") {
             return self.environment_request(&method, request, context);
+        }
+        if method == "runtimeConversation" || method.starts_with("bound.") {
+            return self.bound_request(&method, request, context);
         }
         if method.starts_with("tool.") {
             return self.tool_request(&method, request, context);
@@ -698,6 +721,7 @@ impl Hub {
                 self.harness_storage.lock().insert(harness, storage.clone());
                 let mut options =
                     pi_durable::HarnessOptions::new(registry, pi_ai::models::Models::default());
+                options.telemetry = telemetry_bridge::context(&self, &request["rootTelemetry"]);
                 let models = Arc::downgrade(&self);
                 options.model_collection = Some(Arc::new(move || {
                     models
@@ -1171,8 +1195,38 @@ impl Hub {
                         if method == "runtimeNow" {
                             Ok(Some(encode(&runtime.now()?)))
                         } else {
-                            runtime
-                                .report(Error::message(field::<String>(&request, "message")?))?;
+                            let error = Error::host(
+                                field::<String>(&request["error"], "name")?,
+                                field::<JsonString>(&request["error"], "message")?,
+                            );
+                            if let Some(id) = request["error"]["foreignId"].as_u64() {
+                                HOST_ERRORS.lock().push((error.clone(), id));
+                            }
+                            match request["scope"]["type"].to_utf8().as_deref() {
+                                Some("extension") => runtime.report_extension(
+                                    error,
+                                    field(&request["scope"], "extension")?,
+                                )?,
+                                Some("host") => {
+                                    let callback =
+                                        match request["scope"]["callback"].to_utf8().as_deref() {
+                                            Some("models") => "models",
+                                            Some("settings") => "settings",
+                                            Some("env") => "env",
+                                            Some("now") => "now",
+                                            Some("setTimer") => "setTimer",
+                                            Some("registry") => "registry",
+                                            Some("onWake") => "onWake",
+                                            _ => {
+                                                return Err(Error::message(
+                                                    "Unknown host report callback",
+                                                ));
+                                            }
+                                        };
+                                    runtime.report_host(error, callback)?;
+                                }
+                                _ => runtime.report(error)?,
+                            }
                             Ok(None)
                         }
                     })
@@ -1286,6 +1340,7 @@ impl Hub {
                 scheduler.resume()?;
                 mapped(scheduler.wait_for_task(field(&request, "task")?, &context))
             }
+            "runtimeOwnedTasks" => mapped(self.runtime(&request)?.owned_tasks(&context)),
             "runtimeWaitForTask" => mapped(self.runtime(&request)?.wait_for_task(
                 TypedTaskId::<JsonValue>::from_untyped(field(&request, "task")?),
                 &context,
@@ -1373,6 +1428,14 @@ impl Hub {
                     .get(&JsonString::from("conversationId"))
                     .map(decode)
                     .transpose()?;
+                create.trace = if options["trace"].string_equals("root") {
+                    Some(TaskTrace::Root)
+                } else if options["trace"].is_object() {
+                    Some(TaskTrace::Carrier(field(options, "trace")?))
+                } else {
+                    None
+                };
+                create.links = field(options, "links")?;
                 create.background = options["background"].as_bool().unwrap_or(false);
                 create.abandon_on_restart = options["abandonOnRestart"].as_bool().unwrap_or(false);
                 mapped(tx.create_erased_task(&task, request["input"].clone(), create))
@@ -1532,6 +1595,7 @@ async fn main() {
         tool: tool_bridge::ToolBridge::default(),
         environment: tool_environment::EnvironmentBridge::default(),
         builtin: builtin_bridge::BuiltinBridge::default(),
+        bound: bound_conversation_bridge::BoundBridge::default(),
         codemode: codemode_vm_bridge::CodemodeBridge::default(),
         host_timers: Mutex::new(HashMap::new()),
         host_timer_callbacks: Mutex::new(HashMap::new()),

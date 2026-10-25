@@ -95,7 +95,7 @@ async fn open_with_collection(
         registry,
         SchedulerOptions {
             model_collection,
-            on_report: Arc::new(move |error, _| reported.lock().push(error)),
+            on_report: Arc::new(move |error, _, _| reported.lock().push(error)),
             models: Arc::new(move || Ok(models.clone())),
             settings: Arc::new(move || Ok(policy.lock().clone())),
             settle_outcome: Arc::new(|tx, record, outcome| {

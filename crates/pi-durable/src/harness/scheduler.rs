@@ -1,5 +1,6 @@
 //! Durable task scheduling. Reservations, state changes and decisions share the
 //! Session's mutation line. Handlers and joins always run outside it.
+mod telemetry;
 #[cfg(test)]
 #[path = "scheduler/timer_tests.rs"]
 mod timer_tests;
@@ -107,13 +108,14 @@ pub type EnvironmentResolver = Arc<
 >;
 #[derive(Clone)]
 pub struct SchedulerOptions {
+    pub telemetry: pi_telemetry::ContextRef,
     pub settings: SettingsReader,
     pub models: super::models::ModelsReader,
     pub model_collection: Option<super::models::ModelCollectionReader>,
     pub env: EnvironmentResolver,
     pub conversation: Option<super::conversation::ConversationResolver>,
     pub agent: AgentResolver,
-    pub on_report: Arc<dyn Fn(Error, TaskReport) + Send + Sync>,
+    pub on_report: Arc<dyn Fn(Error, TaskReport, Option<Context>) + Send + Sync>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
     pub settle_outcome: SettleOutcome,
     pub withdraw_inputs: WithdrawInputs,
@@ -122,13 +124,14 @@ impl Default for SchedulerOptions {
     fn default() -> Self {
         let models = pi_ai::models::Models::default();
         Self {
+            telemetry: pi_telemetry::noop_telemetry_context(),
             models: Arc::new(move || Ok(models.clone())),
             model_collection: None,
             env: Arc::new(|_, _| ready(Ok(None))),
             conversation: None,
             settings: Arc::new(|| Ok(resolve_settings(Default::default()))),
             agent: Arc::new(resolve_agent_in),
-            on_report: Arc::new(|_, _| {}),
+            on_report: Arc::new(|_, _, _| {}),
             on_wake: None,
             settle_outcome: Arc::new(|_, _, _| ready(Ok(()))),
             withdraw_inputs: Arc::new(|_, _| ready(Ok(()))),
@@ -156,6 +159,7 @@ struct State {
     fail_fast: IndexSet<TaskId>,
     waiting: HashMap<TaskId, IndexSet<TaskId>>,
     invocations: IndexMap<TaskId, Arc<Invocation>>,
+    resumed: HashSet<TaskId>,
     failed_migrations: HashMap<TaskId, FailedMigration>,
     blocked_listeners: IndexMap<u64, Arc<dyn Fn() -> Result<()> + Send + Sync>>,
     next_blocked_listener: u64,
@@ -184,7 +188,9 @@ struct Invocation {
     conversation: ConversationId,
     mode: InvocationMode,
     controller: AbortController,
-    context: Context,
+    context: Mutex<Context>,
+    record: Mutex<TaskRecord>,
+    fault: Mutex<Option<TaskOutcome>>,
     registry: Mutex<RegistryView>,
     agent: Mutex<Option<futures::future::Shared<StorageFuture<AgentView>>>>,
     ended: AtomicBool,
@@ -264,6 +270,8 @@ struct Inner {
     task_waiters: Waiters<TaskId, TaskRecord>,
     idle_waiters: Waiters<Option<ConversationId>, ()>,
     graph: std::sync::OnceLock<Result<super::task_graph::TaskGraphView>>,
+    active_metric: pi_telemetry::SchemaTelemetryCounter,
+    duration_metric: pi_telemetry::SchemaTelemetryHistogram,
 }
 #[derive(Clone)]
 pub struct TaskScheduler {
@@ -313,6 +321,13 @@ impl TaskScheduler {
         let report = session_options.report.clone();
         let timers = Timers::new(session_options.set_timer.clone(), report);
         let session = Session::new(storage, session_options);
+        let metrics = pi_telemetry::create_typed_metrics(
+            options
+                .telemetry
+                .metrics()
+                .unwrap_or_else(pi_telemetry::noop_telemetry_metrics),
+            &[&super::telemetry::DURABLE_TELEMETRY_SCHEMA],
+        );
         let scheduler = Self {
             inner: Arc::new(Inner {
                 storage: session.guarded_storage(),
@@ -329,6 +344,8 @@ impl TaskScheduler {
                 task_waiters: Waiters::default(),
                 idle_waiters: Waiters::default(),
                 graph: std::sync::OnceLock::new(),
+                active_metric: metrics.up_down_counter("pi.durable.tasks.active"),
+                duration_metric: metrics.histogram("pi.durable.phase.duration"),
             }),
         };
         *owner.lock() = Arc::downgrade(&scheduler.inner);
@@ -402,6 +419,7 @@ impl TaskScheduler {
                     }
                     for record in records {
                         initialize.track(record.clone());
+                        initialize.inner.state.lock().resumed.insert(record.id());
                         if initialize.inner.read_only {
                             continue;
                         }
@@ -465,6 +483,23 @@ impl TaskScheduler {
         subject: Option<ReportSubject>,
         reason: Option<&'static str>,
     ) {
+        let context = subject
+            .as_ref()
+            .and_then(|subject| self.report_context(subject.task.id));
+        self.report_in(error, kind, subject, reason, context);
+    }
+    fn report_context(&self, task: TaskId) -> Option<Context> {
+        let invocation = self.inner.state.lock().invocations.get(&task).cloned();
+        invocation.map(|invocation| invocation.context.lock().clone())
+    }
+    fn report_in(
+        &self,
+        error: Error,
+        kind: &'static str,
+        subject: Option<ReportSubject>,
+        reason: Option<&'static str>,
+        context: Option<Context>,
+    ) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.on_report)(
                 error,
@@ -476,6 +511,7 @@ impl TaskScheduler {
                     extension: subject.and_then(|subject| subject.extension),
                     conversation: None,
                 },
+                context,
             )
         }));
     }
@@ -483,6 +519,7 @@ impl TaskScheduler {
         self.report_host_for(error, callback, None);
     }
     fn report_host_for(&self, error: Error, callback: &'static str, task: Option<ReportTask>) {
+        let context = task.as_ref().and_then(|task| self.report_context(task.id));
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.on_report)(
                 error,
@@ -494,6 +531,7 @@ impl TaskScheduler {
                     extension: None,
                     conversation: None,
                 },
+                context,
             )
         }));
     }
@@ -505,6 +543,7 @@ impl TaskScheduler {
         task: Option<ReportTask>,
     ) {
         let extension = extension.into();
+        let context = task.as_ref().and_then(|task| self.report_context(task.id));
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.on_report)(
                 error,
@@ -516,6 +555,7 @@ impl TaskScheduler {
                     callback: None,
                     extension,
                 },
+                context,
             )
         }));
     }
@@ -560,6 +600,30 @@ impl TaskScheduler {
         let id = record.id();
         let previous = self.inner.tree.live(id);
         let above = self.inner.tree.track(record.clone());
+        let mut state = self.inner.state.lock();
+        if let Some(invocation) = state.invocations.get(&id) {
+            *invocation.record.lock() = record.clone();
+        }
+        let terminal = record.state.status() == TaskStatus::Terminal;
+        let delta = if state.closing {
+            0.0
+        } else if terminal && previous.is_some() {
+            -1.0
+        } else if !terminal && previous.is_none() {
+            1.0
+        } else {
+            0.0
+        };
+        if terminal {
+            state.resumed.remove(&id);
+        }
+        drop(state);
+        if delta != 0.0 {
+            self.inner.active_metric.add(
+                delta,
+                pi_telemetry::attributes! {"task" => record.info.kind.clone()},
+            );
+        }
         let mut state = self.inner.state.lock();
         if let Some(TaskState::Waiting { on, .. }) = previous.as_ref().map(|r| &r.state) {
             for target in on {
@@ -1371,7 +1435,7 @@ impl TaskScheduler {
                 if resolved != *record || record.state.status() != TaskStatus::Running { tx.set_task(with_state(resolved, TaskState::Running { checkpoint, memos: None }))?; }
                 let controller = AbortController::new();
                 let (done, _) = tokio::sync::watch::channel(false);
-                let invocation = Arc::new(Invocation { task: id, name: task.name().clone(), extension: snapshot.task(task.name()).and_then(|installed| installed.extension.clone()), conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), agent: Mutex::new(None), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
+                let invocation = Arc::new(Invocation { task: id, name: task.name().clone(), extension: snapshot.task(task.name()).and_then(|installed| installed.extension.clone()), conversation: record.info.conversation_id, mode, context: Mutex::new(with_abort_signal(controller.signal(), &scheduler.inner.context)), record: Mutex::new((*record).clone()), fault: Mutex::new(None), controller, registry: Mutex::new(snapshot.clone()), agent: Mutex::new(None), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
                 { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.invocations.insert(id, invocation.clone()); }
                 capture.lock().push(Reservation { invocation, task });
             }
@@ -1418,24 +1482,19 @@ impl TaskScheduler {
     async fn run(&self, reservation: Reservation) {
         let invocation = reservation.invocation;
         let definition = reservation.task;
-        let mut previous: Option<(JsonValue, Result<()>)> = None;
         let mut reported: Option<Option<AnyTask>> = None;
         let driver: Arc<dyn TaskDriver> = Arc::new(Driver {
             scheduler: self.clone(),
             invocation: invocation.clone(),
         });
-        loop {
-            let Some(current) = self
-                .step(&invocation, previous.take(), &definition, &mut reported)
-                .await
-            else {
-                return;
-            };
-            // A host registry reader may close the Session while the step
-            // refreshes its snapshot. Recheck after that decision settles.
+        let mut next = self
+            .step(&invocation, None, &definition, &mut reported)
+            .await;
+        while let Some(current) = next {
             if self.inner.state.lock().closing {
                 return;
             }
+            let phase = telemetry::Phase::begin(self, invocation.clone(), &current);
             *invocation.agent.lock() = None;
             let checkpoint = current.state.checkpoint().unwrap().clone();
             let handler = if invocation.mode == InvocationMode::Abort {
@@ -1446,6 +1505,7 @@ impl TaskScheduler {
                     .and_then(|phase| definition.0.phases.get(phase))
                     .cloned()
             };
+            let context = invocation.context.lock().clone();
             let result = std::panic::AssertUnwindSafe(async {
                 let handler = handler.ok_or_else(|| {
                     Error::message(format!(
@@ -1453,14 +1513,20 @@ impl TaskScheduler {
                         current.info.kind
                     ))
                 })?;
-                handler(current, driver.clone(), invocation.context.clone()).await
+                handler(current, driver.clone(), context).await
             })
             .catch_unwind()
             .await
             .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)));
-            previous = Some((checkpoint, result));
-            // Definition replacement is decided on the line, after checking what
-            // the old handler actually made durable.
+            next = self
+                .step(
+                    &invocation,
+                    Some((checkpoint, result)),
+                    &definition,
+                    &mut reported,
+                )
+                .await;
+            drop(phase);
         }
     }
     async fn step(
@@ -1479,6 +1545,7 @@ impl TaskScheduler {
         let update = capture.clone();
         let fault = Arc::new(Mutex::new(None));
         let capture_fault = fault.clone();
+        let context = without_abort_signal(&call.context.lock().clone());
         let result = self
             .inner
             .session
@@ -1577,6 +1644,12 @@ impl TaskScheduler {
                         None
                     };
                     if let Some(error) = failure {
+                        *invocation.fault.lock() = Some(TaskOutcome::Faulted {
+                            error: TaskOutcomeError {
+                                message: error.message_text(),
+                                detail: None,
+                            },
+                        });
                         scheduler.end(&invocation);
                         scheduler
                             .terminate(
@@ -1596,14 +1669,21 @@ impl TaskScheduler {
                         Ok(Some((*current).clone()))
                     }
                 },
-                &without_abort_signal(&call.context),
+                &context,
             )
             .await;
         *reported = capture.lock().take();
         match result {
             Ok(current) => {
                 if let Some(error) = fault.lock().take() {
-                    self.report(error, "task_faulted", Some(call.subject()), Some("threw"));
+                    let context = call.context.lock().clone();
+                    self.report_in(
+                        error,
+                        "task_faulted",
+                        Some(call.subject()),
+                        Some("threw"),
+                        Some(context),
+                    );
                 }
                 current
             }
@@ -2321,11 +2401,21 @@ impl TaskScheduler {
     fn seal(&self) {
         let expiry = {
             let mut state = self.inner.state.lock();
+            if state.closing {
+                return;
+            }
             state.closing = true;
+            state.resumed.clear();
             state.contexts.clear();
             state.expiry_generation += 1;
             state.expiry.take()
         };
+        for record in self.inner.tree.live_records() {
+            self.inner.active_metric.add(
+                -1.0,
+                pi_telemetry::attributes! {"task" => record.info.kind.clone()},
+            );
+        }
         if let Some((_, disarm)) = expiry {
             disarm();
         }
@@ -2513,7 +2603,7 @@ impl TaskDriver for Driver {
                     conversation,
                     snapshot: self.registry(),
                     settings: self.scheduler.inner.options.settings.clone(),
-                    context: self.invocation.context.clone(),
+                    context: self.invocation.context.lock().clone(),
                     report: Arc::new(move |error, extension| {
                         scheduler.report_extension(error, extension, conversation, None)
                     }),
@@ -2626,7 +2716,10 @@ impl TaskDriver for Driver {
         }
         let scheduler = self.scheduler.clone();
         let invocation = self.invocation.clone();
-        self.session().commit_scoped(
+        let phase = Arc::new(Mutex::new(None::<JsonString>));
+        let capture = phase.clone();
+        let invocation_context = invocation.context.lock().clone();
+        let operation = self.session().commit_scoped(
             move |tx| async move {
                 if invocation.ended.load(Ordering::Acquire) {
                     return Err(invocation.ended_error());
@@ -2653,6 +2746,18 @@ impl TaskDriver for Driver {
                 }
                 let next = change(tx.clone(), (*current).clone()).await?;
                 if let Some(next) = next {
+                    if let TaskState::Running { checkpoint, .. } = &next {
+                        let next_phase =
+                            crate::wire::get(checkpoint, "phase").and_then(JsonValue::as_string);
+                        let current_phase = current
+                            .state
+                            .checkpoint()
+                            .and_then(|checkpoint| crate::wire::get(checkpoint, "phase"))
+                            .and_then(JsonValue::as_string);
+                        if next_phase != current_phase {
+                            *capture.lock() = next_phase.cloned();
+                        }
+                    }
                     scheduler
                         .commit_state(&tx, &invocation, (*current).clone(), next)
                         .await?;
@@ -2664,7 +2769,17 @@ impl TaskDriver for Driver {
                 conversation_id: Some(self.invocation.conversation),
                 task_id: Some(self.invocation.task),
             },
-        )
+        );
+        eager(async move {
+            operation.await?;
+            if let Some(phase) = phase.lock().take() {
+                invocation_context.telemetry().record_event(
+                    "pi.durable.checkpoint",
+                    pi_telemetry::attributes! {"phase" => phase},
+                );
+            }
+            Ok(())
+        })
     }
     fn wait(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord> {
         self.scheduler

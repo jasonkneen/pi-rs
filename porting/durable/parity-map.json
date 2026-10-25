@@ -869,9 +869,19 @@
     },
     {
       "reference": "packages/durable/src/harness/telemetry.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/telemetry.rs",
+        "crates/pi-durable/src/harness/scheduler/telemetry.rs",
+        "crates/pi-durable/tests/telemetry_schema.rs",
+        "crates/pi-durable/tests/phase_telemetry.rs"
+      ],
+      "evidence": [
+        "Pinned source schema round-trips exactly; typed metric factories use its descriptions and units",
+        "Native phase parenting, links, first resumed phase, decision-commit lifetime, checkpoint events, task outcomes, bounded UTF16 diagnostics, active/duration metrics and report contexts",
+        "All 24 original harness-telemetry.test.ts cases pass unchanged in both retention modes, with native Harness/scheduler/generation/tool/code-mode and host-owned recording adapters: /tmp/pi-durable-stock-telemetry-third.log",
+        "Generic UTF16 carrier/key boundaries and embedded exports remain open"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/tool.ts",
@@ -2485,9 +2495,20 @@
     },
     {
       "reference": "packages/durable/test/harness-telemetry.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/scheduler/telemetry.rs",
+        "crates/pi-durable/examples/support/telemetry_bridge.rs",
+        "crates/pi-durable/examples/support/bound_conversation_bridge.rs",
+        "scripts/stock/durable-telemetry-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs"
+      ],
+      "evidence": [
+        "24/24 unchanged stock cases per retention mode; no skipped or modified assertions; /tmp/pi-durable-stock-telemetry-third.log terminal exit 0",
+        "Each mode proves 26 native Harness opens, 19 native model requests, 7 native tool calls, 2 native code-mode executions and VM starts, with zero source generation/compaction phases",
+        "Original InMemoryTelemetryContext is only a host recording/propagation/metrics adapter; Rust decides span/event/measurement instrumentation",
+        "This is native contract coverage, not embedded package export verification"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-tools-recovery.test.ts",

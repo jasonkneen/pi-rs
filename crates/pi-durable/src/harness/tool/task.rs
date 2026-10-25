@@ -109,19 +109,19 @@ async fn read_call(
     input: &ToolTaskInput,
     context: &Context,
 ) -> Result<ToolHookCall> {
-    match input {
+    let call = match input {
         ToolTaskInput::Nested {
             parent,
             parent_call_id,
             call,
             ..
-        } => Ok(ToolHookCall {
+        } => ToolHookCall {
             call: (**call).clone(),
             parent: Some(ToolParent {
                 task_id: *parent,
                 call_id: parent_call_id.clone(),
             }),
-        }),
+        },
         ToolTaskInput::Model { assistant, call_id } => {
             let entry = runtime.entry(*assistant, context).await?;
             let call = entry
@@ -153,9 +153,15 @@ async fn read_call(
                         ),
                     )
                 })?;
-            Ok(ToolHookCall { call, parent: None })
+            ToolHookCall { call, parent: None }
         }
-    }
+    };
+    context
+        .telemetry()
+        .update_attributes(pi_telemetry::attributes! {
+            "tool.name" => call.call.name.clone(), "tool.call_id" => call.call.id.clone()
+        });
+    Ok(call)
 }
 fn caught<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
@@ -790,11 +796,15 @@ pub(crate) async fn start_nested_call(
     );
     let id = Arc::new(Mutex::new(None));
     let capture = id.clone();
+    let replayed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let replay_capture = replayed.clone();
+    let replay_name = name.clone();
     runtime.commit(move |tx,_| async move {
         let state = tx.doc_family(&NESTED_CALL_DOC,parent,key.clone(),()).await?;
         if let Some(existing) = state.read()?.task_id {
             let same = tx.task(existing.untyped()).await?.and_then(|record| wire::decode::<ToolTaskInput>(&record.info.input).ok()).is_some_and(|input| matches!(input,ToolTaskInput::Nested {call:prior,..} if prior.name == name && prior.arguments == call.arguments));
             if !same { return Err(Error::host("Error",result::join(["Nested call ".into(),call.id," was already made with another tool or other arguments".into()],""))); }
+            replay_capture.store(state.read()?.result.is_some(), std::sync::atomic::Ordering::Release);
             *capture.lock() = Some(existing); return Ok(None);
         }
         let input = ToolTaskInput::Nested {parent,parent_call_id:parent_call_id.clone(),key,call:Box::new(call.clone()),progress:progress.filter(|enabled| !enabled)};
@@ -806,5 +816,11 @@ pub(crate) async fn start_nested_call(
         })?;
         *capture.lock() = Some(created); Ok(None)
     },context).await?;
+    if replayed.load(std::sync::atomic::Ordering::Acquire) {
+        context.telemetry().record_event(
+            "pi.durable.replay",
+            pi_telemetry::attributes! {"tool.name" => replay_name},
+        );
+    }
     Ok(id.lock().take().expect("nested admission captures task"))
 }

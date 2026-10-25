@@ -928,7 +928,7 @@ async fn model_structured_output_breaks_report_as_extension_errors_even_without_
         let reports = Arc::new(Mutex::new(Vec::new()));
         let capture = reports.clone();
         let options = SchedulerOptions {
-            on_report: Arc::new(move |error, info| capture.lock().push((error, info))),
+            on_report: Arc::new(move |error, info, _| capture.lock().push((error, info))),
             ..Default::default()
         };
         let tool = native(
@@ -1192,7 +1192,7 @@ async fn fallible_tool_hook_selection_faults_instead_of_becoming_a_block_decisio
         vec![tool],
         vec![Arc::new(hook)],
         SchedulerOptions {
-            on_report: Arc::new(move |error, _| capture.lock().push(error)),
+            on_report: Arc::new(move |error, _, _| capture.lock().push(error)),
             ..Default::default()
         },
     )

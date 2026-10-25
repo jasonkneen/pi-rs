@@ -339,6 +339,11 @@ async fn typed_task_progress_keeps_one_invocation_and_returns_a_typed_result() {
     );
     assert_eq!(*seen.lock(), [0, 1, 2]);
     let stale = first_runtime.lock().take().unwrap();
+    // A terminal receipt is published before the handler and decision finish.
+    // Wait for invocation cleanup before asserting the post-invocation error.
+    tokio::time::timeout(Duration::from_secs(3), stale.signal().cancelled())
+        .await
+        .unwrap();
     assert!(
         stale
             .commit(|_, _| async { Ok(None) }, &Context::default())

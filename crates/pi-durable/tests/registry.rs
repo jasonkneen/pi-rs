@@ -684,7 +684,7 @@ async fn an_idle_scheduler_reads_no_snapshot_and_blocked_lookup_reports_a_failur
         Arc::new(MemoryStorage::new()),
         reader.clone(),
         SchedulerOptions {
-            on_report: Arc::new(move |error, info| {
+            on_report: Arc::new(move |error, info, _| {
                 out.lock().push((error.to_string(), info.callback))
             }),
             ..Default::default()
@@ -753,7 +753,7 @@ async fn an_unsubscribe_failure_is_reported_and_does_not_interrupt_close() {
         Arc::new(MemoryStorage::new()),
         reader.clone(),
         SchedulerOptions {
-            on_report: Arc::new(move |error, info| {
+            on_report: Arc::new(move |error, info, _| {
                 out.lock().push((error.to_string(), info.callback))
             }),
             ..Default::default()

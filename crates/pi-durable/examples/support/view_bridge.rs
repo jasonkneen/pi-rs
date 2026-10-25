@@ -39,17 +39,24 @@ impl Hub {
             let weak = Arc::downgrade(self);
             let subscription =
                 self.session(&request)?
-                    .subscribe_commits(move |publication, _| {
+                    .subscribe_commits_async(move |publication, _| {
                         if let Some(hub) = weak.upgrade() {
-                            hub.sync(
+                            let result = hub.sync(
                                 "commit.publication",
                                 object([
                                     ("callback", encode(&callback)),
                                     ("publication", hub.native_publication(publication)),
                                 ]),
                             )?;
+                            if let Some(pending) = result["pending"].as_u64() {
+                                let operation = hub.call("commit.listenerResult", encode(&pending));
+                                return Ok(Box::pin(async move {
+                                    operation.await?;
+                                    Ok(())
+                                }));
+                            }
                         }
-                        Ok(())
+                        Ok(Box::pin(async { Ok(()) }))
                     })?;
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             self.views.subscriptions.lock().insert(id, subscription);

@@ -60,6 +60,7 @@ node scripts/run-stock-durable-session.mjs "$reference" --suite=adoption --repor
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-models-native --report=/tmp/pi-durable-stock-codemode-models-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode --report=/tmp/pi-durable-stock-codemode-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-describe --report=/tmp/pi-durable-stock-codemode-describe-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=telemetry --report=/tmp/pi-durable-stock-telemetry-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-checkpoints --report=/tmp/pi-durable-stock-codemode-checkpoints-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=search --report=/tmp/pi-durable-stock-search-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json

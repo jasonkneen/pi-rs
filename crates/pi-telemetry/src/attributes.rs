@@ -38,11 +38,7 @@ impl AttributeValue {
             AttributeValue::StringArray(values) => {
                 format!(
                     "[{}]",
-                    values
-                        .iter()
-                        .map(string)
-                        .collect::<Vec<_>>()
-                        .join(",")
+                    values.iter().map(string).collect::<Vec<_>>().join(",")
                 )
             }
             AttributeValue::NumberArray(values) => {

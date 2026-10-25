@@ -7,7 +7,7 @@ const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(
 const errors=new Map(),foreignErrors=new Map();let nextForeignError=1;
 const contexts=new Map();
 function captureError(value){const id=nextForeignError++;foreignErrors.set(id,value);return id;}
-let exited;
+let exited,contextAdapter;
 const bufferedTrace=process.env.PI_DURABLE_NATIVE_TRACE_BUFFERED==="1"?[]:undefined;
 function flushTrace(){if(bufferedTrace?.length&&process.env.PI_DURABLE_NATIVE_TRACE){appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,bufferedTrace.join(""));bufferedTrace.length=0;}}
 process.once("exit",flushTrace);
@@ -29,7 +29,7 @@ function dispatch(frame){
   if(frame.sync)synchronousCallbacks++;
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
-   const value=handler(frame.args,contexts.get(frame.context),frame);
+   const value=handler(frame.args,contextAdapter?.decode(contexts.get(frame.context),frame.telemetry)??contexts.get(frame.context),frame);
    if(frame.sync){if(value&&typeof value.then==="function")throw new Error(`Synchronous callback returned a Promise: ${frame.method}`);reply(value);}
    else Promise.resolve(value).then(reply,reject);
   }catch(error){reject(error);}finally{if(frame.sync)synchronousCallbacks--;}
@@ -55,6 +55,8 @@ function start(){
 }
 function drain(){pumping++;try{for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}finally{pumping--;}}
 export const nativeTransport={
+ encodeError:error=>({foreignId:captureError(error),name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}),
+ contextAdapter(adapter){contextAdapter=adapter;},
  error(kind,create){if(errors.has(kind))throw new Error(`Duplicate native error ${kind}`);errors.set(kind,create);},
  isCancellation:error=>cancellations.has(error),isAdmissionFailure:error=>admissionFailures.has(error),
  get nextId(){return next;},get started(){return !!worker;},get pending(){return pending.size;},get inSynchronousCallback(){return synchronousCallbacks!==0;},
@@ -68,7 +70,7 @@ export const nativeTransport={
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
    pending.set(id,{method,resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
-   try{send({id,method,...args,...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});}catch(error){pending.delete(id);admissionFailures.add(error);reject(error);return;}
+   try{send({id,method,...args,...(contextAdapter?{telemetry:contextAdapter.encode(context)}:{}),...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});}catch(error){pending.delete(id);admissionFailures.add(error);reject(error);return;}
    if(!signal?.aborted)signal?.addEventListener("abort",abort,{once:true});
   });
   // Native close can reject several waits before the held commit's reply

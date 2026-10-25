@@ -72,3 +72,77 @@ async fn committed_entry_kind_keeps_raw_utf16_in_telemetry_events() {
     );
     session.close(&context).await.unwrap();
 }
+
+#[tokio::test]
+async fn async_listener_failures_keep_publication_context_without_holding_commits() {
+    use parking_lot::Mutex;
+    use pi_durable::*;
+    use pi_telemetry::{SpanOptions, SpanOutcome, TelemetryContext};
+    use std::sync::Arc;
+    let telemetry = InMemoryTelemetryContext::new();
+    let span = telemetry.begin_span(SpanOptions::new("caller"));
+    let context = pi_chord::context::with_telemetry(span.clone(), &Context::default());
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let capture = reports.clone();
+    let session = Session::new(
+        Arc::new(MemoryStorage::new()),
+        SessionOptions {
+            report_event: Some(Arc::new(move |error, kind, context| {
+                assert!(matches!(kind, SessionReportKind::Listener));
+                context.unwrap().telemetry().record_event(
+                    "listener.failed",
+                    pi_telemetry::attributes! {"message"=>error.message_text()},
+                );
+                capture.lock().push(error);
+            })),
+            ..Default::default()
+        },
+    );
+    let (fail, failed) = tokio::sync::oneshot::channel::<()>();
+    let failed = Arc::new(Mutex::new(Some(failed)));
+    let _listener = session
+        .subscribe_commits_async(move |_, _| {
+            let Some(failed) = failed.lock().take() else {
+                return Ok(Box::pin(async { Ok(()) }));
+            };
+            Ok(Box::pin(async move {
+                failed.await.unwrap();
+                Err(Error::message("late"))
+            }))
+        })
+        .unwrap();
+    for _ in 0..2 {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            session.commit(
+                |tx| async move {
+                    tx.create_conversation(ConversationOwnership::Ownerless)
+                        .await?;
+                    Ok(())
+                },
+                &context,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+    assert!(reports.lock().is_empty());
+    fail.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while reports.lock().is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    span.end(SpanOutcome::Ok);
+    let spans = telemetry.get_spans();
+    assert_eq!(spans[0].events.len(), 1);
+    assert_eq!(spans[0].events[0].name, "listener.failed");
+    assert_eq!(
+        spans[0].events[0].attributes["message"].as_str(),
+        Some("late")
+    );
+    session.close(&context).await.unwrap();
+}

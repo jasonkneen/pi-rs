@@ -380,7 +380,10 @@ impl Harness {
                 }),
                 conversation: Some(conversation),
                 on_wake: options.on_wake,
-                on_report: Arc::new(move |error, info| scheduler_report(error, info, None)),
+                telemetry: options.telemetry.clone(),
+                on_report: Arc::new(move |error, info, context| {
+                    scheduler_report(error, info, context)
+                }),
                 settle_outcome: Arc::new(|tx, record, outcome| {
                     Box::pin(super::live::settle_scheduler_outcome(tx, record, outcome))
                 }),

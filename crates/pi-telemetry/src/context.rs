@@ -186,6 +186,8 @@ pub trait TelemetryContext: Any + Send + Sync {
     /// contexts have no local span and ignore it. This distinct native name
     /// preserves the existing `TelemetrySpan::add_event` adapter contract.
     fn record_event(&self, _name: &str, _attributes: SpanAttributes) {}
+    /// Update an active span through a context handle. Roots and remote parents ignore it.
+    fn update_attributes(&self, _attributes: SpanAttributes) {}
 
     /// Adapter capabilities remain available on child spans and extracted parents.
     fn metrics(&self) -> Option<MetricsRef> {

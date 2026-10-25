@@ -488,6 +488,39 @@ impl Session {
     ) -> Result<Subscription> {
         self.subscribe(listener, false)
     }
+    /// Admit a listener synchronously, then observe its asynchronous completion
+    /// without holding the mutation line. Both failure paths report on the
+    /// publication's context and leave the committed result intact.
+    pub fn subscribe_commits_async(
+        &self,
+        listener: impl Fn(&CommitPublication, &Context) -> Result<StorageFuture<()>>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<Subscription> {
+        let weak = Arc::downgrade(&self.inner);
+        self.subscribe(
+            move |publication, context| {
+                let operation = listener(publication, context)?;
+                if let Some(inner) = weak.upgrade() {
+                    let session = Session { inner };
+                    let owner = session.clone();
+                    let context = context.clone();
+                    session.spawn(async move {
+                        let result = std::panic::AssertUnwindSafe(operation)
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|panic| Err(panic_error(panic)));
+                        if let Err(error) = result {
+                            owner.report_kind(error, SessionReportKind::Listener, Some(context));
+                        }
+                    });
+                }
+                Ok(())
+            },
+            false,
+        )
+    }
     pub fn subscribe_internal(
         &self,
         listener: impl Fn(&CommitPublication, &Context) -> Result<()> + Send + Sync + 'static,
