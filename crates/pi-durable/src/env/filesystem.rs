@@ -1,3 +1,4 @@
+use super::line_scan::LineScan;
 use crate::Context;
 use std::{
     ffi::OsString,
@@ -90,6 +91,71 @@ pub struct FileInfo {
     pub mtime_ms: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextLine {
+    pub text: String,
+    pub terminated: bool,
+}
+pub trait TextLineReader: Send + Sync {
+    fn read_line(&self, context: &Context) -> FileFuture<Option<TextLine>>;
+    fn close(&self, context: &Context) -> FileFuture<()>;
+}
+pub trait BinaryReader: Send + Sync {
+    fn info(&self, context: &Context) -> FileFuture<FileInfo>;
+    fn read(&self, offset: f64, length: f64, context: &Context) -> FileFuture<Vec<u8>>;
+    fn scan_lines(
+        &self,
+        start_line: f64,
+        end_line: Option<f64>,
+        context: &Context,
+    ) -> FileFuture<LineScan>;
+    fn close(&self, context: &Context) -> FileFuture<()>;
+}
+pub struct DirPage {
+    pub entries: Vec<FileInfo>,
+    pub done: bool,
+}
+pub trait DirReader: Send + Sync {
+    fn next(&self, max_entries: f64, context: &Context) -> FileFuture<DirPage>;
+    fn close(&self, context: &Context) -> FileFuture<()>;
+}
+
+/// Opened-file I/O can be local or a host capability. Reader state, offsets,
+/// cancellation and decoding remain in the native reader implementation.
+pub trait FileHandle: Send + Sync {
+    fn info(&self, context: &Context) -> FileFuture<FileInfo>;
+    fn read(&self, offset: u64, length: usize, context: &Context) -> FileFuture<Vec<u8>>;
+    fn sync(&self, context: &Context) -> FileFuture<()>;
+    fn close(&self, context: &Context) -> FileFuture<()>;
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpenFileOptions {
+    pub write: bool,
+    pub regular: bool,
+    pub no_follow: bool,
+}
+pub type FileOpener =
+    Arc<dyn Fn(PathBuf, OpenFileOptions, Context) -> FileFuture<Arc<dyn FileHandle>> + Send + Sync>;
+
+pub(crate) fn file_job<T: Send + 'static>(
+    future: impl Future<Output = FileResult<T>> + Send + 'static,
+) -> FileFuture<T> {
+    let task = tokio::spawn(future);
+    Box::pin(async move {
+        task.await
+            .map_err(|error| FileError::new(FileErrorCode::Unknown, error.to_string(), None))?
+    })
+}
+pub(crate) fn unsupported<T: Send + 'static>(path: Option<PathBuf>) -> FileFuture<T> {
+    Box::pin(async move {
+        Err(FileError::new(
+            FileErrorCode::NotSupported,
+            "Filesystem capability is not supported",
+            path,
+        ))
+    })
+}
+
 /// Persistence capability shared by local, remote and embedded environments.
 /// Every call returns an expected filesystem failure instead of panicking.
 pub trait FileSystem: Send + Sync {
@@ -98,6 +164,83 @@ pub trait FileSystem: Send + Sync {
     fn absolute_path(&self, path: &Path, context: &Context) -> FileFuture<PathBuf>;
     fn join_path(&self, parts: &[PathBuf], context: &Context) -> FileFuture<PathBuf>;
     fn read_binary_file(&self, path: &Path, context: &Context) -> FileFuture<Vec<u8>>;
+    fn read_text_file(&self, path: &Path, context: &Context) -> FileFuture<String> {
+        let read = self.read_binary_file(path, context);
+        file_job(async move { Ok(String::from_utf8_lossy(&read.await?).into_owned()) })
+    }
+    fn open_text_line_reader(
+        &self,
+        path: &Path,
+        _context: &Context,
+    ) -> FileFuture<Arc<dyn TextLineReader>> {
+        unsupported(Some(path.into()))
+    }
+    fn read_text_lines(
+        &self,
+        path: &Path,
+        max_lines: Option<f64>,
+        context: &Context,
+    ) -> FileFuture<Vec<String>> {
+        if max_lines.is_some_and(|max| max <= 0.0) {
+            return Box::pin(async { Ok(Vec::new()) });
+        }
+        let opened = self.open_text_line_reader(path, context);
+        let context = context.clone();
+        file_job(async move {
+            let reader = opened.await?;
+            let result = async {
+                let mut lines = Vec::new();
+                while max_lines.is_none_or(|max| (lines.len() as f64) < max) {
+                    let Some(line) = reader.read_line(&context).await? else {
+                        break;
+                    };
+                    lines.push(line.text);
+                }
+                Ok(lines)
+            }
+            .await;
+            let _ = reader.close(&context).await;
+            result
+        })
+    }
+    fn open_binary_reader(
+        &self,
+        path: &Path,
+        _no_follow: bool,
+        _context: &Context,
+    ) -> FileFuture<Arc<dyn BinaryReader>> {
+        unsupported(Some(path.into()))
+    }
+    fn file_info(&self, path: &Path, _context: &Context) -> FileFuture<FileInfo> {
+        unsupported(Some(path.into()))
+    }
+    fn canonical_path(&self, path: &Path, _context: &Context) -> FileFuture<PathBuf> {
+        unsupported(Some(path.into()))
+    }
+    fn exists(&self, path: &Path, context: &Context) -> FileFuture<bool> {
+        let info = self.file_info(path, context);
+        file_job(async move {
+            match info.await {
+                Ok(_) => Ok(true),
+                Err(error) if error.code() == FileErrorCode::NotFound => Ok(false),
+                Err(error) => Err(error),
+            }
+        })
+    }
+    fn open_dir_reader(&self, path: &Path, _context: &Context) -> FileFuture<Arc<dyn DirReader>> {
+        unsupported(Some(path.into()))
+    }
+    fn create_temp_dir(&self, _prefix: Option<&str>, _context: &Context) -> FileFuture<PathBuf> {
+        unsupported(None)
+    }
+    fn create_temp_file(
+        &self,
+        _prefix: Option<&str>,
+        _suffix: Option<&str>,
+        _context: &Context,
+    ) -> FileFuture<PathBuf> {
+        unsupported(None)
+    }
     fn write_file(&self, path: &Path, content: &[u8], context: &Context) -> FileFuture<()>;
     fn append_file(&self, path: &Path, content: &[u8], context: &Context) -> FileFuture<()>;
     fn truncate_file(&self, path: &Path, size: u64, context: &Context) -> FileFuture<()>;

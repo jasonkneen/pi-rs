@@ -98,7 +98,8 @@
         "crates/pi-chord/src/output.rs",
         "crates/pi-chord/tests/output.rs",
         "crates/pi-chord/src/output/progress.rs",
-        "crates/pi-chord/tests/progress.rs"
+        "crates/pi-chord/tests/progress.rs",
+        "crates/pi-json/src/utf8.rs"
       ],
       "evidence": [
         "cargo test -p pi-chord",
@@ -344,29 +345,45 @@
     },
     {
       "reference": "packages/durable/src/env/decode.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/env/decode.rs",
+        "crates/pi-json/src/utf8.rs"
+      ],
+      "evidence": [
+        "StreamDecoder and BOM-preserving range decoding reuse the native incremental replacement decoder extracted unchanged from Chord output buffering",
+        "The complete pinned stock codec file executes the same production Rust through synchronous WebAssembly bindings: 78189 native decode calls and 5000 generated line scans per retention mode",
+        "Embedded runtime exports remain pending; the WebAssembly crate is a test transport, not a production dependency",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/env/index.ts",
       "status": "partial",
       "rust": [
         "crates/pi-durable/src/env/filesystem.rs",
-        "crates/pi-durable/src/env/shell.rs"
+        "crates/pi-durable/src/env/shell.rs",
+        "crates/pi-durable/src/env/readers.rs",
+        "crates/pi-durable/src/env/line_scan.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Portable shell/environment capability and execution-error types now accompany the storage filesystem subset. Native process execution and the complete environment API remain pending"
+        "Portable filesystem contracts now include positional binary readers, streaming LF readers, directory pagination and opened-file I/O capabilities; native shell execution, watch contracts and full environment integration remain pending"
       ]
     },
     {
       "reference": "packages/durable/src/env/line-scan.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/env/line_scan.rs"
+      ],
+      "evidence": [
+        "Native bounded-memory LineScanner preserves byte offsets, LF boundaries, leading BOM exclusion, invalid UTF-8 replacement counts and first/last selected lines",
+        "All original 5000 seeded whole-file/chunking comparisons pass in each retention mode, with original assertions and timeout limits; positional binary readers use this same implementation",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/env/node-watch.ts",
@@ -378,12 +395,18 @@
       "reference": "packages/durable/src/env/node.ts",
       "status": "partial",
       "rust": [
-        "crates/pi-durable/src/env/native.rs"
+        "crates/pi-durable/src/env/native.rs",
+        "crates/pi-durable/src/env/readers.rs",
+        "crates/pi-durable/tests/env.rs",
+        "crates/pi-durable/examples/env_stock_bridge.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "scripts/run-stock-durable-jsonl.mjs /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Native filesystem provides metadata, canonical/home/file URL paths, private temporary paths, descriptor-bound positional reads, bounded line scans, nonblocking regular-file admission and final-component no-follow checks",
+        "All 24 stock filesystem/text-reader cases pass in both modes, including original fsync failure and pending-read cancellation injections through opened-file host callbacks; 18 stock conformance/reader cases run over real native file handles per mode",
+        "Native process execution, file watching, spill behavior, native tools and embedded exports remain pending"
       ]
     },
     {
@@ -661,7 +684,9 @@
         "crates/pi-durable/src/harness/models/collection.rs",
         "crates/pi-durable/src/harness/models/message.rs",
         "crates/pi-durable/src/harness/scheduler/timer_tests.rs",
-        "scripts/stock/durable-native-transport.mjs"
+        "scripts/stock/durable-native-transport.mjs",
+        "crates/pi-durable/src/session/mod.rs",
+        "crates/pi-durable/src/session/guard.rs"
       ],
       "evidence": [
         "cargo test -p pi-durable --test task_scheduler --test task_ownership",
@@ -686,7 +711,8 @@
         "Five additional complete stock compaction runs pass in both retention modes after ordered wake calculation (1080 executions); all source assertions and deadlines unchanged",
         "Abort joins bind to the owning Session FIFO; process response observers use that same queue to preserve the caller-before-abort-handler order. Original stock assertion passes thirty focused repeats and three complete task-file repeats in both retention modes",
         "Report subjects capture task id/kind/conversation and the definition installer at reservation, preserving original ownership after replacement and after the invocation ends; host and extension reports carry task subjects while public agent wrapper reports carry conversation scope",
-        "Wake callback failures name onWake; task error/fault/outdated/migration report payloads omit absent fields and use original invocation metadata"
+        "Wake callback failures name onWake; task error/fault/outdated/migration report payloads omit absent fields and use original invocation metadata",
+        "Deterministic red/green regression holds Session timer disarm between sealed admission and scheduler notification; scheduler failures latch atomically against close and report after unlocking. The unchanged whole task file reproduces the old SessionFailed close failure with a full trace"
       ]
     },
     {
@@ -1329,15 +1355,39 @@
     },
     {
       "reference": "packages/durable/test/env-line-scan.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "scripts/run-stock-durable-codecs.mjs",
+        "scripts/stock/durable-codec-adapter.mjs",
+        "crates/pi-durable-codec-stock/src/lib.rs",
+        "crates/pi-durable/src/env/decode.rs",
+        "crates/pi-durable/src/env/line_scan.rs",
+        "crates/pi-json/src/utf8.rs"
+      ],
+      "evidence": [
+        "All four pinned original cases execute unchanged and unfiltered in both retention modes; source hashes, zero unselected cases, native counters and original deadlines are verified",
+        "Each mode executes 78189 Rust decoder calls and 5000 Rust line scans, covering both original 5000-seed differential loops",
+        "WebAssembly compiles the actual production modules; the JS adapter only transfers bytes, converts returned UTF-8/JSON and maps validation failures to RangeError",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/env-node-conformance.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "scripts/run-stock-durable-env.mjs",
+        "scripts/stock/durable-env-adapter.mjs",
+        "crates/pi-durable/examples/env_stock_bridge.rs",
+        "crates/pi-durable/src/env/native.rs",
+        "crates/pi-durable/src/env/readers.rs"
+      ],
+      "evidence": [
+        "18 original cases pass per mode: all eight basic binary/directory reader contracts in both original registrations plus large positional reads and FIFO refusal",
+        "Each mode proves 18 successful native filesystem opens, 168 native operations and 22 binary reads, with zero host opened-file callbacks",
+        "The original runner-independent Source case bodies drive real native file handles; the native export of the environment conformance factory remains pending",
+        "The other 33 shell-dependent symlink, watch and execution cases remain unselected",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/env-node-spill.test.ts",
@@ -1347,9 +1397,21 @@
     },
     {
       "reference": "packages/durable/test/env-node.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "scripts/run-stock-durable-env.mjs",
+        "scripts/stock/durable-env-adapter.mjs",
+        "crates/pi-durable/examples/env_stock_bridge.rs",
+        "crates/pi-durable/src/env/native.rs",
+        "crates/pi-durable/src/env/readers.rs"
+      ],
+      "evidence": [
+        "All 24 original filesystem/text-reader cases pass in both retention modes without editing tests, assertions, injected I/O failures or timing limits",
+        "Each mode proves 24 successful native filesystem opens, 159 native operations, 17 native text reader calls and 48 original opened-file callbacks",
+        "Native OS operations handle paths, writes, metadata and persistence; original opened-file callbacks preserve fsync spying/failure and held-read cancellation while all reader state and decoding remain in Rust",
+        "The other 29 shell/spill/Windows cases remain unselected until native process execution and its fault bindings are implemented",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/env-truncate.test.ts",

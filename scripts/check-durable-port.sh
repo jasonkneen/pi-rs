@@ -6,13 +6,15 @@ reference=${1:-../pi-mono}
 native_output=$(mktemp "${TMPDIR:-/tmp}/pi-durable-check.XXXXXX")
 trap 'rm -f "$native_output"' EXIT
 python3 scripts/durable-inventory.py "$reference" --check
-cargo fmt -p pi-chord -p pi-durable -p pi-telemetry --check
-cargo test --locked -p pi-chord -p pi-durable -p pi-telemetry
+cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --check
+rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
+cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry
 cargo run --locked -q -p pi-durable --example conversation -- "Hello"
 cargo test --locked -p pi-ai --test telemetry
 cargo check --locked -p pi-agent -p pi-coding-agent
 cargo test --locked -p pi-coding-agent --test extensions_platform js_models_requests_
-cargo clippy --locked -p pi-chord -p pi-durable -p pi-telemetry --all-targets -- -D warnings
+cargo clippy --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --all-targets -- -D warnings
+cargo clippy --locked -p pi-durable-codec-stock --target wasm32-unknown-unknown -- -D warnings
 node --experimental-strip-types scripts/golden/gen-durable-output.mjs "$reference" --check
 cargo run --locked -q -p pi-chord --example reference_deltas > "$native_output"
 node --experimental-strip-types scripts/golden/gen-durable-delta.mjs "$reference" --check --verify-native "$native_output"
@@ -28,6 +30,9 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-s
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --reopen
 node scripts/run-stock-durable-sqlite.mjs "$reference" --report=/tmp/pi-durable-stock-sqlite-report.json
 node scripts/run-stock-durable-jsonl.mjs "$reference" --report=/tmp/pi-durable-stock-jsonl-report.json
+node scripts/run-stock-durable-codecs.mjs "$reference" --report=/tmp/pi-durable-stock-codecs-report.json
+node scripts/run-stock-durable-env.mjs "$reference" --report=/tmp/pi-durable-stock-env-report.json
+node scripts/run-stock-durable-env.mjs "$reference" --suite=readers --report=/tmp/pi-durable-stock-env-readers-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tools --report=/tmp/pi-durable-stock-tools-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=host-inputs --report=/tmp/pi-durable-stock-host-inputs-report.json

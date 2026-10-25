@@ -19,6 +19,10 @@ async-trait.workspace = true
 parking_lot.workspace = true
 futures.workspace = true
 indexmap.workspace = true
+dirs.workspace = true
+url.workspace = true
+uuid.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
