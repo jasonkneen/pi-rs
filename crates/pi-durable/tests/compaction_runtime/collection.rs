@@ -7,6 +7,7 @@ enum Response {
     BadUsage,
     Throw,
     ToolCall,
+    BadLimit,
 }
 struct HostedMessage {
     response: Response,
@@ -55,12 +56,33 @@ struct Collection {
     completions: AtomicUsize,
     copies: Arc<AtomicUsize>,
     instructions: JsonString,
+    metadata_reads: Arc<AtomicUsize>,
 }
 impl ModelCollection for Collection {
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
         let lookup = self.lookups.fetch_add(1, Ordering::SeqCst) + 1;
+        let reads = self.metadata_reads.clone();
+        let response = self.response;
         Ok(Some(
-            ResolvedModel::new(reference.clone(), 100_000.0, lookup).with_max_tokens(2.5),
+            ResolvedModel::new(reference.clone(), 0.0, lookup).with_metadata(Arc::new(
+                move |property| match property {
+                    ModelProperty::ContextWindow => {
+                        Err(Error::message("compaction must not read contextWindow"))
+                    }
+                    ModelProperty::MaxTokens if lookup == 1 => {
+                        Ok(if reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                            6.0
+                        } else if matches!(response, Response::BadLimit) {
+                            f64::NAN
+                        } else {
+                            2.5
+                        })
+                    }
+                    ModelProperty::MaxTokens => {
+                        Err(Error::message("summarize must use its pinned maxTokens"))
+                    }
+                },
+            )),
         ))
     }
     fn stream_simple(
@@ -119,6 +141,59 @@ impl ModelCollection for Collection {
         Box::pin(async { Err(Error::message("unexpected deferred cancellation")) })
     }
 }
+
+#[tokio::test]
+async fn a_non_finite_second_limit_is_not_silently_replaced_with_the_reserve() {
+    for retention in [600_000.0, 0.0] {
+        let collection = Arc::new(Collection {
+            response: Response::BadLimit,
+            lookups: AtomicUsize::new(0),
+            completions: AtomicUsize::new(0),
+            copies: Arc::new(AtomicUsize::new(0)),
+            instructions: "focus".into(),
+            metadata_reads: Arc::new(AtomicUsize::new(0)),
+        });
+        let current = collection.clone();
+        let (scheduler, conversation, _) = open_with_collection(
+            retention,
+            Arc::new(Mutex::new(Models::default())),
+            Arc::new(Mutex::new(settings())),
+            vec![],
+            true,
+            Some(Arc::new(move || Ok(current.clone()))),
+        )
+        .await;
+        seed(&scheduler, conversation).await;
+        let id = compact_conversation(
+            &scheduler,
+            conversation,
+            Some("focus".into()),
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            settled(&scheduler, id.untyped()).await.state,
+            TaskState::Terminal {
+                outcome: TaskOutcome::Faulted { .. }
+            }
+        ));
+        assert_eq!(collection.metadata_reads.load(Ordering::SeqCst), 2);
+        assert_eq!(collection.completions.load(Ordering::SeqCst), 0);
+        let usage = scheduler
+            .session()
+            .snapshot(&USAGE_DOC, conversation, &Context::default())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(usage.models.is_empty());
+        scheduler
+            .session()
+            .close(&Context::default())
+            .await
+            .unwrap();
+    }
+}
 async fn run(
     retention: f64,
     response: Response,
@@ -136,6 +211,7 @@ async fn run(
         completions: AtomicUsize::new(0),
         copies: Arc::new(AtomicUsize::new(0)),
         instructions: instructions.clone(),
+        metadata_reads: Arc::new(AtomicUsize::new(0)),
     });
     let current = collection.clone();
     let (scheduler, conversation, storage) = open_with_collection(
@@ -175,6 +251,7 @@ async fn run(
     let record = settled(&scheduler, id.untyped()).await;
     assert_eq!(collection.lookups.load(Ordering::SeqCst), 2);
     assert_eq!(collection.completions.load(Ordering::SeqCst), 1);
+    assert_eq!(collection.metadata_reads.load(Ordering::SeqCst), 2);
     assert_eq!(collection.copies.load(Ordering::SeqCst), 0);
     (scheduler, conversation, storage, record, collection)
 }

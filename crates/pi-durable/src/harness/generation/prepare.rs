@@ -96,7 +96,7 @@ where
         threshold_compaction(
             &view,
             &entries,
-            model.context_window,
+            model.context_window()?,
             &compaction_policy(&settings, reference)?,
         )
     } else {

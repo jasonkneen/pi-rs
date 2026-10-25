@@ -282,6 +282,27 @@ impl ToolExecutionApi {
         context: &Context,
     ) -> StorageFuture<TypedTaskId<R>> {
         let task = task.clone();
+        let native = self.task_options(options);
+        self.commit(
+            move |tx| async move { tx.create_task(&task, input, native).await },
+            context,
+        )
+    }
+    pub fn create_erased_task(
+        &self,
+        task: &AnyTask,
+        input: JsonValue,
+        options: ToolTaskOptions,
+        context: &Context,
+    ) -> StorageFuture<TaskId> {
+        let task = task.clone();
+        let native = self.task_options(options);
+        self.commit(
+            move |tx| async move { tx.create_erased_task(&task, input, native).await },
+            context,
+        )
+    }
+    fn task_options(&self, options: ToolTaskOptions) -> TaskOptions {
         let mut native = TaskOptions::new(options.ownership);
         native.trace = options.trace;
         native.links = options.links;
@@ -290,10 +311,7 @@ impl ToolExecutionApi {
         native.abandon_on_restart = options
             .abandon_on_restart
             .unwrap_or(!self.resumes && matches!(native.ownership, TaskOwnership::Task(_)));
-        self.commit(
-            move |tx| async move { tx.create_task(&task, input, native).await },
-            context,
-        )
+        native
     }
     pub fn execute_tool(
         &self,

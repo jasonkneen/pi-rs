@@ -77,6 +77,13 @@ fn decode<T: DeserializeOwned>(value: &JsonValue) -> Result<T> {
 fn field<T: DeserializeOwned>(value: &JsonValue, key: &str) -> Result<T> {
     decode(&value[key])
 }
+fn task_ownership(options: &JsonValue) -> Result<TaskOwnership> {
+    match options["ownership"]["kind"].to_utf8().as_deref() {
+        Some("task") => Ok(TaskOwnership::Task(field(&options["ownership"], "taskId")?)),
+        Some("conversation") => Ok(TaskOwnership::Conversation),
+        _ => Err(Error::message("Task ownership is required")),
+    }
+}
 fn error_value(error: &Error) -> JsonValue {
     let mut value = object([
         ("name", encode(&error.name())),
@@ -359,6 +366,7 @@ impl Hub {
         callback: u64,
         tx: Transaction,
         current: Option<TaskRecord>,
+        request: u64,
     ) -> StorageFuture<Option<JsonValue>> {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         self.transactions.lock().insert(id, tx);
@@ -368,6 +376,7 @@ impl Hub {
                 ("callback", encode(&callback)),
                 ("tx", encode(&id)),
                 ("current", encode(&current)),
+                ("request", encode(&request)),
             ]),
         );
         let hub = self.clone();
@@ -838,6 +847,23 @@ impl Hub {
                     field(&request, "at")?,
                 ))
             }
+            "change.turn" => {
+                let request: u64 = field(&request, "request")?;
+                Box::pin(async move {
+                    loop {
+                        let changed = self.changed.notified();
+                        tokio::pin!(changed);
+                        changed.as_mut().enable();
+                        if !self.contexts.lock().contains_key(&request)
+                            || !self.host_pending.lock().is_empty()
+                        {
+                            break;
+                        }
+                        changed.await;
+                    }
+                    Ok(None)
+                })
+            }
             "phase.turn" => {
                 let runtime = self.runtime(&request)?;
                 let id: u64 = field(&request, "runtime")?;
@@ -1082,6 +1108,7 @@ impl Hub {
             "commit" => {
                 self.commits.fetch_add(1, Ordering::Relaxed);
                 let callback = field(&request, "callback")?;
+                let request_id = field(&request, "id")?;
                 if request
                     .as_object()
                     .unwrap()
@@ -1091,7 +1118,7 @@ impl Hub {
                     let hub = self.clone();
                     mapped(runtime.commit(
                         move |tx, current| async move {
-                            hub.callback(callback, tx, Some(current.into_record()))
+                            hub.callback(callback, tx, Some(current.into_record()), request_id)
                                 .await?
                                 .map(|value| to_next(decode(&value)?))
                                 .transpose()
@@ -1103,7 +1130,7 @@ impl Hub {
                     let conversation = field(&request, "conversation")?;
                     let hub = self.clone();
                     scheduler.session().commit_scoped(
-                        move |tx| async move { hub.callback(callback, tx, None).await },
+                        move |tx| async move { hub.callback(callback, tx, None, request_id).await },
                         &context,
                         TransactionScope {
                             conversation_id: conversation,
@@ -1119,13 +1146,9 @@ impl Hub {
                     .get(&field::<u64>(&request, "tx")?)
                     .cloned()
                     .ok_or_else(|| Error::message("Unknown transaction"))?;
-                let task = self.definition(&request["definition"])?;
                 let options = &request["options"];
-                let ownership = if options["ownership"]["kind"].string_equals("task") {
-                    TaskOwnership::Task(field(&options["ownership"], "taskId")?)
-                } else {
-                    TaskOwnership::Conversation
-                };
+                let ownership = task_ownership(options)?;
+                let task = self.stock_catalog_task(&request["definition"])?;
                 let mut create = TaskOptions::new(ownership);
                 create.conversation_id = options
                     .as_object()
@@ -1135,15 +1158,7 @@ impl Hub {
                     .transpose()?;
                 create.background = options["background"].as_bool().unwrap_or(false);
                 create.abandon_on_restart = options["abandonOnRestart"].as_bool().unwrap_or(false);
-                if request["definition"]["nativeTool"].as_bool() == Some(true) {
-                    mapped(tx.create_task(
-                        &pi_durable::harness::tool::TOOL_TASK,
-                        field(&request, "input")?,
-                        create,
-                    ))
-                } else {
-                    mapped(tx.create_task(&task, request["input"].clone(), create))
-                }
+                mapped(tx.create_erased_task(&task, request["input"].clone(), create))
             }
             "diagnostics" => {
                 let schedulers = self
@@ -1433,12 +1448,13 @@ fn begin_request(
         if boundary {
             hub.graph.response_boundary().await;
         }
-        hub.contexts.lock().remove(&id);
         hub.emit(match result {
             Ok(Some(value)) => object([("id", encode(&id)), ("value", value)]),
             Ok(None) => object([("id", encode(&id)), ("missing", encode(&true))]),
             Err(error) => object([("id", encode(&id)), ("error", error_value(&error))]),
         });
+        hub.contexts.lock().remove(&id);
+        hub.changed.notify_waiters();
     };
     if let Some(owner) = owner {
         owner.spawn(respond);

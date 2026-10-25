@@ -466,20 +466,17 @@ impl Hub {
             .ok_or_else(|| Error::message("Unknown tool API"))?;
         match method {
             "tool.commit" => {
+                let request_id = field(&request, "id")?;
                 let callback = field(&request, "callback")?;
                 let hub = self.clone();
                 Ok(api.commit(
-                    move |tx| async move { hub.callback(callback, tx, None).await },
+                    move |tx| async move { hub.callback(callback, tx, None, request_id).await },
                     &context,
                 ))
             }
             "tool.createTask" => {
                 let options = &request["options"];
-                let ownership = if options["ownership"]["kind"].string_equals("task") {
-                    TaskOwnership::Task(field(&options["ownership"], "taskId")?)
-                } else {
-                    TaskOwnership::Conversation
-                };
+                let ownership = task_ownership(options)?;
                 let options = ToolTaskOptions {
                     ownership,
                     trace: if options["trace"].string_equals("root") {
@@ -494,18 +491,10 @@ impl Hub {
                     abandon_on_restart: options["abandonOnRestart"].as_bool(),
                     submission_ids: field(options, "submissionIds")?,
                 };
-                let operation = if request["definition"]["nativeTool"].as_bool() == Some(true) {
-                    let operation =
-                        api.create_task(&TOOL_TASK, field(&request, "input")?, options, &context);
-                    Box::pin(async move { Ok(encode(&operation.await?)) })
-                        as StorageFuture<JsonValue>
-                } else {
-                    let task = self.definition(&request["definition"])?;
-                    let operation =
-                        api.create_task(&task, request["input"].clone(), options, &context);
-                    Box::pin(async move { Ok(encode(&operation.await?)) })
-                };
-                Ok(Box::pin(async move { Ok(Some(operation.await?)) }))
+                let task = self.stock_catalog_task(&request["definition"])?;
+                let operation =
+                    api.create_erased_task(&task, request["input"].clone(), options, &context);
+                Ok(Box::pin(async move { Ok(Some(encode(&operation.await?))) }))
             }
             "tool.output" => {
                 let skipped = if request["skipped"].is_object() {

@@ -149,25 +149,29 @@ impl ModelCollection for HostCollection {
         if value.is_null() {
             return Ok(None);
         }
-        let window = match value["contextWindow"].to_utf8().as_deref() {
-            Some("Infinity") => f64::INFINITY,
-            Some("-Infinity") => f64::NEG_INFINITY,
-            Some("NaN") => f64::NAN,
-            _ => field(&value, "contextWindow")?,
-        };
-        let max_tokens = match value["maxTokens"].to_utf8().as_deref() {
-            Some("Infinity") => f64::INFINITY,
-            Some("-Infinity") => f64::NEG_INFINITY,
-            Some("NaN") => f64::NAN,
-            _ => field(&value, "maxTokens")?,
-        };
+        let id: u64 = decode(&value)?;
+        let host = self.hub.clone();
         Ok(Some(
-            ResolvedModel::new(
-                reference.clone(),
-                window,
-                HostModel(field(&value, "model")?),
-            )
-            .with_max_tokens(max_tokens),
+            ResolvedModel::new(reference.clone(), 0.0, HostModel(id)).with_metadata(Arc::new(
+                move |property| {
+                    let hub = host
+                        .upgrade()
+                        .ok_or_else(|| Error::message("Model host closed"))?;
+                    let value = hub.sync(
+                        "models.metadata",
+                        object([
+                            ("model", encode(&id)),
+                            ("property", encode(&property.name())),
+                        ]),
+                    )?;
+                    match value.to_utf8().as_deref() {
+                        Some("Infinity") => Ok(f64::INFINITY),
+                        Some("-Infinity") => Ok(f64::NEG_INFINITY),
+                        Some("NaN") => Ok(f64::NAN),
+                        _ => decode(&value),
+                    }
+                },
+            )),
         ))
     }
     fn stream_simple(

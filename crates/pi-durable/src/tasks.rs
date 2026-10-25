@@ -206,6 +206,21 @@ pub fn define_task<I: TaskValue, S: TaskValue, R: TaskValue, H: Send + Sync + 's
 }
 
 impl Transaction {
+    pub fn create_erased_task(
+        &self,
+        task: &AnyTask,
+        input: JsonValue,
+        options: TaskOptions,
+    ) -> StorageFuture<TaskId> {
+        let initial = task.0.initial.clone();
+        self.create_task_record(
+            task.name().clone(),
+            task.version(),
+            input,
+            move |input| initial(input),
+            options,
+        )
+    }
     pub fn create_task<I: TaskValue, S: TaskValue, R: TaskValue, H: Send + Sync + 'static>(
         &self,
         task: &Task<I, S, R, H>,
@@ -217,14 +232,7 @@ impl Transaction {
             Err(error) => return crate::storage::ready(Err(error)),
         };
         let task = task.erased();
-        let initial = task.0.initial.clone();
-        let result = self.create_task_record(
-            task.name().clone(),
-            task.version(),
-            input,
-            move |input| initial(input),
-            options,
-        );
+        let result = self.create_erased_task(&task, input, options);
         Box::pin(async move { Ok(TypedTaskId::from_untyped(result.await?)) })
     }
 }

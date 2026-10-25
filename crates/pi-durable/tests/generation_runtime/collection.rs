@@ -79,7 +79,9 @@ struct Collection {
     stream: Mutex<Option<Stream>>,
     lookups: AtomicUsize,
     requests: AtomicUsize,
+    metadata: Option<Metadata>,
 }
+type Metadata = Arc<dyn Fn(usize, ModelProperty) -> Result<f64> + Send + Sync>;
 impl Collection {
     fn new(final_value: Result<AssistantValueRef>) -> Arc<Self> {
         Arc::new(Self {
@@ -90,6 +92,7 @@ impl Collection {
             })),
             lookups: AtomicUsize::new(0),
             requests: AtomicUsize::new(0),
+            metadata: None,
         })
     }
     fn reader(self: &Arc<Self>) -> ModelCollectionReader {
@@ -100,11 +103,11 @@ impl Collection {
 impl ModelCollection for Collection {
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
         let lookup = self.lookups.fetch_add(1, Ordering::SeqCst) + 1;
-        Ok(Some(ResolvedModel::new(
-            reference.clone(),
-            100_000.0,
-            lookup,
-        )))
+        let mut model = ResolvedModel::new(reference.clone(), 100_000.0, lookup);
+        if let Some(metadata) = self.metadata.clone() {
+            model = model.with_metadata(Arc::new(move |property| metadata(lookup, property)));
+        }
+        Ok(Some(model))
     }
     fn stream_simple(
         &self,
@@ -143,6 +146,57 @@ impl ModelCollection for Collection {
         _: Context,
     ) -> storage::StorageFuture<()> {
         Box::pin(async { Err(Error::message("unexpected cancellation")) })
+    }
+}
+
+#[tokio::test]
+async fn model_metadata_is_read_when_preparing_and_unused_output_limits_are_ignored() {
+    for retention in [600_000, 0] {
+        let hosted = HostedMessage::new();
+        let mut collection =
+            Collection::new(Ok(AssistantValue::json(hosted.fields.lock().clone())));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let count = reads.clone();
+        Arc::get_mut(&mut collection).unwrap().metadata =
+            Some(Arc::new(move |lookup, property| match property {
+                ModelProperty::ContextWindow if lookup == 1 => {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(100_000.0)
+                }
+                ModelProperty::ContextWindow => {
+                    Err(Error::message("request must not read contextWindow"))
+                }
+                ModelProperty::MaxTokens => {
+                    Err(Error::message("generation must not read maxTokens"))
+                }
+            }));
+        let opened = open_with_collection(retention, true, None, Some(collection.reader())).await;
+        assert!(
+            pi_chord::json::to_value(&submit(&opened, "hi").await).unwrap()["status"]
+                .string_equals("done")
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(collection.lookups.load(Ordering::SeqCst), 2);
+        assert_eq!(collection.requests.load(Ordering::SeqCst), 1);
+        close(opened).await;
+    }
+}
+
+#[tokio::test]
+async fn a_used_metadata_getter_exception_faults_before_any_provider_request() {
+    for retention in [600_000, 0] {
+        let mut collection = Collection::new(Err(Error::message("request must not start")));
+        Arc::get_mut(&mut collection).unwrap().metadata = Some(Arc::new(|_, _| {
+            Err(Error::message("context getter failed"))
+        }));
+        let opened = open_with_collection(retention, true, None, Some(collection.reader())).await;
+        let result = pi_chord::json::to_value(&submit(&opened, "hi").await).unwrap();
+        assert!(result["reason"].string_equals("faulted"));
+        assert_eq!(result["detail"], json("\"context getter failed\""));
+        assert_eq!(collection.lookups.load(Ordering::SeqCst), 1);
+        assert_eq!(collection.requests.load(Ordering::SeqCst), 0);
+        assert_no_usage(&opened).await;
+        close(opened).await;
     }
 }
 async fn assert_no_usage(opened: &Opened) {

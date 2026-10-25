@@ -3,25 +3,56 @@ use super::*;
 use crate::{harness::types::ModelRef, storage::StorageFuture};
 use std::{any::Any, future::Future, pin::Pin};
 
+#[derive(Clone, Copy, Debug)]
+pub enum ModelProperty {
+    ContextWindow,
+    MaxTokens,
+}
+impl ModelProperty {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ContextWindow => "contextWindow",
+            Self::MaxTokens => "maxTokens",
+        }
+    }
+}
+pub type ModelMetadataReader = Arc<dyn Fn(ModelProperty) -> Result<f64> + Send + Sync>;
 #[derive(Clone)]
 pub struct ResolvedModel {
     pub reference: ModelRef,
-    pub context_window: f64,
-    pub max_tokens: f64,
+    metadata: ModelMetadataReader,
     value: Arc<dyn Any + Send + Sync>,
 }
 impl ResolvedModel {
     pub fn new<T: Any + Send + Sync>(reference: ModelRef, context_window: f64, value: T) -> Self {
         Self {
             reference,
-            context_window,
-            max_tokens: 0.0,
+            metadata: Arc::new(move |property| {
+                Ok(match property {
+                    ModelProperty::ContextWindow => context_window,
+                    ModelProperty::MaxTokens => 0.0,
+                })
+            }),
             value: Arc::new(value),
         }
     }
     pub fn with_max_tokens(mut self, max_tokens: f64) -> Self {
-        self.max_tokens = max_tokens;
+        let original = self.metadata;
+        self.metadata = Arc::new(move |property| match property {
+            ModelProperty::MaxTokens => Ok(max_tokens),
+            ModelProperty::ContextWindow => original(property),
+        });
         self
+    }
+    pub fn with_metadata(mut self, metadata: ModelMetadataReader) -> Self {
+        self.metadata = metadata;
+        self
+    }
+    pub fn context_window(&self) -> Result<f64> {
+        (self.metadata)(ModelProperty::ContextWindow)
+    }
+    pub fn max_tokens(&self) -> Result<f64> {
+        (self.metadata)(ModelProperty::MaxTokens)
     }
     pub fn value<T: Any>(&self) -> Result<&T> {
         self.value

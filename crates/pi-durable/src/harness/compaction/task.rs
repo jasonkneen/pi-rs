@@ -294,18 +294,21 @@ async fn select(task: Running, runtime: CompactionRuntime, context: Context) -> 
         }
         None => {}
     }
+    let output_limit = if model.max_tokens()? > 0.0 {
+        model.max_tokens()?
+    } else {
+        f64::INFINITY
+    };
     let request = SummaryRequest {
         attempt: 1,
         model: reference.clone(),
         thinking_level: agent.thinking_level().clone(),
         stream_options: settings.stream,
-        max_tokens: (0.8 * policy.reserve_tokens)
-            .floor()
-            .min(if model.max_tokens > 0.0 {
-                model.max_tokens
-            } else {
-                f64::INFINITY
-            }),
+        max_tokens: if output_limit.is_nan() {
+            output_limit
+        } else {
+            (0.8 * policy.reserve_tokens).floor().min(output_limit)
+        },
         tail: view
             .entries
             .iter()

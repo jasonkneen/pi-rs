@@ -28,6 +28,7 @@ function watchValue(snapshot,document){const value=graphValue(snapshot);return d
 nativeTransport.register("graphFrame",args=>objectFor(args.callback)(watchValue(args.snapshot,args.document),args.ops,BACKGROUND_CONTEXT));
 nativeTransport.afterCallback("graphFrame",frame=>nativeTransport.sync("graph.turn",{watch:frame.args.watch,serial:frame.args.serial}));
 nativeTransport.afterCallback("phase",frame=>nativeTransport.sync("phase.turn",{runtime:frame.args[3],serial:frame.args[4]}));
+nativeTransport.afterCallback("change",frame=>nativeTransport.sync("change.turn",{request:frame.args.request}));
 function graphWatch(descriptor){if(descriptor===undefined)return undefined;const watch=descriptor.watch,closed=call("graph.closed",{watch});closed.catch(()=>{});return {get value(){return watchValue(nativeTransport.sync("graph.value",{watch}),descriptor.document);},closed,start:listener=>nativeTransport.sync("graph.start",{watch,callback:handle(listener)}),stop:()=>nativeTransport.sync("graph.stop",{watch}),cancel:()=>nativeTransport.sync("graph.cancel",{watch})};}
 function docArguments(token,args){const definition=describeDoc(token);let index=0;const scope=definition.scope==="session"?{kind:"session"}:definition.scope==="task"?{kind:"task",taskId:args[index++]}:{kind:"conversation",conversationId:args[index++]};const address={kind:definition.kind,scope};if(definition.family)address.key=args[index++];return {definition,address,index};}
 function documents(owner){return {
@@ -244,7 +245,8 @@ export async function watchEvents(harness,conversation,context){
 const modelControllers=new Map();
 nativeTransport.event("models.signal",({stream})=>modelControllers.get(stream)?.abort(new Error("Aborted")));
 nativeTransport.register("models.collection",id=>handle(harnesses.get(id).currentModels()));
-nativeTransport.register("models.get",args=>{const model=objectFor(args.collection).getModel(args.reference.provider,args.reference.modelId);return model===undefined?null:{model:handle(model),contextWindow:Number.isFinite(model.contextWindow)?model.contextWindow:String(model.contextWindow),maxTokens:Number.isFinite(model.maxTokens)?model.maxTokens:String(model.maxTokens)};});
+nativeTransport.register("models.get",args=>{const model=objectFor(args.collection).getModel(args.reference.provider,args.reference.modelId);return model===undefined?null:handle(model);});
+nativeTransport.register("models.metadata",args=>{const value=objectFor(args.model)[args.property];return Number.isFinite(value)?value:String(value);});
 nativeTransport.register("models.field",args=>{const value=objectFor(args.message)[args.name];return value===undefined?{present:false}:{present:true,value:copyJson(value,{omitUndefinedProperties:true})};});
 nativeTransport.register("models.setField",args=>{if(args.present)objectFor(args.message)[args.name]=args.value;else delete objectFor(args.message)[args.name];return null;});
 nativeTransport.register("models.copy",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
