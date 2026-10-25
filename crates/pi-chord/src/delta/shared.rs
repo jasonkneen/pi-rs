@@ -29,9 +29,14 @@ impl SharedJson {
     }
     pub fn new(value: Value) -> Self {
         Self(Arc::new(match value {
-            Value::Array(values) => Node::Array(values.into_iter().map(Self::new).collect()),
+            Value::Array(values) => Node::Array(
+                Arc::unwrap_or_clone(values)
+                    .into_iter()
+                    .map(Self::new)
+                    .collect(),
+            ),
             Value::Object(values) => Node::Object(
-                values
+                Arc::unwrap_or_clone(values)
                     .into_iter()
                     .map(|(key, value)| (key, Self::new(value)))
                     .collect(),
@@ -100,12 +105,15 @@ impl SharedJson {
     pub fn to_value(&self) -> Value {
         match self.0.as_ref() {
             Node::Scalar(value) => value.clone(),
-            Node::Array(values) => Value::Array(values.iter().map(Self::to_value).collect()),
+            Node::Array(values) => {
+                Value::Array(values.iter().map(Self::to_value).collect::<Vec<_>>().into())
+            }
             Node::Object(values) => Value::Object(
                 values
                     .iter()
                     .map(|(key, value)| (key.clone(), value.to_value()))
-                    .collect(),
+                    .collect::<crate::json::Map>()
+                    .into(),
             ),
         }
     }

@@ -186,7 +186,7 @@ impl Hub {
                 };
                 let hub = self.clone();
                 Ok(Box::pin(async move {
-                    Ok(reading.await?.map(|value| hub.revision(value)))
+                    Ok(reading.await?.map(|value| hub.native_value(&value)))
                 }))
             }
             other => Err(Error::message(format!("Unknown document method {other}"))),

@@ -69,7 +69,10 @@ impl CodingToolApi for DirectApi {
                 ])
             })
             .unwrap_or(JsonValue::Null);
-        self.call("output", JsonValue::Array(vec![encode(&text), skipped]))?;
+        self.call(
+            "output",
+            JsonValue::Array(vec![encode(&text), skipped].into()),
+        )?;
         Ok(())
     }
     fn retained_output(&self) -> Result<RetainedOutput> {

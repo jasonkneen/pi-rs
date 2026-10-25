@@ -14,6 +14,7 @@ import {nativeTransport,failure as error} from "./durable-native-transport.mjs";
 import {handle,describeTask,describeDoc,objectFor,valueHandle} from "./durable-native-handles.mjs";
 import {settingsRequest,hydrateSettings} from "./durable-settings-wire.mjs";
 import {nativeRegistryId,lookupNativeSnapshot,snapshot,hydrateAgent} from "./durable-registry-adapter.mjs";
+nativeTransport.register("docInitial",({id,seed})=>copyJson(objectFor(id).definition.initial(seed)));
 nativeTransport.error("conversationBusy",value=>new ConversationBusy(value.conversationId));
 nativeTransport.error("readOnly",value=>new ReadOnlySession(value.operation));
 nativeTransport.error("readAfterWrite",value=>new ReadAfterWrite(value.method));
@@ -89,7 +90,7 @@ function configuration(change){
  }
  return result;
 }
-function transaction(id){return{
+function transaction(id){const tx={
  conversation:conversation=>call("tx.conversation",{tx:id,conversation}),
  scanConversations:(query,limit,cursor)=>call("scanConversations",{tx:id,query,limit,cursor}),
  task:task=>call("tx.task",{tx:id,task}),setTask:record=>nativeTransport.sync("tx.setTask",{tx:id,record}),
@@ -106,7 +107,14 @@ function transaction(id){return{
  settleSubmission:(submission,settlement)=>call("settleSubmission",{tx:id,submission,settlement}),
  scanEntries:(query,limit,cursor)=>call("scanEntries",{tx:id,query,limit,cursor}),
  scanTasks:(query,limit,cursor)=>call("scanTasks",{tx:id,query,limit,cursor}),
-};}
+};
+ // Native owns and drains every admitted operation. Observe its JS wrapper too,
+ // including deliberately unawaited calls whose rejection is inspected later.
+ for(const name of Object.keys(tx))if(name!=="setTask"){
+  const invoke=tx[name];tx[name]=(...args)=>{let result;try{result=Promise.resolve(invoke(...args));}catch(error){result=Promise.reject(error);}result.catch(()=>{});return result;};
+ }
+ return tx;
+}
 export function runtime(id){
  let held=runtimes.get(id);if(held)return held;
  const controller=new AbortController();
@@ -133,7 +141,7 @@ async function invoke(method,args,context){
  if(method==="storage"){
   stats.storageCalls++;const storage=storages.get(args.handle);let values=args.args;
   if(args.method==="commit"){
-   const[writes,adoption]=values;return storage.commit(writes.map(tableWrite),seq=>send({type:"storage.adopt",id:adoption,seq}),context);
+   const[writes,adoption,identities]=values;for(const identity of identities??[]){const content=writes[identity.index].content;if(identity.value!==undefined)content.value=graphValue(identity.value);if(identity.ops!==undefined)content.ops=graphValue(identity.ops);}return storage.commit(writes.map(tableWrite),seq=>send({type:"storage.adopt",id:adoption,seq}),context);
   }
   // JSON null is used only for omitted optional cursor/cutoff arguments here.
   if(args.method.startsWith("scan")||args.method==="findLatestHeadMarker")values=values.map(value=>value===null?undefined:value);
@@ -273,7 +281,7 @@ nativeTransport.register("environment.call",async(args,context)=>{
 
 nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
 
-nativeTransport.register("commit.publication",args=>{objectFor(args.callback)({...args.publication,changes:args.publication.changes.map(tableWrite)},BACKGROUND_CONTEXT);return null;});
+nativeTransport.register("commit.publication",args=>{objectFor(args.callback)({...args.publication,changes:args.publication.changes.map(({nativeValue,nativeOps,...change})=>{if(nativeValue!==undefined)change.value=graphValue(nativeValue);if(nativeOps!==undefined)change.ops=graphValue(nativeOps);return tableWrite(change);})},BACKGROUND_CONTEXT);return null;});
 
 export async function watchEvents(harness,conversation,context){
  const id=viewBindings.get(harness);if(id===undefined)throw new Error("Not a Harness");

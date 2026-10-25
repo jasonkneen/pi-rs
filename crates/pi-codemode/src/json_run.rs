@@ -142,7 +142,7 @@ pub(crate) fn done_json(done: &DoneMessage) -> Result<Value, String> {
     let parse = |text: &str, what: &str| {
         strict::parse(text).map_err(|_| format!("{what} is not valid JSON"))
     };
-    let mut result = Value::Object(Map::new());
+    let mut result = Value::Object(Map::new().into());
     put(&mut result, "ok", Value::Bool(done.ok));
     if !done.ok {
         let error = parse(done.error.as_deref().unwrap_or("undefined"), "script error")?;
@@ -168,7 +168,7 @@ pub(crate) fn done_json(done: &DoneMessage) -> Result<Value, String> {
                 fields.insert(name.into(), value.clone());
             }
         }
-        put(&mut result, "error", Value::Object(fields));
+        put(&mut result, "error", Value::Object(fields.into()));
         return Ok(result);
     }
     if let Some(value) = &done.value {
@@ -210,9 +210,11 @@ pub(crate) fn done_json(done: &DoneMessage) -> Result<Value, String> {
         "storeWrites",
         Value::Object(
             [
-                (JsonString::from("set"), Value::Object(set)),
-                ("delete".into(), Value::Array(delete)),
+                (JsonString::from("set"), Value::Object(set.into())),
+                ("delete".into(), Value::Array(delete.into())),
             ]
+            .into_iter()
+            .collect::<Map>()
             .into(),
         ),
     );

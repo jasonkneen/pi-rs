@@ -8,6 +8,54 @@ fn value(s: &str) -> JsonValue {
     parse(s).unwrap()
 }
 
+#[test]
+fn whole_draft_updates_reuse_unchanged_native_containers() {
+    let initial = value(r#"{"items":[1,2],"nested":{"count":0},"other":{"label":"keep"}}"#);
+    let tracker = track(initial.clone());
+    let mut change = tracker.begin_change();
+    *change.state().unwrap() =
+        value(r#"{"items":[1,2],"nested":{"count":1},"other":{"label":"keep"}}"#);
+    let prepared = change.prepare().unwrap();
+    assert!(std::ptr::eq(
+        initial["items"].as_array().unwrap(),
+        prepared.value()["items"].as_array().unwrap()
+    ));
+    assert!(std::ptr::eq(
+        initial["other"].as_object().unwrap(),
+        prepared.value()["other"].as_object().unwrap()
+    ));
+    assert!(!std::ptr::eq(
+        initial["nested"].as_object().unwrap(),
+        prepared.value()["nested"].as_object().unwrap()
+    ));
+}
+
+#[test]
+fn prepared_set_payload_is_the_adopted_native_container() {
+    let mut tracker = track(value(r#"{"other":{},"items":[1]}"#));
+    let mut change = tracker.begin_change();
+    let payload = value(r#"{"label":"new"}"#);
+    change
+        .apply_ops(&[Op::Set(vec!["other".into()], payload.clone())])
+        .unwrap();
+    let prepared = change.prepare().unwrap();
+    let first = prepared.shared_ops();
+    let second = prepared.shared_ops();
+    assert!(Arc::ptr_eq(&first, &second));
+    let Op::Set(_, stored) = &first[0] else {
+        panic!("expected a Set")
+    };
+    assert!(std::ptr::eq(
+        payload.as_object().unwrap(),
+        stored.as_object().unwrap()
+    ));
+    tracker.adopt(&prepared).unwrap();
+    assert!(std::ptr::eq(
+        stored.as_object().unwrap(),
+        tracker.value()["other"].as_object().unwrap()
+    ));
+}
+
 #[tokio::test]
 async fn drafts_survive_await_and_authority_changes_only_after_adoption() {
     let initial = Arc::new(value(r#"{"count":1,"nested":{"text":"a"},"values":[1]}"#));
@@ -168,29 +216,33 @@ fn large_array_edits_remain_narrow_and_rotation_is_payload_free() {
                     ),
                 ]
                 .into_iter()
-                .collect(),
+                .collect::<pi_chord::json::Map>()
+                .into(),
             )
         })
         .collect();
     let mut b = a.clone();
     b[20000] = JsonValue::Null;
-    let ops = diff_revisions(&JsonValue::Array(a.clone()), &JsonValue::Array(b.clone()));
+    let ops = diff_revisions(
+        &JsonValue::Array(a.clone().into()),
+        &JsonValue::Array(b.clone().into()),
+    );
     assert_eq!(ops.len(), 1);
     assert!(matches!(ops[0], Op::Set(..)));
     assert_eq!(
-        apply(JsonValue::Array(a.clone()), &ops).unwrap(),
-        JsonValue::Array(b)
+        apply(JsonValue::Array(a.clone().into()), &ops).unwrap(),
+        JsonValue::Array(b.into())
     );
     let mut rotated = a.clone();
     rotated.rotate_left(1000);
     let ops = diff_revisions(
-        &JsonValue::Array(a.clone()),
-        &JsonValue::Array(rotated.clone()),
+        &JsonValue::Array(a.clone().into()),
+        &JsonValue::Array(rotated.clone().into()),
     );
     assert!(matches!(&ops[..], [Op::Move(..)]));
     assert_eq!(
-        apply(JsonValue::Array(a), &ops).unwrap(),
-        JsonValue::Array(rotated)
+        apply(JsonValue::Array(a.into()), &ops).unwrap(),
+        JsonValue::Array(rotated.into())
     );
 }
 
@@ -199,12 +251,14 @@ fn wide_changes_fall_back_to_one_base_and_reserved_paths_are_folded() {
     let before = JsonValue::Object(
         (0..10000)
             .map(|i| (format!("key{i}").into(), JsonValue::from(i)))
-            .collect(),
+            .collect::<pi_chord::json::Map>()
+            .into(),
     );
     let after = JsonValue::Object(
         (0..10000)
             .map(|i| (format!("key{i}").into(), JsonValue::Null))
-            .collect(),
+            .collect::<pi_chord::json::Map>()
+            .into(),
     );
     let ops = diff_revisions(&before, &after);
     assert_eq!(ops, vec![Op::Replace(after)]);

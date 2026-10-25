@@ -150,7 +150,7 @@ pub(crate) fn publish(
                                     if prior.is_none() {
                                         ops.push(Op::Set(
                                             diagnostics.clone(),
-                                            JsonValue::Array(vec![]),
+                                            JsonValue::Array(vec![].into()),
                                         ));
                                     }
                                     let size = prior.map_or(0, Vec::len);

@@ -274,7 +274,7 @@ async fn replay(index: usize) {
                         if step["fail"] == true {
                             return Err(Error::message("callback failed"));
                         }
-                        Ok(JsonValue::Array(values))
+                        Ok(JsonValue::Array(values.into()))
                     },
                     &Context::default(),
                 )
@@ -284,7 +284,7 @@ async fn replay(index: usize) {
             Ok(value) => {
                 let mut map = pi_chord::json::Map::new();
                 map.insert("value".into(), value);
-                JsonValue::Object(map)
+                JsonValue::Object(map.into())
             }
             Err(error) => encode(
                 &serde_json::json!({"error":{"name":error.name(),"message":error.to_string()}}),

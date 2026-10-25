@@ -278,7 +278,8 @@ pub fn catalog_call(
                 models
                     .iter()
                     .map(CatalogModel::info)
-                    .collect::<Result<_>>()?,
+                    .collect::<Result<Vec<_>>>()?
+                    .into(),
             )));
         }
         let (Some(provider), Some(id)) = (

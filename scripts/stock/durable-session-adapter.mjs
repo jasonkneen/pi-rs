@@ -1,6 +1,7 @@
 // Declared independently so reference class definitions can extend the binding
 // without importing the original Session kernel or entering a package cycle.
 let bind,defaultRetention=600_000;
+function operation(start){let result;try{result=Promise.resolve(start());}catch(error){result=Promise.reject(error);}result.catch(()=>{});return result;}
 export function setDefaultDocumentRetention(value){defaultRetention=value;}
 export function installSessionBinding(binding){bind=binding;}
 export class SessionImpl {
@@ -9,15 +10,15 @@ export class SessionImpl {
   this.binding=bind(this,storage,now,()=>retention()??defaultRetention,setTimer,readOnly);
  }
  commit(callback,context){return this.commitWith(callback,context);}
- async commitWith(callback,context,scope){return this.binding.commitWith(callback,context,scope);}
- snapshot(...args){return this.binding.snapshot(...args);}
- snapshotAsOf(...args){return this.binding.snapshotAsOf(...args);}
- watchDoc(...args){return this.binding.watchDoc(...args);}
+ commitWith(callback,context,scope){return operation(()=>this.binding.commitWith(callback,context,scope));}
+ snapshot(...args){return operation(()=>this.binding.snapshot(...args));}
+ snapshotAsOf(...args){return operation(()=>this.binding.snapshotAsOf(...args));}
+ watchDoc(...args){return operation(()=>this.binding.watchDoc(...args));}
  subscribeClose(callback){return this.binding.subscribeClose(callback);}
  subscribeCommits(callback){return this.binding.subscribeCommits(callback);}
  get closed(){return this.binding.closed();}
- close(context){return this.binding.close(context);}
- unloadDocuments(){return this.binding.unloadDocuments();}
+ close(context){return operation(()=>this.binding.close(context));}
+ unloadDocuments(){return operation(()=>this.binding.unloadDocuments());}
  get documentCacheSizes(){return this.binding.cache();}
  async conversationCreated(){}
  async beforeClose(){}

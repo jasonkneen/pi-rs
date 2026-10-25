@@ -624,7 +624,7 @@ impl Execution {
             }
         }
         state.unsent.clear();
-        json_run::put(&mut result, "output", JsonValue::Array(std::mem::take(&mut state.output)));
+        json_run::put(&mut result, "output", JsonValue::Array(std::mem::take(&mut state.output).into()));
         json_run::put(&mut result, "calls", json_run::encoded(&std::mem::take(&mut state.calls)));
         if let Some(during) = during {
             json_run::put(&mut result, "during", json_run::encoded(&during));
@@ -723,7 +723,7 @@ impl RunControl for Execution {
         let (ok, payload, properties) = match outcome {
             CodemodeJsonOutcome::Ok { value } => (true, value.map(|v| v.to_string().encode_utf16().collect()), None),
             CodemodeJsonOutcome::Err { message, properties } => {
-                (false, Some(message.units().to_vec()), properties.map(|v| JsonValue::Object(v).to_string()))
+                (false, Some(message.units().to_vec()), properties.map(|v| JsonValue::Object(v.into()).to_string()))
             }
         };
         state.delivered.insert(seq);
@@ -1003,8 +1003,10 @@ impl CodemodeSandbox {
     pub fn start_json(&self, code: &str, options: CodemodeJsonRunOptions) -> Result<CodemodeJsonRun, CodemodeSandboxError> {
         self.check_start(options.started_at, &options.tools, &options.globals)?;
         let store_json = options.store.as_ref().map(|store| {
-            JsonValue::Object(store.iter().map(|(key, value)| (key.clone(), JsonValue::String(value.to_string().into()))).collect())
-                .to_string()
+            JsonValue::Object(
+                store.iter().map(|(key, value)| (key.clone(), JsonValue::String(value.to_string().into()))).collect::<strict::Map>().into(),
+            )
+            .to_string()
         });
         let (execution, result) = Execution::start(ExecutionOptions {
             code: code.to_owned(),

@@ -8,7 +8,7 @@ trap 'rm -f "$native_output"' EXIT
 python3 scripts/durable-inventory.py "$reference" --check
 cargo fmt -p pi-chord -p pi-durable -p pi-telemetry -p pi-durable-codec-stock --check
 rustfmt --edition 2024 --check crates/pi-json/src/utf8.rs
-rustfmt --edition 2024 --check crates/pi-json/src/strict.rs crates/pi-codemode/src/json_run.rs crates/pi-codemode/tests/json_run.rs
+rustfmt --edition 2024 --check crates/pi-json/src/strict.rs crates/pi-json/tests/strict_cow.rs crates/pi-codemode/src/json_run.rs crates/pi-codemode/tests/json_run.rs
 rustfmt --edition 2024 --check crates/pi-json/src/diff.rs crates/pi-coding-agent/src/core/tools/jsdiff.rs
 cargo test --locked -p pi-json -p pi-chord -p pi-durable -p pi-telemetry -p pi-codemode -p pi-jsrt
 cargo run --locked -q -p pi-durable --example conversation -- "Hello"
@@ -45,6 +45,7 @@ node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-s
 node scripts/run-stock-durable-session.mjs "$reference" --suite=definitions --report=/tmp/pi-durable-stock-session-definitions-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=tables --report=/tmp/pi-durable-stock-session-tables-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=forks --report=/tmp/pi-durable-stock-session-forks-report.json
+node scripts/run-stock-durable-session.mjs "$reference" --suite=documents --report=/tmp/pi-durable-stock-session-documents-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-models-native --report=/tmp/pi-durable-stock-codemode-models-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode --report=/tmp/pi-durable-stock-codemode-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=codemode-describe --report=/tmp/pi-durable-stock-codemode-describe-report.json

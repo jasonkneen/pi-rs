@@ -24,7 +24,7 @@ fn fingerprint(value: &Value) -> u64 {
             Value::String(s) => s.hash(state),
             Value::Array(a) => {
                 a.len().hash(state);
-                for v in a {
+                for v in a.iter() {
                     hash(v, state);
                 }
             }
@@ -113,7 +113,7 @@ fn diff(before: &Value, after: &Value, path: &mut Path, out: &mut Vec<Op>) {
                 emit_set(path, after, out);
                 return;
             }
-            for (key, value) in b {
+            for (key, value) in b.iter() {
                 if out.len() > MAX_OPERATIONS {
                     return;
                 }

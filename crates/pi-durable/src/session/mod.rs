@@ -670,7 +670,7 @@ impl Session {
                     Some((watch, None, Vec::new()))
                 } else if let Some(version) = version {
                     let operations = if observer.version == *version {
-                        ops.clone()
+                        ops.as_ref().clone()
                     } else {
                         observer.version = *version;
                         vec![Op::Replace(value.as_ref().clone())]

@@ -14,7 +14,8 @@ impl UsageState {
                 values
                     .iter()
                     .map(|(key, value)| (key.clone(), value.clone().into_value()))
-                    .collect(),
+                    .collect::<pi_chord::json::Map>()
+                    .into(),
             )
         };
         let mut value = wire::object();

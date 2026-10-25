@@ -1452,7 +1452,8 @@ fn discover(start: &Start, call: &HostCall) -> Result<Option<JsonValue>> {
                         wire::put(&mut value, "description", &tool.description);
                         value
                     })
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .into(),
             )))
         }
     }

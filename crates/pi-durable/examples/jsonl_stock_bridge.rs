@@ -298,7 +298,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     let mut map = pi_chord::json::Map::new();
                     map.insert("id".into(), encode(&id));
                     map.insert("value".into(), value);
-                    JsonValue::Object(map)
+                    JsonValue::Object(map.into())
                 }
                 Err(error) => encode(
                     &serde_json::json!({"id":id,"error":{"name":error.name(),"message":error.to_string()}}),

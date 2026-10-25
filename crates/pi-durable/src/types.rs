@@ -4,6 +4,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{DeserializeOwned, Visitor},
 };
+use std::sync::Arc;
 use std::{
     fmt,
     ops::{Deref, DerefMut},
@@ -59,7 +60,7 @@ impl Default for JsonObject {
 }
 impl JsonObject {
     pub fn new(map: pi_chord::json::Map) -> Self {
-        Self(JsonValue::Object(map))
+        Self(JsonValue::Object(map.into()))
     }
     pub fn try_from_value(value: JsonValue) -> std::result::Result<Self, String> {
         if value.is_object() {
@@ -624,7 +625,10 @@ impl SubmissionRecord {
         let JsonValue::Object(state) = wire::encode(&self.state) else {
             unreachable!("submission state is an object")
         };
-        value.as_object_mut().unwrap().extend(state);
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(std::sync::Arc::unwrap_or_clone(state));
         value
     }
     fn from_json(value: &JsonValue) -> std::result::Result<Self, String> {
@@ -835,7 +839,7 @@ pub struct DocumentBase {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum DocumentContent {
     Base { version: u64, value: JsonObject },
-    Delta { version: u64, ops: Vec<Op> },
+    Delta { version: u64, ops: Arc<Vec<Op>> },
 }
 impl DocumentContent {
     pub fn version(&self) -> u64 {

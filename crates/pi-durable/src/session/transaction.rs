@@ -1130,7 +1130,7 @@ impl Transaction {
                                 id: plan.record.id,
                                 content: DocumentContent::Delta {
                                     version,
-                                    ops: prepared.ops().to_vec(),
+                                    ops: prepared.shared_ops(),
                                 },
                             })
                         }
@@ -1502,7 +1502,7 @@ impl Transaction {
                     conversation_id: plan.conversation_id,
                     version: None,
                     value: Arc::new(JsonValue::Null),
-                    ops: Vec::new(),
+                    ops: Arc::new(Vec::new()),
                 }
             } else if let Some(StorageWrite::DocumentCopy { source, .. }) = plan.content {
                 DocumentCommitChange::Copy {
@@ -1513,9 +1513,9 @@ impl Transaction {
             } else {
                 let change = plan.change.expect("published change has revision");
                 let ops = if change.loaded.is_none() {
-                    Vec::new()
+                    Arc::new(Vec::new())
                 } else {
-                    change.prepared.ops().to_vec()
+                    change.prepared.shared_ops()
                 };
                 DocumentCommitChange::Document {
                     record,

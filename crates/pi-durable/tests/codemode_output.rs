@@ -26,7 +26,10 @@ async fn script_formatting_matches_independent_reference_including_lossless_spil
                     record.insert("bytes".into(), encode(&bytes));
                 }
             }
-            capture.lock().unwrap().push(JsonValue::Object(record));
+            capture
+                .lock()
+                .unwrap()
+                .push(JsonValue::Object(record.into()));
             Box::pin(async move {
                 Ok(if fail {
                     OutputFileResult::Failed(JsonString::from_utf16(
@@ -58,7 +61,7 @@ async fn script_formatting_matches_independent_reference_including_lossless_spil
             actual.insert("fullOutputPath".into(), encode(&path));
         }
         assert_eq!(
-            JsonValue::Object(actual),
+            JsonValue::Object(actual.into()),
             case["expected"],
             "result case {index}"
         );

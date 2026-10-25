@@ -300,7 +300,8 @@ fn system_entry(
                         value.as_ref().map(wire::encode).unwrap_or(JsonValue::Null),
                     )
                 })
-                .collect(),
+                .collect::<pi_chord::json::Map>()
+                .into(),
         );
         wire::put(&mut message, "sections", &patch);
     }

@@ -11,6 +11,7 @@ pub use shared::{SharedJson, WeakSharedJson};
 pub use tracker::{Change, Prepared, Tracker, track};
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::json::{JsonString, Value, stringify};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -126,33 +127,46 @@ fn permutation(value: &Value) -> Result<Vec<usize>> {
 impl Op {
     pub fn to_value(&self) -> Value {
         match self {
-            Self::Replace(value) => Value::Array(vec![Value::from("r"), value.clone()]),
+            Self::Replace(value) => Value::Array(vec![Value::from("r"), value.clone()].into()),
             Self::Set(path, value) => {
-                Value::Array(vec![Value::from("s"), path_value(path), value.clone()])
+                Value::Array(vec![Value::from("s"), path_value(path), value.clone()].into())
             }
-            Self::Delete(path) => Value::Array(vec![Value::from("d"), path_value(path)]),
-            Self::Append(path, value) => Value::Array(vec![
-                Value::from("a"),
-                path_value(path),
-                Value::String(value.clone()),
-            ]),
-            Self::Truncate(path, count) => Value::Array(vec![
-                Value::from("t"),
-                path_value(path),
-                Value::from(*count),
-            ]),
-            Self::Splice(path, index, remove, items) => Value::Array(vec![
-                Value::from("p"),
-                path_value(path),
-                Value::from(*index),
-                Value::from(*remove),
-                Value::Array(items.clone()),
-            ]),
-            Self::Move(path, order) => Value::Array(vec![
-                Value::from("m"),
-                path_value(path),
-                Value::Array(order.iter().map(|i| Value::from(*i)).collect()),
-            ]),
+            Self::Delete(path) => Value::Array(vec![Value::from("d"), path_value(path)].into()),
+            Self::Append(path, value) => Value::Array(
+                vec![
+                    Value::from("a"),
+                    path_value(path),
+                    Value::String(value.clone()),
+                ]
+                .into(),
+            ),
+            Self::Truncate(path, count) => {
+                Value::Array(vec![Value::from("t"), path_value(path), Value::from(*count)].into())
+            }
+            Self::Splice(path, index, remove, items) => Value::Array(
+                vec![
+                    Value::from("p"),
+                    path_value(path),
+                    Value::from(*index),
+                    Value::from(*remove),
+                    Value::Array(items.clone().into()),
+                ]
+                .into(),
+            ),
+            Self::Move(path, order) => Value::Array(
+                vec![
+                    Value::from("m"),
+                    path_value(path),
+                    Value::Array(
+                        order
+                            .iter()
+                            .map(|i| Value::from(*i))
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
+                ]
+                .into(),
+            ),
         }
     }
 
@@ -248,11 +262,13 @@ fn key_string(segment: &Seg) -> JsonString {
 fn resolve_mut<'a>(mut value: &'a mut Value, path: &[Seg]) -> Result<&'a mut Value> {
     for segment in path {
         value = match value {
-            Value::Object(map) => map
+            Value::Object(map) => Arc::make_mut(map)
                 .get_mut(&key_string(segment))
                 .ok_or_else(|| path_error(path))?,
             Value::Array(items) => match segment {
-                Seg::Index(index) => items.get_mut(*index).ok_or_else(|| path_error(path))?,
+                Seg::Index(index) => Arc::make_mut(items)
+                    .get_mut(*index)
+                    .ok_or_else(|| path_error(path))?,
                 Seg::Key(key) => return Err(Error::UnsafePath(key.to_string_lossy())),
             },
             _ => return Err(path_error(path)),
@@ -299,6 +315,7 @@ pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
         let (key, parent_path) = path.split_last().ok_or_else(|| shape("path is empty"))?;
         let parent = resolve_mut(&mut root, parent_path)?;
         if let Value::Array(items) = parent {
+            let items = Arc::make_mut(items);
             let Seg::Index(index) = key else {
                 return Err(Error::UnsafePath(key_string(key).to_string_lossy()));
             };
@@ -315,6 +332,7 @@ pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
                 _ => update_string(items.get_mut(*index), op, path)?,
             }
         } else if let Value::Object(map) = parent {
+            let map = Arc::make_mut(map);
             let key = key_string(key);
             match op {
                 Op::Set(_, value) => {
@@ -420,7 +438,7 @@ impl Encoder {
             op.validate()?;
             let mut tuple = op.to_value().as_array().unwrap().clone();
             let Some(path) = op.path() else {
-                out.push(Value::Array(tuple));
+                out.push(Value::Array(tuple.into()));
                 self.seen.clear();
                 self.ids.clear();
                 self.next_id = 0;
@@ -436,16 +454,14 @@ impl Encoder {
                     let id = self.next_id;
                     self.next_id += 1;
                     self.ids.insert(path.to_vec(), id);
-                    out.push(Value::Array(vec![
-                        Value::from("#"),
-                        Value::from(id),
-                        path_value(path),
-                    ]));
+                    out.push(Value::Array(
+                        vec![Value::from("#"), Value::from(id), path_value(path)].into(),
+                    ));
                     tuple[1] = json!(id);
                 }
                 previous = Some(path.to_vec());
             }
-            out.push(Value::Array(tuple));
+            out.push(Value::Array(tuple.into()));
         }
         Ok(out)
     }
@@ -506,7 +522,7 @@ impl Decoder {
             }
             let mut expanded = vec![tuple[0].clone(), path_value(&path)];
             expanded.extend_from_slice(&tuple[if short { 1 } else { 2 }..]);
-            out.push(Op::from_value(&Value::Array(expanded))?);
+            out.push(Op::from_value(&Value::Array(expanded.into()))?);
         }
         Ok(out)
     }
@@ -595,7 +611,8 @@ fn path_value(path: &[Seg]) -> Value {
                 Seg::Key(k) => Value::String(k.clone()),
                 Seg::Index(i) => Value::from(*i),
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .into(),
     )
 }
 

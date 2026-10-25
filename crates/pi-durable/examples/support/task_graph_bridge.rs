@@ -60,7 +60,7 @@ impl ValueWatch {
     fn value(&self, hub: &Hub) -> JsonValue {
         match self {
             Self::Graph(watch) => hub.revision(watch.value()),
-            Self::Document(watch) => hub.revision(watch.value()),
+            Self::Document(watch) => hub.native_value(&watch.value()),
             Self::Conversation(watch) => hub.shared_revision(watch.value().revision()),
             Self::Events(stream) => hub.revision(stream.watch.value()),
         }
@@ -122,22 +122,30 @@ impl Hub {
                 ("id", encode(&id)),
                 (
                     "array",
-                    JsonValue::Array(items.iter().map(|item| self.shared_node(item)).collect()),
+                    JsonValue::Array(
+                        items
+                            .iter()
+                            .map(|item| self.shared_node(item))
+                            .collect::<Vec<_>>()
+                            .into(),
+                    ),
                 ),
             ])
         } else {
-            let fields = value
+            let fields: Vec<_> = value
                 .as_object()
                 .unwrap()
                 .iter()
                 .map(|(key, value)| {
-                    JsonValue::Array(vec![
-                        JsonValue::String(key.clone()),
-                        self.shared_node(value),
-                    ])
+                    JsonValue::Array(
+                        vec![JsonValue::String(key.clone()), self.shared_node(value)].into(),
+                    )
                 })
                 .collect();
-            object([("id", encode(&id)), ("object", JsonValue::Array(fields))])
+            object([
+                ("id", encode(&id)),
+                ("object", JsonValue::Array(fields.into())),
+            ])
         }
     }
     pub(super) fn shared_revision(&self, value: &SharedJson) -> JsonValue {
@@ -274,7 +282,7 @@ impl Hub {
                         id,
                         callback,
                         observed.activity,
-                        Hub::revision,
+                        |hub, value| hub.native_value(&value),
                     )?,
                     ValueWatch::Conversation(watch) => self.start_watch(
                         watch,

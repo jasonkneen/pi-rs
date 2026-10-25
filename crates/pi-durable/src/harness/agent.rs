@@ -66,7 +66,8 @@ pub fn apply_change(state: &mut AgentState, change: &JsonObject) -> Result<()> {
                                 .cloned()
                                 .ok_or_else(|| Error::message("Choice has no name"))
                         })
-                        .collect::<Result<_>>()?,
+                        .collect::<Result<Vec<_>>>()?
+                        .into(),
                 ))
             }
             if value.is_array() {
@@ -135,7 +136,7 @@ pub fn add_tools(
                 for name in &added {
                     let name = wire::encode(name);
                     if !names.contains(&name) {
-                        names.push(name);
+                        std::sync::Arc::make_mut(&mut names).push(name);
                     }
                 }
                 state.0.insert("tools".into(), JsonValue::Array(names));
@@ -160,7 +161,7 @@ pub fn add_tools(
                 for name in &added {
                     let name = wire::encode(name);
                     if !names.contains(&name) {
-                        names.push(name);
+                        std::sync::Arc::make_mut(&mut names).push(name);
                     }
                 }
                 state.0.insert("modelTools".into(), JsonValue::Array(names));

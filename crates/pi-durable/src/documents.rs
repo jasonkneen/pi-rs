@@ -467,15 +467,18 @@ pub fn address_id(address: &DocumentAddress) -> String {
         }
         DocumentScope::Task { task_id } => ("task", wire::encode(&task_id)),
     };
-    pi_chord::json::stringify(&JsonValue::Array(vec![
-        JsonValue::String(address.kind.clone()),
-        kind.into(),
-        owner,
-        address
-            .key
-            .as_ref()
-            .map_or(JsonValue::Null, |key| JsonValue::String(key.clone())),
-    ]))
+    pi_chord::json::stringify(&JsonValue::Array(
+        vec![
+            JsonValue::String(address.kind.clone()),
+            kind.into(),
+            owner,
+            address
+                .key
+                .as_ref()
+                .map_or(JsonValue::Null, |key| JsonValue::String(key.clone())),
+        ]
+        .into(),
+    ))
 }
 pub struct ResolvedAddress {
     pub address: DocumentAddress,

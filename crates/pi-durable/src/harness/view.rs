@@ -51,7 +51,8 @@ impl ConversationView {
             JsonValue::Object(
                 docs.iter()
                     .map(|(kind, value)| (kind.clone(), value.as_ref().clone()))
-                    .collect(),
+                    .collect::<pi_chord::json::Map>()
+                    .into(),
             ),
         );
         Self {
@@ -76,7 +77,8 @@ impl Serialize for ConversationView {
                 self.docs
                     .iter()
                     .map(|(kind, value)| (kind.clone(), value.as_ref().clone()))
-                    .collect(),
+                    .collect::<pi_chord::json::Map>()
+                    .into(),
             ),
         );
         value.serialize(serializer)

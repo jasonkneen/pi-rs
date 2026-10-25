@@ -71,7 +71,7 @@ export const nativeTransport={
   response.catch(()=>{});return response;
  },
  requestAdmitted(method,args={},context){
-  const id=next,response=this.request(method,{...args,admit:true},context),waiter=pending.get(id),deadline=Date.now()+30000;
+  const id=next,response=this.request(method,{...args,admit:true,reentrant:synchronousCallbacks!==0},context),waiter=pending.get(id),deadline=Date.now()+30000;
   while(pending.has(id)&&!waiter.admitted){
    const observed=Atomics.load(signal,0);drain();
    if(transportFailure)throw transportFailure;if(closed)throw new Error("Native durable transport closed");

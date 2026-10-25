@@ -120,7 +120,7 @@ async fn dynamic_drafts_preserve_structural_noops_through_persistence_and_public
     assert_eq!(*checkpoints.lock(), vec![(ops.clone(), 0)]);
     let publication = publications.lock().last().unwrap().clone();
     assert!(
-        matches!(&publication.changes[..], [CommitChange::Document(DocumentCommitChange::Document { ops: published, value, .. })] if published == &ops && Arc::ptr_eq(value, &after))
+        matches!(&publication.changes[..], [CommitChange::Document(DocumentCommitChange::Document { ops: published, value, .. })] if published.as_ref() == &ops && Arc::ptr_eq(value, &after))
     );
     watch.delivery_idle().await;
     assert!(

@@ -57,7 +57,7 @@ pub struct Change {
 pub struct Prepared {
     base: Arc<JsonValue>,
     value: Arc<JsonValue>,
-    ops: Vec<Op>,
+    ops: Arc<Vec<Op>>,
     lease: Arc<Lease>,
 }
 
@@ -101,7 +101,8 @@ impl Tracker {
                 vec![]
             } else {
                 vec![Op::Replace(value.as_ref().clone())]
-            },
+            }
+            .into(),
             value: if same { self.value.clone() } else { value },
             lease: self.lease(Status::Prepared),
         }
@@ -207,6 +208,13 @@ impl Change {
         }
         self.check_open()?;
         let pending = self.pending_diff();
+        let replay = !matches!(
+            &self.edits,
+            Edits::Recorded {
+                untracked_base: None,
+                ..
+            }
+        );
         let mut ops = match std::mem::replace(&mut self.edits, Edits::Diff) {
             Edits::Diff => Vec::new(),
             Edits::Recorded { ops, .. } => ops,
@@ -218,19 +226,25 @@ impl Change {
         if let Some(index) = ops.iter().rposition(|op| matches!(op, Op::Replace(_))) {
             ops.drain(..index);
         }
-        let base = self.base.take().expect("open change owns base");
+        let base = self.base.as_ref().expect("open change owns base").clone();
+        let replayed = if replay && !ops.is_empty() {
+            Some(Arc::new(apply_immutable(Some(&base), &ops)?))
+        } else {
+            None
+        };
+        self.base = None;
         let value = self.state.take().expect("open change owns draft");
         let value = if ops.is_empty() {
             base.clone()
         } else {
-            Arc::new(value)
+            replayed.unwrap_or_else(|| Arc::new(value))
         };
         *self.lease.status.lock() = Status::Prepared;
         self.settled = true;
         Ok(Prepared {
             base,
             value,
-            ops,
+            ops: ops.into(),
             lease: self.lease.clone(),
         })
     }
@@ -251,6 +265,10 @@ impl Prepared {
     }
     pub fn ops(&self) -> &[Op] {
         &self.ops
+    }
+    /// The operation batch shared by persistence, policy callbacks and publication.
+    pub fn shared_ops(&self) -> Arc<Vec<Op>> {
+        self.ops.clone()
     }
     pub fn base_revision(&self) -> u64 {
         self.lease.revision

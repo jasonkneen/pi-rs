@@ -29,7 +29,8 @@ fn object<const N: usize>(fields: [(&str, JsonValue); N]) -> JsonValue {
         fields
             .into_iter()
             .map(|(key, value)| (key.into(), value))
-            .collect(),
+            .collect::<pi_chord::json::Map>()
+            .into(),
     )
 }
 struct Driver {

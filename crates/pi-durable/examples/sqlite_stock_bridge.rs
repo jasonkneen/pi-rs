@@ -68,7 +68,8 @@ impl Hub {
                     SqliteValue::Text(s) => encode(s),
                     SqliteValue::Blob(b) => encode(&serde_json::json!({"blob":b})),
                 })
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
         );
         let mut frame = encode(
             &serde_json::json!({"type":"database.call","handle":handle,"method":method,"sql":sql}),
@@ -390,7 +391,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         response.insert("error".into(), encode(&serde_json::json!({"name":error.name(),"message":error.to_string()})));
                     }
                 }
-                hub.emit(JsonValue::Object(response));
+                hub.emit(JsonValue::Object(response.into()));
             });
         }
     }

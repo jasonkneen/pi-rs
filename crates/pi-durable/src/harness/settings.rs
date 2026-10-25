@@ -79,7 +79,7 @@ pub fn resolve_settings(input: HarnessSettings) -> Settings {
             let JsonValue::Object(edit) = edit.into_value() else {
                 unreachable!("JsonObject has an object root")
             };
-            base.extend(edit);
+            base.extend(std::sync::Arc::unwrap_or_clone(edit));
         }
         base
     }

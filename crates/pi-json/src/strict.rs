@@ -5,7 +5,7 @@
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{fmt, ops::Index};
+use std::{fmt, ops::Index, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct JsonString(Vec<u16>);
@@ -59,8 +59,8 @@ pub enum Value {
     Bool(bool),
     Number(serde_json::Number),
     String(JsonString),
-    Array(Vec<Value>),
-    Object(Map),
+    Array(Arc<Vec<Value>>),
+    Object(Arc<Map>),
 }
 
 impl PartialEq for Value {
@@ -70,8 +70,8 @@ impl PartialEq for Value {
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Number(a), Self::Number(b)) => a.as_f64() == b.as_f64(),
             (Self::String(a), Self::String(b)) => a == b,
-            (Self::Array(a), Self::Array(b)) => a == b,
-            (Self::Object(a), Self::Object(b)) => a == b,
+            (Self::Array(a), Self::Array(b)) => Arc::ptr_eq(a, b) || a == b,
+            (Self::Object(a), Self::Object(b)) => Arc::ptr_eq(a, b) || a == b,
             _ => false,
         }
     }
@@ -130,7 +130,7 @@ impl Value {
     }
     pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
         if let Self::Array(a) = self {
-            Some(a)
+            Some(Arc::make_mut(a))
         } else {
             None
         }
@@ -144,7 +144,7 @@ impl Value {
     }
     pub fn as_object_mut(&mut self) -> Option<&mut Map> {
         if let Self::Object(m) = self {
-            Some(m)
+            Some(Arc::make_mut(m))
         } else {
             None
         }
@@ -181,10 +181,15 @@ impl From<serde_json::Value> for Value {
             serde_json::Value::Bool(b) => Self::Bool(b),
             serde_json::Value::Number(n) => Self::Number(n),
             serde_json::Value::String(s) => Self::String(s.into()),
-            serde_json::Value::Array(a) => Self::Array(a.into_iter().map(Self::from).collect()),
-            serde_json::Value::Object(m) => {
-                Self::Object(m.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
+            serde_json::Value::Array(a) => {
+                Self::Array(a.into_iter().map(Self::from).collect::<Vec<_>>().into())
             }
+            serde_json::Value::Object(m) => Self::Object(
+                m.into_iter()
+                    .map(|(k, v)| (k.into(), v.into()))
+                    .collect::<Map>()
+                    .into(),
+            ),
         }
     }
 }
@@ -419,7 +424,7 @@ pub fn parse(input: &str) -> Result<Value, String> {
                     }
                     self.at += 1;
                     self.depth -= 1;
-                    Ok(Value::Array(a))
+                    Ok(Value::Array(a.into()))
                 }
                 Some(b'{') => {
                     self.at += 1;
@@ -448,7 +453,7 @@ pub fn parse(input: &str) -> Result<Value, String> {
                     }
                     self.at += 1;
                     self.depth -= 1;
-                    Ok(Value::Object(m))
+                    Ok(Value::Object(m.into()))
                 }
                 Some(b'n') if self.input[self.at..].starts_with("null") => {
                     self.at += 4;

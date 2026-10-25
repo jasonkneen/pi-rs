@@ -45,7 +45,7 @@ impl Hub {
                                 "commit.publication",
                                 object([
                                     ("callback", encode(&callback)),
-                                    ("publication", encode(publication)),
+                                    ("publication", hub.native_publication(publication)),
                                 ]),
                             )?;
                         }

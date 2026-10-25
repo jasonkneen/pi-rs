@@ -1082,7 +1082,8 @@
         "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts",
         "Optional fallible live retention readers contain errors and invalid values, shorten an already armed eviction timer and preserve default fallback; typed session reports distinguish listener, failed storage and timer errors",
         "A deterministic native regression reproduced five retained documents after switching to zero retention when the host had declined timers; all due evictions now queue directly on the Session line before considering background timer availability, matching the reference",
-        "Observer registration checks health and the close seal atomically after loading an existing document; an absent queued watch still returns None, while a cached snapshot preserves its call-time revision; two native regressions fail before the fix and pass afterward, alongside all fourteen original lifecycle cases in both modes"
+        "Observer registration checks health and the close seal atomically after loading an existing document; an absent queued watch still returns None, while a cached snapshot preserves its call-time revision; two native regressions fail before the fix and pass afterward, alongside all fourteen original lifecycle cases in both modes",
+        "Native COW JSON containers and a shared prepared delta batch retain unchanged subtrees and payload/base/publication/snapshot ownership. The complete original document file passes all 27 cases per mode with native pointer regressions; the wider Session mapping remains incomplete."
       ]
     },
     {
@@ -1098,7 +1099,8 @@
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts"
+        "Validated dynamic definitions and erased document acquisition/current/historical snapshot/watch boundaries; structural no-op operations persist and publish with exact replay and revoked drafts",
+        "Native COW JSON containers and a shared prepared delta batch retain unchanged subtrees and payload/base/publication/snapshot ownership. The complete original document file passes all 27 cases per mode with native pointer regressions; the wider Session mapping remains incomplete."
       ]
     },
     {
@@ -2669,12 +2671,16 @@
       "rust": [
         "crates/pi-durable/tests/session.rs",
         "crates/pi-durable/tests/session_retention.rs",
-        "crates/pi-durable/tests/session_reference.rs"
+        "crates/pi-durable/tests/session_reference.rs",
+        "crates/pi-json/tests/strict_cow.rs",
+        "crates/pi-durable/tests/session_shared_revisions.rs",
+        "crates/pi-durable/examples/support/strict_bridge.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
         "porting/durable/STATUS.md",
-        "Whole stock file attempted: 23 of 27 pass at default retention; four original revision/base/operation/publication sharing assertions fail. Not a passing stock suite. /tmp/pi-durable-stock-session-documents-third.log"
+        "Whole stock file attempted: 23 of 27 pass at default retention; four original revision/base/operation/publication sharing assertions fail. Not a passing stock suite. /tmp/pi-durable-stock-session-documents-third.log",
+        "After native Arc JSON containers, copy-on-write mutations and shared prepared operation batches, all 27 original cases pass unfiltered in both modes, plus four whole-file repetitions per mode. Native pointer regressions prove sharing without transport content deduplication. /tmp/pi-durable-stock-session-documents-cow-admission-verified.log"
       ]
     },
     {

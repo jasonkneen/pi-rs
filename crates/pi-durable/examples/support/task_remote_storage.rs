@@ -40,7 +40,11 @@ impl Storage for RemoteStorage {
     ) -> StorageFuture<Seq> {
         let id = self.hub.next.fetch_add(1, Ordering::Relaxed);
         self.hub.adoptions.lock().insert(id, adopt);
-        let operation = self.call("commit", encode(&(writes, id)), context);
+        let mut args = encode(&(writes, id));
+        args.as_array_mut()
+            .unwrap()
+            .push(self.hub.native_storage_identities(writes));
+        let operation = self.call("commit", args, context);
         let hub = self.hub.clone();
         Box::pin(async move {
             let result = operation.await;

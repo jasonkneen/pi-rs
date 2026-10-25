@@ -176,7 +176,7 @@ pub enum DocumentCommitChange {
         conversation_id: Option<ConversationId>,
         version: Option<u64>,
         value: Arc<JsonValue>,
-        ops: Vec<Op>,
+        ops: Arc<Vec<Op>>,
     },
     Copy {
         record: DocumentRecord,

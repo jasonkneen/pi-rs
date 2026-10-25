@@ -35,7 +35,7 @@ pub fn prepare_edit_arguments(input: JsonValue) -> JsonValue {
     let JsonValue::Object(mut args) = input else {
         return input;
     };
-    if let Some(edits) = args.get_mut(&JsonString::from("edits")) {
+    if let Some(edits) = Arc::make_mut(&mut args).get_mut(&JsonString::from("edits")) {
         if let Some(text) = edits.as_string() {
             // Escaping unpaired units preserves JSON.parse's lossless strings.
             let source = char::decode_utf16(text.units().iter().copied())
@@ -48,11 +48,11 @@ pub fn prepare_edit_arguments(input: JsonValue) -> JsonValue {
                 if parsed.is_array() {
                     *edits = parsed;
                 } else if single(&parsed) {
-                    *edits = JsonValue::Array(vec![parsed]);
+                    *edits = JsonValue::Array(vec![parsed].into());
                 }
             }
         } else if single(edits) {
-            *edits = JsonValue::Array(vec![edits.clone()]);
+            *edits = JsonValue::Array(vec![edits.clone()].into());
         }
     }
     if args
@@ -70,14 +70,18 @@ pub fn prepare_edit_arguments(input: JsonValue) -> JsonValue {
         let mut edit = pi_chord::json::Map::new();
         edit.insert(
             "oldText".into(),
-            args.shift_remove(&JsonString::from("oldText")).unwrap(),
+            Arc::make_mut(&mut args)
+                .shift_remove(&JsonString::from("oldText"))
+                .unwrap(),
         );
         edit.insert(
             "newText".into(),
-            args.shift_remove(&JsonString::from("newText")).unwrap(),
+            Arc::make_mut(&mut args)
+                .shift_remove(&JsonString::from("newText"))
+                .unwrap(),
         );
-        edits.push(JsonValue::Object(edit));
-        args.insert("edits".into(), JsonValue::Array(edits));
+        edits.push(JsonValue::Object(edit.into()));
+        Arc::make_mut(&mut args).insert("edits".into(), JsonValue::Array(edits.into()));
     }
     JsonValue::Object(args)
 }

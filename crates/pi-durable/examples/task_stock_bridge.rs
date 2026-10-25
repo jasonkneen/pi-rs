@@ -50,6 +50,8 @@ mod registry_bridge;
 mod remote_storage;
 #[path = "support/session_bridge.rs"]
 mod session_bridge;
+#[path = "support/strict_bridge.rs"]
+mod strict_bridge;
 #[path = "support/submission_bridge.rs"]
 mod submission_bridge;
 #[path = "support/tool_bridge.rs"]
@@ -76,7 +78,8 @@ fn object<const N: usize>(fields: [(&str, JsonValue); N]) -> JsonValue {
         fields
             .into_iter()
             .map(|(key, value)| (key.into(), value))
-            .collect(),
+            .collect::<pi_chord::json::Map>()
+            .into(),
     )
 }
 fn decode<T: DeserializeOwned>(value: &JsonValue) -> Result<T> {
@@ -160,6 +163,7 @@ struct Hub {
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
     sessions: Mutex<HashMap<u64, Session>>,
+    strict: strict_bridge::StrictBridge,
     harnesses: Mutex<HashMap<u64, pi_durable::Harness>>,
     harness_storage: Mutex<HashMap<u64, Arc<dyn Storage>>>,
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
@@ -1485,6 +1489,7 @@ async fn main() {
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
         sessions: Mutex::new(HashMap::new()),
+        strict: strict_bridge::StrictBridge::default(),
         harnesses: Mutex::new(HashMap::new()),
         harness_storage: Mutex::new(HashMap::new()),
         readers: Mutex::new(HashMap::new()),
@@ -1604,6 +1609,7 @@ async fn main() {
             }
             if value["method"].to_utf8().as_deref() == Some("close")
                 && value["admit"].as_bool() == Some(true)
+                && value["reentrant"].as_bool() == Some(true)
             {
                 let (hub, runtime) = (hub.clone(), runtime.clone());
                 runtime

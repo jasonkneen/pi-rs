@@ -39,14 +39,12 @@ fn assign(current: Option<&JsonValue>, value: &JsonValue, path: &mut Path, out: 
         (Some(current), value) if current == value => {}
         (Some(current @ JsonValue::String(_)), value @ JsonValue::String(_)) => {
             // Use Chord's same string append/overlap decisions at this leaf.
-            let before = JsonValue::Object(indexmap::IndexMap::from_iter([(
-                "leaf".into(),
-                current.clone(),
-            )]));
-            let after = JsonValue::Object(indexmap::IndexMap::from_iter([(
-                "leaf".into(),
-                value.clone(),
-            )]));
+            let before = JsonValue::Object(
+                indexmap::IndexMap::from_iter([("leaf".into(), current.clone())]).into(),
+            );
+            let after = JsonValue::Object(
+                indexmap::IndexMap::from_iter([("leaf".into(), value.clone())]).into(),
+            );
             for op in pi_chord::delta::diff_revisions(&before, &after) {
                 out.push(match op {
                     Op::Append(_, text) => Op::Append(path.clone(), text),

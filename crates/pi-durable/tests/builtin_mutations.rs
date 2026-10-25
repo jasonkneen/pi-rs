@@ -55,7 +55,7 @@ fn edit_utilities_and_declarations_match_the_independent_pinned_reference() {
         let actual = run().unwrap_or_else(|error| {
             let mut value = pi_chord::json::Map::new();
             value.insert("error".into(), encode(&error.message_text()));
-            JsonValue::Object(value)
+            JsonValue::Object(value.into())
         });
         assert_eq!(actual, case["expected"], "case {index}: {case}");
     }
