@@ -35,6 +35,7 @@ node scripts/run-stock-durable-tasks.mjs "$reference" --suite=structured-output 
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=structured --report=/tmp/pi-durable-stock-structured-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=read-only --report=/tmp/pi-durable-stock-read-only-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=conversations --report=/tmp/pi-durable-stock-conversations-report.json
+node scripts/run-stock-durable-tasks.mjs "$reference" --suite=reports --report=/tmp/pi-durable-stock-reports-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=tool-recovery --report=/tmp/pi-durable-stock-tool-recovery-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=nested --report=/tmp/pi-durable-stock-nested-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --suite=nested-restart --report=/tmp/pi-durable-stock-nested-restart-report.json

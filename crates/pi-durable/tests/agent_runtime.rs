@@ -498,7 +498,7 @@ async fn hooks_bind_their_owners_skip_missing_members_and_continue_after_reporte
     ] {
         install_hook(&registry, &task, label, enabled, fail, &calls);
     }
-    let (scheduler, _, id) = open(
+    let (scheduler, conversation, id) = open(
         &task,
         registry,
         SchedulerOptions {
@@ -519,7 +519,15 @@ async fn hooks_bind_their_owners_skip_missing_members_and_continue_after_reporte
         assert_eq!(reports[0].0, "bad");
         assert_eq!(reports[0].1.kind, "extension_error");
         assert_eq!(reports[0].1.extension, Some("bad".into()));
-        assert_eq!(reports[0].1.task, Some(id));
+        assert_eq!(
+            reports[0].1.task,
+            Some(pi_durable::ReportTask {
+                id,
+                kind: task.definition().name.clone(),
+                conversation_id: conversation
+            })
+        );
+        assert!(reports[0].1.conversation.is_none());
     }
     scheduler
         .session()

@@ -34,6 +34,9 @@ use transaction::{Loaded, LoadedDocument, TransactionHost};
 pub use types::*;
 
 pub(crate) fn panic_error(panic: Box<dyn std::any::Any + Send>) -> Error {
+    if let Some(error) = panic.downcast_ref::<Error>() {
+        return error.clone();
+    }
     Error::message(
         panic
             .downcast_ref::<String>()

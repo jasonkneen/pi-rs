@@ -2,7 +2,7 @@
 // calls. A synchronous caller pumps frames so nested host callbacks can finish.
 import {Worker,MessageChannel,receiveMessageOnPort} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
-let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0;
+let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0,synchronousCallbacks=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
 const errors=new Map();
 let exited;
@@ -20,12 +20,13 @@ function dispatch(frame){
   const handler=handlers.get(frame.method);
   const reject=error=>{send({type:"callback.result",id:frame.id,error:{name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}});completions.get(frame.method)?.(frame);};
   const reply=value=>{try{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});}catch(error){reject(error);return;}completions.get(frame.method)?.(frame);};
+  if(frame.sync)synchronousCallbacks++;
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
    const value=handler(frame.args,pending.get(frame.context)?.context,frame);
    if(frame.sync){if(value&&typeof value.then==="function")throw new Error(`Synchronous callback returned a Promise: ${frame.method}`);reply(value);}
    else Promise.resolve(value).then(reply,reject);
-  }catch(error){reject(error);}
+  }catch(error){reject(error);}finally{if(frame.sync)synchronousCallbacks--;}
   return;
  }
  if(frame.type==="transport.error"){fail(new Error(frame.message));return;}
@@ -50,7 +51,7 @@ function drain(){pumping++;try{for(let message;(message=receiveMessageOnPort(por
 export const nativeTransport={
  error(kind,create){if(errors.has(kind))throw new Error(`Duplicate native error ${kind}`);errors.set(kind,create);},
  isCancellation:error=>cancellations.has(error),isAdmissionFailure:error=>admissionFailures.has(error),
- get nextId(){return next;},get started(){return !!worker;},get pending(){return pending.size;},
+ get nextId(){return next;},get started(){return !!worker;},get pending(){return pending.size;},get inSynchronousCallback(){return synchronousCallbacks!==0;},
  afterCallback(method,handler){if(completions.has(method))throw new Error(`Duplicate native completion ${method}`);completions.set(method,handler);},
  register(method,handler){if(handlers.has(method))throw new Error(`Duplicate native handler ${method}`);handlers.set(method,handler);},
  event(type,handler){if(events.has(type))throw new Error(`Duplicate native event ${type}`);events.set(type,handler);},

@@ -267,7 +267,18 @@ fn safe_report(host: Option<HarnessReport>, telemetry: ContextRef) -> Report {
             );
         }
         if let Some(task) = info.task {
-            attributes.insert("task.id".into(), AttributeValue::Number(task.get() as f64));
+            attributes.insert(
+                "task.id".into(),
+                AttributeValue::Number(task.id.get() as f64),
+            );
+            attributes.insert(
+                "task.kind".into(),
+                AttributeValue::String(task.kind.to_string()),
+            );
+            attributes.insert(
+                "conversation.id".into(),
+                AttributeValue::Number(task.conversation_id.get() as f64),
+            );
         }
         counter.add(
             1.0,
@@ -334,6 +345,7 @@ impl Harness {
         });
         let scheduler_report = report.clone();
         let session_report = report.clone();
+        let timer_report = report.clone();
         let created = options.conversation_created;
         let retention = options.settings;
         let scheduler = TaskScheduler::open(
@@ -370,6 +382,11 @@ impl Harness {
                 document_retention_reader: options
                     .document_retention_reader
                     .or_else(|| Some(Arc::new(move || Ok(retention()?.document_retention_ms)))),
+                // The scheduler's foreground timer wrapper uses this legacy
+                // callback; Session events use the typed callback below.
+                report: Arc::new(move |error| {
+                    timer_report(error, report_info("host_error", Some("setTimer")), None);
+                }),
                 report_event: Some(Arc::new(move |error, kind, context| {
                     let info = match kind {
                         SessionReportKind::Listener => report_info("listener_error", None),

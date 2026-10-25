@@ -6,6 +6,37 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn throwing_host_timers_preserve_the_original_native_error() {
+    let error = Error::message("original timer error");
+    let thrown = error.clone();
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let seen = reports.clone();
+    let timers = Timers::new(
+        Some(Arc::new(move |_, _, _| {
+            std::panic::panic_any(thrown.clone())
+        })),
+        Arc::new(move |error| seen.lock().push(error)),
+    );
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let _timer = timers.foreground(
+        Box::new(move || {
+            let _ = send.send(());
+        }),
+        0.0,
+    );
+    receive.await.unwrap();
+    assert!(reports.lock()[0].same_error(&error));
+    assert!(
+        timers
+            .background(Box::new(|| panic!("declined timer must not run")), 100.0)
+            .is_none()
+    );
+    let reports = reports.lock();
+    assert_eq!(reports.len(), 2);
+    assert!(reports[1].same_error(&error));
+}
+
+#[tokio::test]
 async fn foreground_decline_and_panic_fall_back_and_report_once() {
     let reports = Arc::new(Mutex::new(Vec::new()));
     let capture = reports.clone();

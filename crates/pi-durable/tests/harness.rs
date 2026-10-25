@@ -184,6 +184,86 @@ async fn a_retained_submission_keeps_its_harness_services_alive() {
 }
 
 #[tokio::test]
+async fn foreground_timer_failures_are_reported_with_zero_document_retention() {
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let seen = reports.clone();
+    let error = Error::message("no timers");
+    let thrown = error.clone();
+    let mut options = options(registry(), Models::default(), 0.0);
+    options.set_timer = Some(Arc::new(move |_, _, _| {
+        std::panic::panic_any(thrown.clone())
+    }));
+    options.on_report = Some(Arc::new(move |error, info| seen.lock().push((error, info))));
+    let registry = registry();
+    let task = define_task(TaskDefinition::<JsonValue, JsonValue, JsonValue> {
+        name: "test.timer".into(),
+        version: 1,
+        initial: Arc::new(|_| Ok(object(r#"{"phase":"run"}"#).into_value())),
+        phases: IndexMap::from([(
+            "run".into(),
+            Arc::new(|_, runtime: TaskRuntime, context| {
+                Box::pin(async move {
+                    drop(runtime.set_timer(|| {}, 100.0));
+                    runtime
+                        .commit(
+                            |_, _| async {
+                                Ok(Some(NextTaskState::Terminal {
+                                    outcome: TaskOutcome::Completed {
+                                        result: JsonValue::Null,
+                                    },
+                                }))
+                            },
+                            &context,
+                        )
+                        .await
+                }) as storage::StorageFuture<()>
+            }) as PhaseHandler<_, _, _>,
+        )]),
+        abort: Arc::new(|_, _, _| Box::pin(async { Ok(()) })),
+        migrate: None,
+        hooks: None,
+    });
+    let mut extension = Extension::new("timers");
+    extension.tasks.push(task.erased());
+    registry.install(Arc::new(extension)).unwrap();
+    options.registry = Arc::new(registry);
+    let harness = Harness::open(Arc::new(MemoryStorage::new()), options, &Context::default())
+        .await
+        .unwrap();
+    let root = harness
+        .root(Default::default(), &Context::default())
+        .await
+        .unwrap();
+    let id = root
+        .commit(
+            move |tx| async move {
+                tx.create_task(
+                    &task,
+                    JsonValue::Null,
+                    TaskOptions::new(TaskOwnership::Conversation),
+                )
+                .await
+            },
+            &Context::default(),
+        )
+        .await
+        .unwrap();
+    harness
+        .wait_for_task(id.untyped(), &Context::default())
+        .await
+        .unwrap();
+    {
+        let reports = reports.lock();
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].0.same_error(&error));
+        assert_eq!(reports[0].1.kind, "host_error");
+        assert_eq!(reports[0].1.callback, Some("setTimer"));
+        assert!(reports[0].1.task.is_none());
+    }
+    harness.close(&Context::default()).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_throwing_clock_reports_once_and_a_throwing_report_handler_does_not_stop_commits() {
     let reports = Arc::new(Mutex::new(Vec::new()));
     let seen = reports.clone();

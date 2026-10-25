@@ -44,6 +44,11 @@ const send=frame=>nativeTransport.notify(frame);
 nativeTransport.event("signal",frame=>runtime(frame.runtime).controller.abort(new Error(frame.message)));
 nativeTransport.event("report",frame=>{try{Promise.resolve(harnesses.get(frame.harness)?.onReport?.(error(frame.error),frame.info)).catch(()=>{});}catch{}});
 nativeTransport.register("timerFire",id=>objectFor(id)());
+nativeTransport.register("setTimer",({harness,timer,delay,background})=>{
+ const disarm=harnesses.get(harness).options.setTimer(()=>nativeTransport.sync("hostTimerFire",{timer}),delay,{background});
+ return disarm===undefined?null:handle(disarm);
+});
+nativeTransport.register("disarmTimer",id=>{objectFor(id)();return null;});
 nativeTransport.register("tool.prepare",({tool,arguments:args})=>(objectFor(tool).prepareArguments===undefined?args:objectFor(tool).prepareArguments(args)));
 nativeTransport.register("tool.validate",({tool,call,arguments:args})=>validateToolArguments(objectFor(tool),{...call,arguments:args}));
 nativeTransport.register("tool.execute",async(args,context)=>{const api=toolApi(args);try{return packToolResult(await objectFor(args.tool).execute(args.arguments,api,withAbortSignal(runtime(args.runtime).signal,context??BACKGROUND_CONTEXT)));}finally{toolApiStates.get(api).ended=true;}});
@@ -58,7 +63,15 @@ nativeTransport.register("readerUnsubscribe",id=>objectFor(id)());
 nativeTransport.register("hookMember",({handlers,name})=>{const owner=objectFor(handlers),member=owner[name];return typeof member==="function"?handle(member.bind(owner)):null;});
 nativeTransport.register("hookInvoke",({callback,handler})=>objectFor(callback)(objectFor(handler)));
 for(const method of ["phase","change","storage"])nativeTransport.register(method,(args,context,frame)=>invoke(method,args,frame.abortable?(context??BACKGROUND_CONTEXT):withoutAbortSignal(context??BACKGROUND_CONTEXT)));
-function change(method,args,callback,context){const id=callbackNext++;callbacks.set(id,callback);const operation=call(method,{...args,callback:id},context).finally(()=>callbacks.delete(id));operation.catch(()=>{});return operation;}
+function change(method,args,callback,context){
+ const id=callbackNext++;callbacks.set(id,callback);const request=nativeTransport.nextId;
+ const operation=call(method,{...args,callback:id},context).finally(()=>callbacks.delete(id));operation.catch(()=>{});
+ // Bring immediate native work to its first host promise before a JS timer.
+ // Pumped asynchronous callbacks resume as microtasks after this call returns.
+ // A synchronous host callback must return before its queued writes can run.
+ if(!nativeTransport.inSynchronousCallback)nativeTransport.sync("change.turn",{request});
+ return operation;
+}
 function configuration(change){
  const result={...change};
  for(const field of ["extensions","tools","modelTools"]){
@@ -131,7 +144,7 @@ export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
- const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
+ const id=await call("open",{storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,setTimer:options.setTimer!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:Number(process.env.PI_DURABLE_DOCUMENT_RETENTION_MS??600000)},context);
  const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);

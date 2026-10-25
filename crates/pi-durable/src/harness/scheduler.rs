@@ -50,13 +50,40 @@ impl BlockedReason {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportTask {
+    pub id: TaskId,
+    pub kind: JsonString,
+    pub conversation_id: ConversationId,
+}
+impl From<&TaskRecord> for ReportTask {
+    fn from(record: &TaskRecord) -> Self {
+        Self {
+            id: record.id(),
+            kind: record.info.kind.clone(),
+            conversation_id: record.info.conversation_id,
+        }
+    }
+}
+#[derive(Clone)]
+struct ReportSubject {
+    task: ReportTask,
+    extension: Option<JsonString>,
+}
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct TaskReport {
+    #[serde(rename = "type")]
     pub kind: &'static str,
-    pub task: Option<TaskId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<ReportTask>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub callback: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<JsonString>,
+    #[serde(rename = "conversationId", skip_serializing_if = "Option::is_none")]
     pub conversation: Option<ConversationId>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -152,6 +179,7 @@ struct KeptContext {
 struct Invocation {
     task: TaskId,
     name: JsonString,
+    extension: Option<JsonString>,
     conversation: ConversationId,
     mode: InvocationMode,
     controller: AbortController,
@@ -195,6 +223,19 @@ impl From<&TaskRecord> for BlockedSubject {
     }
 }
 impl Invocation {
+    fn report_task(&self) -> ReportTask {
+        ReportTask {
+            id: self.task,
+            kind: self.name.clone(),
+            conversation_id: self.conversation,
+        }
+    }
+    fn subject(&self) -> ReportSubject {
+        ReportSubject {
+            task: self.report_task(),
+            extension: self.extension.clone(),
+        }
+    }
     fn ended_error(&self) -> Error {
         Error::message(format!("Task {} invocation has ended", self.task))
     }
@@ -410,7 +451,7 @@ impl TaskScheduler {
         &self,
         error: Error,
         kind: &'static str,
-        task: Option<TaskId>,
+        subject: Option<ReportSubject>,
         reason: Option<&'static str>,
     ) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -418,22 +459,25 @@ impl TaskScheduler {
                 error,
                 TaskReport {
                     kind,
-                    task,
+                    task: subject.as_ref().map(|subject| subject.task.clone()),
                     reason,
                     callback: None,
-                    extension: None,
+                    extension: subject.and_then(|subject| subject.extension),
                     conversation: None,
                 },
             )
         }));
     }
     fn report_host(&self, error: Error, callback: &'static str) {
+        self.report_host_for(error, callback, None);
+    }
+    fn report_host_for(&self, error: Error, callback: &'static str, task: Option<ReportTask>) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             (self.inner.options.on_report)(
                 error,
                 TaskReport {
                     kind: "host_error",
-                    task: None,
+                    task,
                     reason: None,
                     callback: Some(callback),
                     extension: None,
@@ -447,7 +491,7 @@ impl TaskScheduler {
         error: Error,
         extension: impl Into<Option<JsonString>>,
         conversation: ConversationId,
-        task: Option<TaskId>,
+        task: Option<ReportTask>,
     ) {
         let extension = extension.into();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -455,11 +499,11 @@ impl TaskScheduler {
                 error,
                 TaskReport {
                     kind: "extension_error",
+                    conversation: task.is_none().then_some(conversation),
                     task,
                     reason: None,
                     callback: None,
                     extension,
-                    conversation: Some(conversation),
                 },
             )
         }));
@@ -1017,7 +1061,15 @@ impl TaskScheduler {
                     },
                 );
                 self.defer_blocked_notification();
-                self.report(error, "migration_failed", Some(record.id()), None);
+                self.report(
+                    error,
+                    "migration_failed",
+                    Some(ReportSubject {
+                        task: record.into(),
+                        extension: installed.and_then(|installed| installed.extension.clone()),
+                    }),
+                    None,
+                );
                 Err(BlockedReason::MigrationFailed)
             }
         }
@@ -1310,7 +1362,7 @@ impl TaskScheduler {
                 if resolved != *record || record.state.status() != TaskStatus::Running { tx.set_task(with_state(resolved, TaskState::Running { checkpoint, memos: None }))?; }
                 let controller = AbortController::new();
                 let (done, _) = tokio::sync::watch::channel(false);
-                let invocation = Arc::new(Invocation { task: id, name: task.name().clone(), conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), agent: Mutex::new(None), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
+                let invocation = Arc::new(Invocation { task: id, name: task.name().clone(), extension: snapshot.task(task.name()).and_then(|installed| installed.extension.clone()), conversation: record.info.conversation_id, mode, context: with_abort_signal(controller.signal(), &scheduler.inner.context), controller, registry: Mutex::new(snapshot.clone()), agent: Mutex::new(None), ended: AtomicBool::new(false), done, watches: Mutex::new(IndexMap::new()), next_watch: AtomicU64::new(1), timers: Mutex::new(IndexMap::new()), next_timer: AtomicU64::new(1) });
                 { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.invocations.insert(id, invocation.clone()); }
                 capture.lock().push(Reservation { invocation, task });
             }
@@ -1345,7 +1397,7 @@ impl TaskScheduler {
                 scheduler.report(
                     crate::session::panic_error(panic),
                     "task_error",
-                    Some(invocation.task),
+                    Some(invocation.subject()),
                     None,
                 );
             }
@@ -1501,7 +1553,7 @@ impl TaskScheduler {
                                             current.info.kind
                                         )),
                                         "task_outdated",
-                                        Some(current.id()),
+                                        Some(invocation.subject()),
                                         Some(if next.is_some() {
                                             "incompatible_task"
                                         } else {
@@ -1542,7 +1594,7 @@ impl TaskScheduler {
         match result {
             Ok(current) => {
                 if let Some(error) = fault.lock().take() {
-                    self.report(error, "task_faulted", Some(call.task), Some("threw"));
+                    self.report(error, "task_faulted", Some(call.subject()), Some("threw"));
                 }
                 current
             }
@@ -2165,7 +2217,7 @@ impl TaskScheduler {
                     Ok(()) => {
                         scheduler.inner.state.lock().last_wake = Some(wake);
                     }
-                    Err(error) => scheduler.report(error, "host_error", None, None),
+                    Err(error) => scheduler.report_host(error, "onWake"),
                 }
             } else {
                 let at = scheduler
@@ -2423,7 +2475,7 @@ impl TaskDriver for Driver {
             error,
             extension,
             self.invocation.conversation,
-            Some(self.invocation.task),
+            Some(self.invocation.report_task()),
         );
     }
     fn agent(&self, context: &Context) -> StorageFuture<AgentView> {
@@ -2691,9 +2743,10 @@ impl TaskDriver for Driver {
     }
     fn report(&self, error: Error) {
         self.scheduler
-            .report(error, "task_error", Some(self.invocation.task), None);
+            .report(error, "task_error", Some(self.invocation.subject()), None);
     }
     fn report_host(&self, error: Error, callback: &'static str) {
-        self.scheduler.report_host(error, callback);
+        self.scheduler
+            .report_host_for(error, callback, Some(self.invocation.report_task()));
     }
 }

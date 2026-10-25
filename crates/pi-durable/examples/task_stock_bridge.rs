@@ -140,6 +140,7 @@ struct Hub {
     tool: tool_bridge::ToolBridge,
     environment: tool_environment::EnvironmentBridge,
     host_timers: Mutex<HashMap<u64, DisarmTimer>>,
+    host_timer_callbacks: Mutex<HashMap<u64, pi_durable::timers::TimerCallback>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
     contexts: Mutex<HashMap<u64, AbortController>>,
     phases: AtomicU64,
@@ -424,6 +425,43 @@ impl Hub {
             .cloned()
             .ok_or_else(|| Error::message("Unknown native Harness"))
     }
+    fn host_set_timer(self: &Arc<Self>, harness: u64) -> SetTimer {
+        let host = self.clone();
+        Arc::new(move |callback, delay, background| {
+            let timer = host.next.fetch_add(1, Ordering::Relaxed);
+            host.host_timer_callbacks.lock().insert(timer, callback);
+            let attempt = host
+                .sync(
+                    "setTimer",
+                    object([
+                        ("harness", encode(&harness)),
+                        ("timer", encode(&timer)),
+                        ("delay", encode(&delay)),
+                        ("background", encode(&background)),
+                    ]),
+                )
+                .and_then(|value| decode::<Option<u64>>(&value));
+            match attempt {
+                Ok(Some(handle)) => {
+                    let host = host.clone();
+                    Some(Box::new(move || {
+                        host.host_timer_callbacks.lock().remove(&timer);
+                        if let Err(error) = host.sync("disarmTimer", encode(&handle)) {
+                            std::panic::resume_unwind(Box::new(error));
+                        }
+                    }) as DisarmTimer)
+                }
+                Ok(None) => {
+                    host.host_timer_callbacks.lock().remove(&timer);
+                    None
+                }
+                Err(error) => {
+                    host.host_timer_callbacks.lock().remove(&timer);
+                    std::panic::resume_unwind(Box::new(error));
+                }
+            }
+        })
+    }
     fn conversation_options(
         self: &Arc<Self>,
         value: &JsonValue,
@@ -580,6 +618,9 @@ impl Hub {
                 }
                 options.default_document_retention_ms = field(&request, "retention")?;
                 options.read_only = request["readOnly"].as_bool() == Some(true);
+                if request["setTimer"].as_bool() == Some(true) {
+                    options.set_timer = Some(self.host_set_timer(harness));
+                }
                 if request["onWake"].as_bool() == Some(true) {
                     let host = self.clone();
                     options.on_wake = Some(Arc::new(move |wake| {
@@ -606,9 +647,11 @@ impl Hub {
                 let host = self.clone();
                 options.on_report = Some(Arc::new(move |error, info| {
                     host.emit(object([
-                    ("type", encode(&"report")), ("harness", encode(&harness)), ("error", error_value(&error)),
-                    ("info", encode(&serde_json::json!({"type":info.kind,"taskId":info.task,"reason":info.reason,"callback":info.callback,"extension":info.extension,"conversationId":info.conversation}))),
-                ]))
+                        ("type", encode(&"report")),
+                        ("harness", encode(&harness)),
+                        ("error", error_value(&error)),
+                        ("info", encode(&info)),
+                    ]))
                 }));
                 let facade = pi_durable::Harness::open(
                     storage,
@@ -913,28 +956,50 @@ impl Hub {
                     Ok(None)
                 })
             }
+            "hostTimerFire" => {
+                let host = self.clone();
+                let timer = field(&request, "timer")?;
+                Box::pin(async move {
+                    let callback = host.host_timer_callbacks.lock().remove(&timer);
+                    if let Some(callback) = callback {
+                        callback();
+                    }
+                    Ok(None)
+                })
+            }
             "runtimeTimer" => {
                 let runtime = self.runtime(&request)?;
                 let callback: u64 = field(&request, "callback")?;
+                let delay = field(&request, "delay")?;
                 let timer = self.next.fetch_add(1, Ordering::Relaxed);
                 let hub = self.clone();
-                let disarm = runtime.set_timer(
-                    move || {
-                        let operation = hub.call("timerFire", encode(&callback));
-                        tokio::spawn(async move {
-                            let _ = operation.await;
-                        });
-                    },
-                    field(&request, "delay")?,
-                );
-                self.host_timers.lock().insert(timer, disarm);
-                Box::pin(async move { Ok(Some(encode(&timer))) })
+                // Host timer registration may call back synchronously. Keep
+                // stdin free to deliver its response while this operation runs.
+                Box::pin(async move {
+                    let host = hub.clone();
+                    let disarm = runtime.set_timer(
+                        move || {
+                            let operation = host.call("timerFire", encode(&callback));
+                            tokio::spawn(async move {
+                                let _ = operation.await;
+                            });
+                        },
+                        delay,
+                    );
+                    hub.host_timers.lock().insert(timer, disarm);
+                    Ok(Some(encode(&timer)))
+                })
             }
             "runtimeDisarmTimer" => {
-                if let Some(disarm) = self.host_timers.lock().remove(&field(&request, "timer")?) {
-                    disarm();
-                }
-                Box::pin(async { Ok(None) })
+                let host = self.clone();
+                let timer = field(&request, "timer")?;
+                Box::pin(async move {
+                    let disarm = host.host_timers.lock().remove(&timer);
+                    if let Some(disarm) = disarm {
+                        disarm();
+                    }
+                    Ok(None)
+                })
             }
             "runtimeEnv" => {
                 let operation = self.runtime(&request)?.env(&context);
@@ -1280,6 +1345,7 @@ async fn main() {
         tool: tool_bridge::ToolBridge::default(),
         environment: tool_environment::EnvironmentBridge::default(),
         host_timers: Mutex::new(HashMap::new()),
+        host_timer_callbacks: Mutex::new(HashMap::new()),
         transactions: Mutex::new(HashMap::new()),
         contexts: Mutex::new(HashMap::new()),
         phases: AtomicU64::new(0),
@@ -1396,6 +1462,7 @@ async fn main() {
                 method.starts_with("registry.")
                     || method == "runtimeRegistry"
                     || method == "runtimeTimer"
+                    || method == "hostTimerFire"
                     || method == "runtimeDisarmTimer"
                     || method == "runtimeSettings"
                     || method == "runtimeNow"

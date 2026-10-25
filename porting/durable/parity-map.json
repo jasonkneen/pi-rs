@@ -529,11 +529,12 @@
         "Native public Harness and Conversation compose one Session, scheduler, submissions, views, invocation-bound conversations and current models/settings; the standalone example uses this public API",
         "Native builtin validation precedes opening storage; creation hooks initialize durable documents before user hooks, configuration and init; failed init rolls back the complete creation",
         "Public root/create/fork, agent resolution, usage aggregation, reset, compact, admission, waits, abort/retry, context/entry reads, task inspection, graph and event observations delegate to native services",
-        "Nine native tests cover current SDK models/settings/default identity, context and totals, creation order and rollback, read-only admission, dynamic retention and declined-timer fallback, safe clock/report callbacks, canonical builtin identity and retained submission lifetime",
+        "Ten native tests cover current SDK models/settings/default identity, context and totals, creation order and rollback, read-only admission, dynamic retention and declined-timer fallback, safe clock/report callbacks, canonical builtin identity and retained submission lifetime",
         "All twelve unchanged stock conversation cases run against native facade services and direct native memory in both retention modes; paused scheduling requires no source task phases",
         "The process binding now opens this native facade for stock task, generation, compaction, tool, nested, recovery, view/event, inspection, submission and read-only workflows",
-        "Complete report metadata/phase telemetry, native environment implementations, restricted environment read capabilities, arbitrary foreign JS registry agent capabilities, remaining active-work lifetime boundaries and embedded exports remain open; original user callbacks, model collections and I/O remain external capabilities in the test transport",
-        "porting/durable/STATUS.md"
+        "Remaining report variants/phase telemetry, native environment implementations, restricted environment read capabilities, arbitrary foreign JS registry agent capabilities, remaining active-work lifetime boundaries and embedded exports remain open; original user callbacks, model collections and I/O remain external capabilities in the test transport",
+        "porting/durable/STATUS.md",
+        "Foreground timer failures reach the Harness report callback even when zero retention avoids background document timers; all four stock report cases now run unchanged in both modes"
       ]
     },
     {
@@ -681,7 +682,9 @@
         "Abort joins observe already-independent run/failure futures directly on the Session queue; the process pump defers later asynchronous callbacks until delivered response continuations can run; the original immediate-second-abort stock assertion passes forty focused zero-retention runs",
         "Three complete stock task-file repeats pass under both retention settings after the join/IPC fixes (216 executions); full gate passes 480 Rust tests and 629 stock cases per retention mode",
         "Five additional complete stock compaction runs pass in both retention modes after ordered wake calculation (1080 executions); all source assertions and deadlines unchanged",
-        "Abort joins bind to the owning Session FIFO; process response observers use that same queue to preserve the caller-before-abort-handler order. Original stock assertion passes thirty focused repeats and three complete task-file repeats in both retention modes"
+        "Abort joins bind to the owning Session FIFO; process response observers use that same queue to preserve the caller-before-abort-handler order. Original stock assertion passes thirty focused repeats and three complete task-file repeats in both retention modes",
+        "Report subjects capture task id/kind/conversation and the definition installer at reservation, preserving original ownership after replacement and after the invocation ends; host and extension reports carry task subjects while public agent wrapper reports carry conversation scope",
+        "Wake callback failures name onWake; task error/fault/outdated/migration report payloads omit absent fields and use original invocation metadata"
       ]
     },
     {
@@ -1168,11 +1171,15 @@
       "status": "partial",
       "rust": [
         "crates/pi-durable/src/timers.rs",
-        "crates/pi-durable/tests/timers.rs"
+        "crates/pi-durable/tests/timers.rs",
+        "crates/pi-durable/tests/harness.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Five native timer tests include preservation of the original typed error through a throwing host callback; a native Harness regression separately verifies foreground reporting at zero document retention",
+        "All four stock report cases cover real host timer exceptions and fallback through the native services and the callback transport; direct stock timer suites and embedded timer exports remain open",
+        "Two separate non-stock binding probes pass: a synchronous wake callback queues a native write safely, and successful host timers register, fire once and disarm; log /tmp/pi-durable-callback-probe.log"
       ]
     },
     {
@@ -1266,11 +1273,13 @@
         "crates/pi-durable/src/types.rs",
         "crates/pi-durable/src/storage/mod.rs",
         "crates/pi-durable/src/documents.rs",
-        "crates/pi-durable/tests/wire.rs"
+        "crates/pi-durable/tests/wire.rs",
+        "crates/pi-durable/src/harness/scheduler.rs"
       ],
       "evidence": [
         "scripts/check-durable-port.sh /Users/jkneen/Documents/GitHub/pi-mono",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "Public ReportTask/ReportInfo expose the nested id/kind/conversationId task subject and optional report fields; serialization omits absent fields and matches all four stock report cases; remaining variants still need dedicated stock coverage"
       ]
     },
     {
@@ -1854,9 +1863,26 @@
     },
     {
       "reference": "packages/durable/test/harness-reports.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "crates/pi-durable/examples/task_stock_bridge.rs",
+        "crates/pi-durable/src/harness/scheduler.rs",
+        "crates/pi-durable/tests/agent_runtime.rs",
+        "crates/pi-durable/tests/timers.rs",
+        "crates/pi-durable/tests/harness.rs"
+      ],
+      "evidence": [
+        "All four original stock report cases pass unchanged at pinned test bytes in retention 600000 and 0, including exact report object assertions",
+        "Each mode proves four successful native public Harness opens, three direct native memory opens, one native generation request and one original generation hook through native dispatch; source generation and compaction phases stay zero",
+        "Native task error/fault subjects include id, kind and conversationId, retain the original installer across definition replacement, and distinguish extension/host/listener/wake/timer/storage failures without serializing absent fields as null",
+        "The host timer capability now forwards registration, callbacks and disarm through the test transport; registration is observed outside stdin so synchronous host replies remain readable",
+        "Native tests preserve thrown timer error identity and prove foreground timer reporting with zero document retention; original JS registrations, reports, model collections and timer callbacks remain host capabilities",
+        "Remaining report variants, phase telemetry, embedded exports and foreign JS error object identity remain open",
+        "porting/durable/STATUS.md",
+        "Two separate non-stock binding probes pass: a synchronous wake callback queues a native write safely, and successful host timers register, fire once and disarm; log /tmp/pi-durable-callback-probe.log"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-scheduler-indexes.test.ts",
@@ -1911,7 +1937,8 @@
         "crates/pi-durable/examples/support/tool_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
         "scripts/stock/durable-task-adapter.mjs",
-        "scripts/check-durable-port.sh"
+        "scripts/check-durable-port.sh",
+        "scripts/stock/durable-native-transport.mjs"
       ],
       "evidence": [
         "node scripts/run-stock-durable-tasks.mjs /Users/jkneen/Documents/GitHub/pi-mono --suite=structured --report=/tmp/pi-durable-stock-structured-report.json",
@@ -1920,7 +1947,8 @@
         "Original assertions exposed missing required ownership and incomplete callback continuations at a host flush; erased native task creation and the process completion boundary fix both without changing stock timers",
         "Native generation, compaction, tools, Session/scheduler, registry and plain memory; original host models, renderers, user task/tool callbacks, schema validators, environments and controlled/persistent backend capabilities remain external",
         "Zero source generation/compaction phases required; complete native Harness facade, SDK 1.4 alignment and embedded exports remain open",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "A traced structured child-wait assertion reproduced the next JS timer overtaking delivery of a native commit callback; the adapter now pumps initial immediate work to a host promise, preserving asynchronous callback microtasks and skipping synchronous host callbacks; thirty focused runs and complete structured/task files pass afterward in both modes"
       ]
     },
     {
@@ -2004,7 +2032,8 @@
         "Native document/read/watch/context and custom reader counters required; JS only captures mutable proxy edits and runs original definitions/listeners/backend",
         "Phase-completion transport turn yields on invocation end, next phase, or a pending host promise; admitted close seals synchronously during nested registry callbacks",
         "The reservation-failure/reopen case now uses the real native submission controller; later submission admission rejects the original Session failure",
-        "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities"
+        "Stock task file uses native memory for plain stores, retaining original controlled/decorated backend callbacks; counters require native memory opens, calls and commits. Default clock/settings are native; configured host providers remain live capabilities",
+        "A traced structured child-wait assertion reproduced the next JS timer overtaking delivery of a native commit callback; the adapter now pumps initial immediate work to a host promise, preserving asynchronous callback microtasks and skipping synchronous host callbacks; thirty focused runs and complete structured/task files pass afterward in both modes"
       ]
     },
     {

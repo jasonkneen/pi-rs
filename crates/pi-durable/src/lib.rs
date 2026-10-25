@@ -25,6 +25,7 @@ pub use harness::inspect::{HarnessInspection, Scheduling, TaskInspection, TaskIn
 pub use harness::live::{LIVE_DOC, LiveState, live_doc};
 pub use harness::prompt::{PromptInput, PromptSection};
 pub use harness::provider::{PROVIDER_DOC, ProviderState, provider_doc};
+pub use harness::scheduler::{ReportTask, TaskReport as ReportInfo};
 pub use harness::submissions::{Submission, SubmissionAbort, Submissions, SubmissionsOptions};
 pub use harness::task_graph::{
     TaskGraph, TaskGraphNode, TaskGraphOutcome, TaskGraphState, TaskGraphWatch,
