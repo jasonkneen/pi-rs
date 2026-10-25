@@ -574,7 +574,7 @@ impl Session {
                         ),
                         (
                             "entry.kind".into(),
-                            AttributeValue::String(entry.kind.to_string()),
+                            AttributeValue::String(entry.kind.clone().into()),
                         ),
                     ]),
                 )),

@@ -26,7 +26,7 @@ use pi_ai::{
     models::Models,
     utils::identity::{ClientIdentity, merge_client_identity, pi_attribution},
 };
-use pi_telemetry::{AttributeValue, ContextRef, InstrumentOptions, SpanAttributes};
+use pi_telemetry::{AttributeValue, ContextRef, SpanAttributes};
 use std::{
     future::Future,
     ops::Deref,
@@ -232,11 +232,9 @@ fn safe_report(host: Option<HarnessReport>, telemetry: ContextRef) -> Report {
     let metrics = telemetry
         .metrics()
         .unwrap_or_else(pi_telemetry::noop_telemetry_metrics);
-    let counter = metrics.counter(
-        "pi.durable.reports",
-        InstrumentOptions::new()
-            .description("Reports raised, grouped by their fixed ReportInfo type."),
-    );
+    let counter =
+        pi_telemetry::create_typed_metrics(metrics, &[&super::telemetry::DURABLE_TELEMETRY_SCHEMA])
+            .counter("pi.durable.reports");
     Arc::new(move |error, info, context| {
         if let Some(host) = &host {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -260,23 +258,12 @@ fn safe_report(host: Option<HarnessReport>, telemetry: ContextRef) -> Report {
                 | "extension_error"
         ) && let Some(extension) = info.extension
         {
-            attributes.insert(
-                "extension".into(),
-                AttributeValue::String(extension.to_string()),
-            );
+            attributes.insert("extension".into(), AttributeValue::String(extension.into()));
         }
         if let Some(task) = info.task {
             attributes.insert(
                 "task.id".into(),
                 AttributeValue::Number(task.id.get() as f64),
-            );
-            attributes.insert(
-                "task.kind".into(),
-                AttributeValue::String(task.kind.to_string()),
-            );
-            attributes.insert(
-                "conversation.id".into(),
-                AttributeValue::Number(task.conversation_id.get() as f64),
             );
         }
         counter.add(
@@ -849,3 +836,7 @@ impl Conversation {
         self.host.inner.views.watch(self.id, context)
     }
 }
+
+#[cfg(test)]
+#[path = "report_telemetry_tests.rs"]
+mod report_telemetry_tests;

@@ -3522,6 +3522,7 @@ dependencies = [
  "indexmap",
  "once_cell",
  "parking_lot",
+ "pi-json",
  "serde",
  "serde_json",
  "tokio",

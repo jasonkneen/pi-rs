@@ -32,6 +32,7 @@ pub mod settings;
 pub mod state;
 pub mod submissions;
 pub mod task_graph;
+pub mod telemetry;
 pub mod tool;
 pub mod types;
 pub mod usage;

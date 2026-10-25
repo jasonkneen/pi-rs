@@ -104,11 +104,11 @@ impl From<String> for SpanOptions {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpanError {
     pub name: String,
-    pub message: String,
+    pub message: crate::TelemetryText,
 }
 
 impl SpanError {
-    pub fn new(name: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, message: impl Into<crate::TelemetryText>) -> Self {
         Self {
             name: name.into(),
             message: message.into(),

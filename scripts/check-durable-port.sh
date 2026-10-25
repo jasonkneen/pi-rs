@@ -33,6 +33,7 @@ node --conditions=source --experimental-strip-types scripts/golden/gen-durable-t
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-edit.mjs "$reference" --check
 node --experimental-strip-types scripts/golden/gen-durable-codemode-output.mjs "$reference" --check
 node --experimental-strip-types scripts/golden/gen-durable-declarations.mjs "$reference" --check
+node --conditions=source --experimental-strip-types scripts/golden/gen-durable-telemetry.mjs "$reference" --check
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --interchange
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --jsonl --reopen
 node --conditions=source --experimental-strip-types scripts/golden/gen-durable-storage.mjs "$reference" --check --native --sqlite --interchange
