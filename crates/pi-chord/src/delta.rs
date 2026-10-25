@@ -4,8 +4,10 @@
 //! expressed with Rust ownership rather than JavaScript's mutable aliases.
 
 mod diff;
+mod shared;
 mod tracker;
 pub use diff::diff_revisions;
+pub use shared::{SharedJson, WeakSharedJson};
 pub use tracker::{Change, Prepared, Tracker, track};
 
 use std::collections::{HashMap, HashSet};

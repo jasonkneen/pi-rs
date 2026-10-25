@@ -108,6 +108,13 @@ impl Hub {
         }
         let definition = self.document_definition(&request["definition"])?;
         let address = field(&request, "address")?;
+        if method == "doc.retire" {
+            let operation = self.transaction(&request)?.retire_at(&definition, address);
+            return Ok(Box::pin(async move {
+                operation.await?;
+                Ok(None)
+            }));
+        }
         if method == "doc.acquire" {
             let tx: u64 = field(&request, "tx")?;
             let acquiring = self.transaction(&request)?.doc_at(

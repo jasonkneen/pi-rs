@@ -1,5 +1,6 @@
 //! Native watch transport shared by graphs and documents. JS supplies listeners.
 use super::*;
+use pi_chord::delta::{SharedJson, WeakSharedJson};
 use pi_chord::{Watch, WatchEnd};
 use pi_durable::harness::task_graph::TaskGraphWatch;
 use std::{any::Any, sync::Weak};
@@ -7,6 +8,7 @@ use std::{any::Any, sync::Weak};
 pub(super) struct GraphBridge {
     watches: Mutex<HashMap<u64, ObservedWatch>>,
     revisions: Mutex<Vec<(u64, Weak<dyn Any + Send + Sync>)>>,
+    shared: Mutex<Vec<(u64, WeakSharedJson)>>,
     pub reads: AtomicU64,
     pub frames: AtomicU64,
 }
@@ -20,6 +22,7 @@ pub(super) enum ValueWatch {
     Graph(TaskGraphWatch),
     Document(Watch),
     Conversation(pi_durable::harness::view::ConversationViewWatch),
+    Events(pi_durable::harness::events::AgentEventStream),
 }
 impl ValueWatch {
     async fn delivery_idle(&self) {
@@ -27,6 +30,7 @@ impl ValueWatch {
             Self::Graph(watch) => watch.delivery_idle().await,
             Self::Document(watch) => watch.delivery_idle().await,
             Self::Conversation(watch) => watch.delivery_idle().await,
+            Self::Events(stream) => stream.watch.delivery_idle().await,
         }
     }
     async fn closed(&self) -> WatchEnd {
@@ -34,6 +38,7 @@ impl ValueWatch {
             Self::Graph(watch) => watch.closed().await,
             Self::Document(watch) => watch.closed().await,
             Self::Conversation(watch) => watch.closed().await,
+            Self::Events(stream) => stream.watch.closed().await,
         }
     }
     fn stop(&self) -> WatchEnd {
@@ -41,6 +46,7 @@ impl ValueWatch {
             Self::Graph(watch) => watch.stop(),
             Self::Document(watch) => watch.stop(),
             Self::Conversation(watch) => watch.stop(),
+            Self::Events(stream) => stream.watch.stop(),
         }
     }
     fn cancel(&self) -> WatchEnd {
@@ -48,13 +54,15 @@ impl ValueWatch {
             Self::Graph(watch) => watch.cancel(),
             Self::Document(watch) => watch.cancel(),
             Self::Conversation(watch) => watch.cancel(),
+            Self::Events(stream) => stream.watch.cancel(),
         }
     }
     fn value(&self, hub: &Hub) -> JsonValue {
         match self {
             Self::Graph(watch) => hub.revision(watch.value()),
             Self::Document(watch) => hub.revision(watch.value()),
-            Self::Conversation(watch) => hub.revision(watch.value()),
+            Self::Conversation(watch) => hub.shared_revision(watch.value().revision()),
+            Self::Events(stream) => hub.revision(stream.watch.value()),
         }
     }
 }
@@ -92,6 +100,49 @@ fn end(reason: WatchEnd) -> JsonValue {
     }
 }
 impl Hub {
+    fn shared_node(&self, value: &SharedJson) -> JsonValue {
+        if let Some(value) = value.as_scalar() {
+            return object([("scalar", value.clone())]);
+        }
+        let id = {
+            let mut shared = self.graph.shared.lock();
+            if let Some((id, _)) = shared
+                .iter()
+                .find(|(_, held)| held.upgrade().is_some_and(|held| held.ptr_eq(value)))
+            {
+                *id
+            } else {
+                let id = self.next.fetch_add(1, Ordering::Relaxed);
+                shared.push((id, value.downgrade()));
+                id
+            }
+        };
+        if let Some(items) = value.as_array() {
+            object([
+                ("id", encode(&id)),
+                (
+                    "array",
+                    JsonValue::Array(items.iter().map(|item| self.shared_node(item)).collect()),
+                ),
+            ])
+        } else {
+            let fields = value
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(key, value)| {
+                    JsonValue::Array(vec![
+                        JsonValue::String(key.clone()),
+                        self.shared_node(value),
+                    ])
+                })
+                .collect();
+            object([("id", encode(&id)), ("object", JsonValue::Array(fields))])
+        }
+    }
+    pub(super) fn shared_revision(&self, value: &SharedJson) -> JsonValue {
+        object([("shared", self.shared_node(value))])
+    }
     pub(super) fn revision<T: Serialize + Send + Sync + 'static>(
         &self,
         value: Arc<T>,
@@ -135,6 +186,7 @@ impl Hub {
         id: u64,
         callback: u64,
         activity: tokio::sync::watch::Sender<Activity>,
+        serialize: impl Fn(&Hub, Arc<T>) -> JsonValue + Send + Sync + 'static,
     ) -> Result<()> {
         let hub = self.clone();
         watch
@@ -150,7 +202,7 @@ impl Hub {
                     ("serial", encode(&serial)),
                     ("document", encode(&document)),
                     ("callback", encode(&callback)),
-                    ("snapshot", hub.revision(frame.value)),
+                    ("snapshot", serialize(&hub, frame.value)),
                     ("ops", encode(&frame.ops)),
                 ]);
                 let call = hub.call_context("graphFrame", args, &frame.context);
@@ -208,15 +260,41 @@ impl Hub {
             "graph.start" => {
                 let callback = field(&request, "callback")?;
                 match watch {
-                    ValueWatch::Graph(watch) => {
-                        self.start_watch(watch, false, id, callback, observed.activity)?
-                    }
-                    ValueWatch::Document(watch) => {
-                        self.start_watch(watch, true, id, callback, observed.activity)?
-                    }
-                    ValueWatch::Conversation(watch) => {
-                        self.start_watch(watch, false, id, callback, observed.activity)?
-                    }
+                    ValueWatch::Graph(watch) => self.start_watch(
+                        watch,
+                        false,
+                        id,
+                        callback,
+                        observed.activity,
+                        Hub::revision,
+                    )?,
+                    ValueWatch::Document(watch) => self.start_watch(
+                        watch,
+                        true,
+                        id,
+                        callback,
+                        observed.activity,
+                        Hub::revision,
+                    )?,
+                    ValueWatch::Conversation(watch) => self.start_watch(
+                        watch,
+                        false,
+                        id,
+                        callback,
+                        observed.activity,
+                        |hub, value| hub.shared_revision(value.revision()),
+                    )?,
+                    ValueWatch::Events(stream) => self.start_watch(
+                        stream.watch,
+                        false,
+                        id,
+                        callback,
+                        observed.activity,
+                        |hub, value| {
+                            hub.views.event_frames.fetch_add(1, Ordering::Relaxed);
+                            hub.revision(value)
+                        },
+                    )?,
                 }
                 None
             }

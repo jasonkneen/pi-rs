@@ -81,6 +81,22 @@ impl<T: Send + Sync + 'static> Watch<T> {
     ) -> Self {
         Self::build(value, detach, report, None, Arc::new(overflow))
     }
+    /// A typed stream whose overflow value is derived from its current source,
+    /// rather than from the last delivered batch.
+    pub fn with_source(
+        value: Arc<T>,
+        detach: impl FnOnce() + Send + 'static,
+        report: impl Fn(String) + Send + Sync + 'static,
+        replace: impl Fn() -> Arc<T> + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(
+            value,
+            detach,
+            report,
+            Some(Arc::new(replace)),
+            Arc::new(|_| Vec::new()),
+        )
+    }
     fn build(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,

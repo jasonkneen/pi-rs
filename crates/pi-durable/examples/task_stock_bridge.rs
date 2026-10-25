@@ -108,6 +108,7 @@ struct Hub {
     input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
     schedulers: Mutex<HashMap<u64, TaskScheduler>>,
+    harness_storage: Mutex<HashMap<u64, Arc<dyn Storage>>>,
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
     runtimes: Mutex<HashMap<u64, TaskRuntime>>,
@@ -463,6 +464,7 @@ impl Hub {
                         handle,
                     })
                 };
+                self.harness_storage.lock().insert(harness, storage.clone());
                 let scheduler=TaskScheduler::open(storage,registry,SchedulerOptions{
                     env:Arc::new(move |conversation,context|if has_environment {environment.build_environment(harness,conversation,context)}else{Box::pin(async {Ok(None)})}),
                     settings:Arc::new(move || if host_settings {registry_bridge::settings(&settings.sync("settings",encode(&harness))?)} else {Ok(pi_durable::harness::settings::resolve_settings(Default::default()))}),
@@ -597,6 +599,11 @@ impl Hub {
                     .set_task(field(&request, "record")?)?;
                 Box::pin(async { Ok(None) })
             }
+            "placeSubmission" => {
+                self.transaction(&request)?
+                    .place_submission(field(&request, "submission")?, field(&request, "entry")?)?;
+                Box::pin(async { Ok(None) })
+            }
             "tx.createConversation" | "tx.forkConversation" => {
                 let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
                     Some("ownerless") => ConversationOwnership::Ownerless,
@@ -628,7 +635,7 @@ impl Hub {
                     ))
                 }
             }
-            "createConversation" => {
+            "createConversation" | "forkConversation" => {
                 let scheduler = self.scheduler(&request)?;
                 let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
                     Some("ownerless") => ConversationOwnership::Ownerless,
@@ -640,7 +647,16 @@ impl Hub {
                 };
                 mapped(scheduler.session().commit(
                     move |tx| async move {
-                        let record = tx.create_conversation(ownership).await?;
+                        let record = if method == "forkConversation" {
+                            tx.fork_conversation(
+                                field(&request, "conversation")?,
+                                field(&request, "at")?,
+                                ownership,
+                            )
+                            .await?
+                        } else {
+                            tx.create_conversation(ownership).await?
+                        };
                         if request["options"]["agent"].is_object() {
                             pi_durable::harness::agent::configure(
                                 &tx,
@@ -742,6 +758,20 @@ impl Hub {
                     field(&request, "conversation")?,
                     field(&request, "at")?,
                     &context,
+                ))
+            }
+            "conversationContext" => {
+                self.context_reads.fetch_add(1, Ordering::Relaxed);
+                mapped(pi_durable::harness::context::read_context(
+                    &self.scheduler(&request)?.session(),
+                    self.harness_storage
+                        .lock()
+                        .get(&field::<u64>(&request, "harness")?)
+                        .cloned()
+                        .ok_or_else(|| Error::message("Unknown harness storage"))?,
+                    field(&request, "conversation")?,
+                    &context,
+                    field(&request, "at")?,
                 ))
             }
             "phase.turn" => {
@@ -1053,7 +1083,7 @@ impl Hub {
             }
             "stats" => {
                 let value = encode(
-                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"viewPublications":self.views.publications.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
+                    &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"agentResolutions":self.agent_resolutions.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
                 Box::pin(async move { Ok(Some(value)) })
             }
@@ -1107,6 +1137,7 @@ async fn main() {
         input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
         schedulers: Mutex::new(HashMap::new()),
+        harness_storage: Mutex::new(HashMap::new()),
         readers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
         runtimes: Mutex::new(HashMap::new()),
@@ -1276,7 +1307,7 @@ fn begin_request(
     // Adoption and backend completion use the same lane, while synchronous
     // callback replies stay readable even if adoption calls the host clock.
     let boundary = value["method"].to_utf8().is_some_and(|method| {
-        !method.starts_with("graph.")
+        (method == "graph.start" || !method.starts_with("graph."))
             && method != "phase.turn"
             && !method.starts_with("registry.")
             && method != "runtimeRegistry"

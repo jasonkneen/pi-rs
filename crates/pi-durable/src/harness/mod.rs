@@ -5,6 +5,7 @@ pub mod compaction;
 pub mod context;
 pub mod conversation;
 pub mod declaration;
+pub mod events;
 pub mod generation;
 pub mod hooks;
 pub mod inbox;

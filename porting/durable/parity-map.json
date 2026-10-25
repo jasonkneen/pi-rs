@@ -15,9 +15,16 @@
     },
     {
       "reference": "packages/chord/src/delta/apply-immutable-trusted.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/src/delta/shared.rs",
+        "crates/pi-chord/tests/shared_json.rs"
+      ],
+      "evidence": [
+        "Shared immutable JSON revisions copy only edited ancestors and retain moved, spliced and otherwise unchanged child identities; primitive comparison uses JavaScript JSON equality",
+        "All pinned delta application streams and rejection fixtures replay through shared revisions; three native tests cover replay, aliasing, equal replacement containers and weak lifetimes",
+        "The existing public owned-JSON tracker/replay APIs and embedded proxy allocation parity remain open"
+      ]
     },
     {
       "reference": "packages/chord/src/delta/diff.ts",
@@ -42,7 +49,9 @@
       "status": "partial",
       "rust": [
         "crates/pi-chord/src/delta.rs",
-        "crates/pi-chord/tests/delta.rs"
+        "crates/pi-chord/tests/delta.rs",
+        "crates/pi-chord/src/delta/shared.rs",
+        "crates/pi-chord/tests/shared_json.rs"
       ],
       "evidence": [
         "cargo test -p pi-chord",
@@ -450,9 +459,19 @@
     },
     {
       "reference": "packages/durable/src/harness/events.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/events.rs",
+        "crates/pi-durable/src/harness/events/types.rs",
+        "crates/pi-durable/src/harness/events/translation.rs",
+        "crates/pi-durable/tests/events.rs"
+      ],
+      "evidence": [
+        "Native commit-ordered event batches, atomic snapshot/attachment with completing-task scan, exact message/output deltas, child-first nested results, held-turn accounting, snapshot overflow and stream cancellation",
+        "Five native regressions cover stable partial/details identities across moves, equal-container replacement, completing-to-terminal turn accounting, lossless UTF16 message deltas, snapshot overflow with subsequent deltas, independent cancellation and listener failure",
+        "All 14 unmodified stock event cases pass with both retention settings and native event/memory counters; all 44 stock nested workflows also use native events",
+        "Event payloads retain lossless shared JSON until the SDK boundary; executable generation, SDK 1.4 alignment and embedded exports remain open"
+      ]
     },
     {
       "reference": "packages/durable/src/harness/generation.ts",
@@ -681,7 +700,7 @@
         "All 39 unmodified harness-tools cases and all nine unmodified harness-tools-recovery cases run against native pi.tool under both retention modes; counters require native execute and tool hook calls",
         "Fallible hook-member lookup propagates outside invocation catches; host values remain available for afterTool repair before strict JSON settlement; erased runtime keeps the same invocation guards",
         "Stock gates retain original JS generation handlers, provider/tool/schema/environment/backend capabilities. Structured-output stock files, full native Harness/generation, native environments, embedded JS registration bindings, complete lossless SDK validation and tool phase telemetry remain open",
-        "Both nested-tool stock files now pass completely: 33 call cases and 11 restart cases per mode, including native pi.tool execution, owned work, document results and native conversation view publications; source event translation and one direct JS helper check remain explicit host scope",
+        "Both nested-tool stock files now pass completely: 33 call cases and 11 restart cases per mode, including native pi.tool execution, owned work, document results and native conversation view publications; event translation is now native; one direct JS helper check remains explicit host scope",
         "Nested memo/admission continuations use the owning Session FIFO even when called outside a phase poll; stock zero-retention ordering assertions exposed the old Tokio race"
       ]
     },
@@ -744,12 +763,13 @@
       "rust": [
         "crates/pi-durable/src/harness/view.rs",
         "crates/pi-durable/tests/conversation_view.rs",
-        "crates/pi-durable/examples/support/view_bridge.rs"
+        "crates/pi-durable/examples/support/view_bridge.rs",
+        "crates/pi-chord/src/delta/shared.rs"
       ],
       "evidence": [
         "Native shared mounts hydrate active entries and five built-in documents on the Session line, retain unchanged entry/document references, prefix exact document operations before entry splices, track incarnations and versions, publish every commit to adapters and contain observer failures",
         "Seven native tests prove replay, shared mounts, head cuts, retirement/recreation, durable visibility with dropped waiters, cancellation and missing conversations, reentrant detach, observer errors and close admission behind a blocked close listener",
-        "All 33 stock nested-tool and 11 nested-restart cases run unmodified in both retention modes with native view mounts feeding the original source event translator; the dedicated 14-case stock view file and native event translation remain open"
+        "All 14 stock view cases run unmodified in both retention modes, including unchanged child identity, fork/head cuts, retirement, overflow, cancellation and close; nested/event suites also use native views"
       ]
     },
     {
@@ -1526,9 +1546,20 @@
     },
     {
       "reference": "packages/durable/test/harness-events.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/events.rs",
+        "crates/pi-durable/tests/events.rs",
+        "crates/pi-durable/examples/support/view_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 14 original cases pass with retention=600000 and retention=0; source hash and zero pending tests checked",
+        "Native Session/scheduler/registry/memory/conversation views/event translation; original JS generation, provider and tool callbacks remain host capabilities",
+        "Native execution counters reject accidental source fallback; original test assertions, timers and timeouts remain unchanged",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/harness-failed-run-inbox.test.ts",
@@ -1604,11 +1635,12 @@
         "crates/pi-durable/tests/conversation_view.rs",
         "crates/pi-durable/examples/support/view_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
-        "scripts/check-durable-port.sh"
+        "scripts/check-durable-port.sh",
+        "crates/pi-durable/src/harness/events.rs"
       ],
       "evidence": [
-        "All 11 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/publication counters are required",
-        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; event translation remains source code",
+        "All 11 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/event counters are required",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
         "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
         "porting/durable/STATUS.md",
         "Real SQLite reopen tests prove restart abandonment, missing-definition wait and orphan behavior, replay reattachment, cleanup of earlier-attempt slots, child tasks and persistent background work"
@@ -1625,11 +1657,12 @@
         "crates/pi-durable/tests/conversation_view.rs",
         "crates/pi-durable/examples/support/view_bridge.rs",
         "scripts/run-stock-durable-tasks.mjs",
-        "scripts/check-durable-port.sh"
+        "scripts/check-durable-port.sh",
+        "crates/pi-durable/src/harness/events.rs"
       ],
       "evidence": [
-        "All 33 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/publication counters are required",
-        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; event translation remains source code",
+        "All 33 original cases pass under retention=600000 and retention=0; source hash, zero pending tests and native tool/hook/view/event counters are required",
+        "Native Session/scheduler/registry/pi.tool and conversation mounts; original JS generation handlers, tool callbacks, schema validation, providers, environments and backend capabilities remain host-owned; native event translation now drives every observed workflow",
         "Native nested admission continuations bind to the owning Session FIFO even when callbacks enter from external threads; 24 repeated native external-callback integration runs prove admission order",
         "porting/durable/STATUS.md",
         "Direct ToolTask.definition.migrate assertion remains the exported source helper; two SQLite restart migration cases exercise the native migration and phases"
@@ -1858,9 +1891,20 @@
     },
     {
       "reference": "packages/durable/test/harness-view.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/harness/view.rs",
+        "crates/pi-durable/tests/conversation_view.rs",
+        "crates/pi-durable/examples/support/view_bridge.rs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
+      ],
+      "evidence": [
+        "All 14 original cases pass with retention=600000 and retention=0; source hash and zero pending tests checked",
+        "Native Session/scheduler/registry/memory/conversation views; original JS generation, provider and tool callbacks remain host capabilities",
+        "Native execution counters reject accidental source fallback; original test assertions, timers and timeouts remain unchanged",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/test/heap-retained.ts",

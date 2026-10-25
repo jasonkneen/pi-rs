@@ -1,73 +1,14 @@
-//! Original event adapters attach to native conversation view mounts.
+//! Native conversation view and event acquisition for unmodified stock tests.
 use super::*;
-use pi_chord::delta::Op;
 use pi_durable::harness::view::*;
-use std::sync::Weak;
 
 #[derive(Default)]
 pub(super) struct ViewBridge {
     services: Mutex<HashMap<u64, ConversationViews>>,
-    releases: Mutex<HashMap<u64, DetachView>>,
     subscriptions: Mutex<HashMap<u64, Subscription>>,
     pub reads: AtomicU64,
-    pub publications: AtomicU64,
-}
-struct HostViewObserver {
-    hub: Weak<Hub>,
-    id: u64,
-}
-impl ViewObserver for HostViewObserver {
-    fn advance(&self, value: Arc<ConversationView>, ops: &[Op], _: &Context) -> Result<()> {
-        if let Some(hub) = self.hub.upgrade() {
-            hub.sync(
-                "view.advance",
-                object([
-                    ("observer", encode(&self.id)),
-                    ("value", hub.revision(value)),
-                    ("ops", encode(&ops)),
-                ]),
-            )?;
-        }
-        Ok(())
-    }
-    fn publication(
-        &self,
-        before: Arc<ConversationView>,
-        after: Arc<ConversationView>,
-        ops: &[Op],
-        publication: &CommitPublication,
-        _: &Context,
-    ) -> Result<()> {
-        if let Some(hub) = self.hub.upgrade() {
-            hub.views.publications.fetch_add(1, Ordering::Relaxed);
-            hub.sync(
-                "view.publication",
-                object([
-                    ("observer", encode(&self.id)),
-                    ("before", hub.revision(before)),
-                    ("after", hub.revision(after)),
-                    ("ops", encode(&ops)),
-                    ("publication", encode(publication)),
-                ]),
-            )?;
-        }
-        Ok(())
-    }
-    fn end(&self, failure: Option<Error>) -> Result<()> {
-        if let Some(hub) = self.hub.upgrade() {
-            hub.sync(
-                "view.end",
-                object([
-                    ("observer", encode(&self.id)),
-                    (
-                        "failure",
-                        failure.as_ref().map(error_value).unwrap_or(JsonValue::Null),
-                    ),
-                ]),
-            )?;
-        }
-        Ok(())
-    }
+    pub event_reads: AtomicU64,
+    pub event_frames: AtomicU64,
 }
 impl Hub {
     pub(super) fn view_request(
@@ -76,17 +17,6 @@ impl Hub {
         request: JsonValue,
         context: Context,
     ) -> Result<StorageFuture<Option<JsonValue>>> {
-        if method == "view.detach" {
-            let release = self
-                .views
-                .releases
-                .lock()
-                .remove(&field(&request, "observer")?);
-            if let Some(release) = release {
-                release();
-            }
-            return Ok(Box::pin(async { Ok(None) }));
-        }
         if method == "view.unsubscribeCommits" {
             self.views
                 .subscriptions
@@ -129,6 +59,21 @@ impl Hub {
         };
         self.views.reads.fetch_add(1, Ordering::Relaxed);
         let conversation = field(&request, "conversation")?;
+        if method == "view.events" {
+            self.views.event_reads.fetch_add(1, Ordering::Relaxed);
+            let acquire = pi_durable::harness::events::watch_events(&views, conversation, &context);
+            let hub = self.clone();
+            return Ok(Box::pin(async move {
+                let stream = acquire.await?;
+                let snapshot = encode(stream.snapshot.as_ref());
+                let mut descriptor = hub.register_watch(graph_bridge::ValueWatch::Events(stream));
+                descriptor
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("eventSnapshot".into(), snapshot);
+                Ok(Some(descriptor))
+            }));
+        }
         if method == "view.watch" {
             let acquire = views.watch(conversation, &context);
             let hub = self.clone();
@@ -138,54 +83,6 @@ impl Hub {
                 )))
             }));
         }
-        if method != "view.attach" {
-            return Err(Error::message(format!("Unknown view method {method}")));
-        }
-        let callback: u64 = field(&request, "callback")?;
-        let hub = self.clone();
-        let assigned = Arc::new(AtomicU64::new(0));
-        let capture = assigned.clone();
-        let callback_context = context.clone();
-        let acquire = views.attach(
-            conversation,
-            move |value, release, _| async move {
-                let id = hub.next.fetch_add(1, Ordering::Relaxed);
-                capture.store(id, Ordering::Release);
-                hub.views.releases.lock().insert(id, release);
-                let operation = hub.call_context(
-                    "view.create",
-                    object([
-                        ("harness", encode(&harness)),
-                        ("callback", encode(&callback)),
-                        ("observer", encode(&id)),
-                        ("value", hub.revision(value)),
-                    ]),
-                    &callback_context,
-                );
-                if let Err(error) = operation.await {
-                    hub.views.releases.lock().remove(&id);
-                    return Err(error);
-                }
-                Ok(Arc::new(HostViewObserver {
-                    hub: Arc::downgrade(&hub),
-                    id,
-                }))
-            },
-            &context,
-        );
-        let hub = self.clone();
-        Ok(Box::pin(async move {
-            match acquire.await {
-                Ok(_) => Ok(None),
-                Err(error) => {
-                    let id = assigned.load(Ordering::Acquire);
-                    hub.views.releases.lock().remove(&id);
-                    if id != 0 {
-                        let _ = hub.sync("view.discard", encode(&id));
-                    }
-                    Err(error)
-                }
-            }
-        }))
+        Err(Error::message(format!("Unknown view method {method}")))
     }
 }

@@ -16,7 +16,7 @@ use parking_lot::Mutex;
 use pi_chord::{
     Watch,
     context::without_abort_signal,
-    delta::{Op, Path, Seg},
+    delta::{Op, Path, Seg, SharedJson},
 };
 use serde::Serialize;
 use std::{
@@ -32,6 +32,35 @@ pub struct ConversationView {
     pub conversation: Arc<ConversationRecord>,
     pub entries: Arc<Vec<Arc<EntryRecord>>>,
     pub docs: Arc<IndexMap<JsonString, Arc<JsonValue>>>,
+    revision: SharedJson,
+}
+impl ConversationView {
+    pub fn revision(&self) -> &SharedJson {
+        &self.revision
+    }
+    pub fn from_parts(
+        conversation: Arc<ConversationRecord>,
+        entries: Arc<Vec<Arc<EntryRecord>>>,
+        docs: Arc<IndexMap<JsonString, Arc<JsonValue>>>,
+    ) -> Self {
+        let mut value = crate::wire::object();
+        crate::wire::put(&mut value, "conversation", &conversation);
+        crate::wire::put(&mut value, "entries", &entries);
+        value.as_object_mut().unwrap().insert(
+            "docs".into(),
+            JsonValue::Object(
+                docs.iter()
+                    .map(|(kind, value)| (kind.clone(), value.as_ref().clone()))
+                    .collect(),
+            ),
+        );
+        Self {
+            conversation,
+            entries,
+            docs,
+            revision: SharedJson::new(value),
+        }
+    }
 }
 impl Serialize for ConversationView {
     fn serialize<S: serde::Serializer>(
@@ -160,6 +189,14 @@ impl ConversationViews {
     pub fn report(&self, error: Error) {
         self.inner.session.report(error);
     }
+    pub(crate) fn reporter(&self) -> impl Fn(String) + Send + Sync + 'static {
+        let weak = Arc::downgrade(&self.inner);
+        move |error| {
+            if let Some(inner) = weak.upgrade() {
+                inner.session.report(Error::message(error));
+            }
+        }
+    }
     fn contained(&self, invoke: impl FnOnce() -> Result<()>) {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(invoke)) {
             Ok(Ok(())) => {}
@@ -180,7 +217,8 @@ impl ConversationViews {
     {
         let views = self.clone();
         let context = context.clone();
-        self.inner.session.read_on_line(move || async move {
+        let session = self.inner.session.clone();
+        let acquire = self.inner.session.read_on_line(move || async move {
             let existing = views.inner.mounts.lock().get(&id).cloned();
             let mount = match existing {
                 Some(mount) => mount,
@@ -218,6 +256,17 @@ impl ConversationViews {
             mounts.insert(id, mount.clone());
             mount.lock().observers.insert(observer_id, observer.clone());
             Ok(ViewAttachment { observer, detach })
+        });
+        eager(async move {
+            match acquire.await {
+                Err(error)
+                    if !matches!(error.kind(), ErrorKind::Aborted(_))
+                        && session.usable().is_err() =>
+                {
+                    Err(super::util::closed_error(&session))
+                }
+                result => result,
+            }
         })
     }
     pub fn watch(
@@ -284,11 +333,11 @@ impl ConversationViews {
             }
         }
         Ok(Mount {
-            value: Arc::new(ConversationView {
-                conversation: Arc::new(conversation),
-                entries: Arc::new(entries),
-                docs: Arc::new(docs),
-            }),
+            value: Arc::new(ConversationView::from_parts(
+                Arc::new(conversation),
+                Arc::new(entries),
+                Arc::new(docs),
+            )),
             incarnations,
             observers: IndexMap::new(),
         })
@@ -389,6 +438,10 @@ impl ConversationViews {
                 }
                 doc_ops.extend(entry_ops);
                 if !doc_ops.is_empty() {
+                    next.revision = before
+                        .revision
+                        .apply(&doc_ops)
+                        .map_err(|error| Error::message(error.to_string()))?;
                     mount.value = Arc::new(next);
                 }
                 (
