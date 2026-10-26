@@ -598,13 +598,20 @@
     },
     {
       "reference": "packages/durable/src/harness/define.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
-        "crates/pi-durable/src/harness/registry.rs"
+        "crates/pi-durable/src/harness/define.rs",
+        "crates/pi-durable/src/lib.rs",
+        "crates/pi-durable/tests/registry.rs",
+        "crates/pi-durable/tests/agent_runtime.rs",
+        "crates/pi-durable/examples/conversation.rs"
       ],
       "evidence": [
-        "Native Extension and HookRegistration constructors and typed Wrap callbacks",
-        "Concrete tool/prompt registration helpers and embedded bindings pending"
+        "All six native registration helpers retain typed capabilities and callbacks; identity helpers move their inputs unchanged",
+        "Existing registry/wrapper and typed hook regressions use these public helpers; the native conversation example installs and renders a public section",
+        "Current native 858 checks, native example and all-target Clippy pass; original stock registry passes both modes",
+        "porting/durable/VALIDATION.json",
+        "Embedded JavaScript package binding is tracked separately in the root export mapping"
       ]
     },
     {
@@ -1062,9 +1069,18 @@
     },
     {
       "reference": "packages/durable/src/index.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-durable/src/lib.rs",
+        "crates/pi-durable/src/harness/define.rs",
+        "crates/pi-durable/examples/conversation.rs"
+      ],
+      "evidence": [
+        "Native root reexports the implemented document/entry/task/storage/Session/Harness, agent, generation, event, registry, settings, tool, view, watch and telemetry capabilities",
+        "The native conversation example uses the public root and registration helpers; all-target compilation and 858 current native checks pass",
+        "Embedded JavaScript package exports and final language-specific type/export audit remain open",
+        "porting/durable/STATUS.md"
+      ]
     },
     {
       "reference": "packages/durable/src/search.ts",

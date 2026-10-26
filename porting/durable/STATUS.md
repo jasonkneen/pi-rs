@@ -2,7 +2,19 @@
 
 Goal: the complete native Rust port described in PLAN.md. Status: active, incomplete.
 
-## Current checkpoint - 2026-10-26
+## Latest native API and build checkpoint - 2026-10-26
+
+Commits `94e11d2` and `7f349af` add the native public registration helpers and exports, and correct build/test infrastructure. The crate root now exposes agent definitions, generation and tool types, events, registry/settings, watches and the telemetry schema. `define_extension`, `define_tool`, `section`, `hook`, `wrap_tool` and `wrap_section` use the existing native capability types. Existing registry and hook tests use the helpers; the offline conversation example now installs and renders a native section through this public API.
+
+**All 858 Rust checks pass on this source**, across the complete six-crate suite including doctests (840), feature probes (2), pi-ai telemetry (14) and downstream extension telemetry (2). The native example and all-target Durable Clippy also pass. Logs and checksums are in the `latestNative` field of [VALIDATION.json](VALIDATION.json). The unchanged stock registry file passes all ten cases in both modes, twenty fresh executions. The full 2530-case stock core matrix below predates this additive API/build followup; it was not rerun in full afterward. No single uninterrupted current combined gate is claimed.
+
+Boa now builds as a Rust library without the unused dynamic-library target. Its Rust archives carry Cargo hashes rather than sharing `libboa_engine.rlib` across feature configurations. A repeat six-crate build reused compilation in 1.55 seconds. The gate defaults Rust fixture concurrency to four; a large-base64 sandbox case exceeded its unchanged ten-second deadline in the default sixteen-way run, while the same binary passed all 99 cases with four concurrent fixtures. This scheduling limit does not alter the tests' execution deadlines or explicit concurrency checks.
+
+The native AsyncLocalStorage fixture also had an invalid total-order assumption: the unchanged script produced three timer interleavings in twenty Node runs. Its assertion now compares every event and store value in each task's causal order, retaining exact prefix/suffix checks. No original pi-mono test, assertion or deadline was modified. The corrected full native run completed with terminal exit 0.
+
+The browser/worker/IndexedDB, embedded package exports, remaining generic validation/provider UTF16 boundaries, final parity audit and the unexplained stock retention timeout below remain open. This checkpoint does not complete the full port.
+
+## Core runtime checkpoint - 2026-10-26
 
 Implementation fixes are committed in `7380f5e`; the final stock Conversation handle fix is in `1f0b224`. Native changes cover watch error identity, asynchronous close-listener supervision, restart-limit reports, migration wake notifications, ownership traversal, rejected-commit cleanup and executor shutdown. The stock adapter retains actual native Conversation handles so context reads and forks have one admission boundary. No stock source, assertion, timer or deadline was changed.
 
