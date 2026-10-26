@@ -32,10 +32,10 @@ impl RegisteredSection for Section {
 }
 type Ext = Extension<Tool, Section>;
 fn tool(name: &str) -> Arc<Tool> {
-    Arc::new(Tool {
+    Arc::new(define_tool(Tool {
         name: name.into(),
         ..Default::default()
-    })
+    }))
 }
 fn json(value: &str) -> JsonValue {
     pi_chord::json::parse(value).unwrap()
@@ -280,19 +280,14 @@ fn wrappers_run_before_filters_drop_failures_and_never_wrap_instructions() {
     ext.tools = vec![tool("read"), tool("edit")];
     ext.sections.push(Arc::new(Section("cwd".into())));
     registry.install(Arc::new(ext)).unwrap();
-    let mut ext = Ext::new("wrap");
-    ext.wraps.push(Wrap::Tool {
-        name: "read".into(),
-        apply: Arc::new(|_| Err(Error::message("broken"))),
-    });
-    ext.wraps.push(Wrap::Tool {
-        name: "edit".into(),
-        apply: Arc::new(|_| Ok(tool("renamed"))),
-    });
-    ext.wraps.push(Wrap::Section {
-        key: "instructions".into(),
-        apply: Arc::new(|_| panic!("must not run")),
-    });
+    let mut ext = define_extension(Ext::new("wrap"));
+    ext.wraps.push(wrap_tool(tool("read").as_ref(), |_| {
+        Err(Error::message("broken"))
+    }));
+    ext.wraps
+        .push(wrap_tool(tool("edit").as_ref(), |_| Ok(tool("renamed"))));
+    ext.wraps
+        .push(wrap_section("instructions", |_| panic!("must not run")));
     registry.install(Arc::new(ext)).unwrap();
     let mut errors = Vec::new();
     let a = resolve_agent(

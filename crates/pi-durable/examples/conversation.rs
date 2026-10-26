@@ -1,26 +1,10 @@
 //! A complete local conversation through the native generation task and model SDK.
 use pi_ai::{models::Models, providers::faux::*};
-use pi_durable::{
-    harness::{generation::GenerationPromptInput, registry::RegisteredSection, tool::NativeTool},
-    *,
+use pi_durable::*;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
-use std::sync::Arc;
-
-struct Section(JsonString);
-impl RegisteredSection for Section {
-    fn key(&self) -> &JsonString {
-        &self.0
-    }
-}
-impl PromptSection<GenerationPromptInput<NativeTool, Section>> for Section {
-    fn render(
-        &self,
-        _: Arc<GenerationPromptInput<NativeTool, Section>>,
-        _: &Context,
-    ) -> storage::StorageFuture<Option<JsonString>> {
-        Box::pin(async { Ok(None) })
-    }
-}
 #[tokio::main]
 async fn main() -> Result<()> {
     let context = Context::default();
@@ -34,7 +18,19 @@ async fn main() -> Result<()> {
         faux_text_message("The native durable conversation completed.").into(),
     ]);
     models.set_provider(faux.provider);
-    let registry = create_registry::<NativeTool, Section>()?;
+    let registry = create_registry::<NativeTool, NativeSection>()?;
+    let rendered = Arc::new(AtomicBool::new(false));
+    let observed = rendered.clone();
+    let mut extension = define_extension(Extension::new("example"));
+    extension.sections.push(Arc::new(section(
+        "example",
+        Arc::new(move |_, _| {
+            observed.store(true, Ordering::SeqCst);
+            Box::pin(async { Ok(Some("A local durable conversation.".into())) })
+        }),
+        SectionOptions::default(),
+    )));
+    registry.install(Arc::new(extension))?;
     let harness = Harness::open(
         Arc::new(MemoryStorage::new()),
         HarnessOptions::new(registry, models),
@@ -47,7 +43,7 @@ async fn main() -> Result<()> {
                 agent: Some(
                     JsonObject::try_from_value(
                         pi_chord::json::parse(
-                            r#"{"model":{"provider":"faux","modelId":"faux-1"}}"#,
+                            r#"{"model":{"provider":"faux","modelId":"faux-1"},"extensions":[{"name":"example"}]}"#,
                         )
                         .expect("valid agent configuration"),
                     )
@@ -69,6 +65,9 @@ async fn main() -> Result<()> {
     );
     for message in root.context(None, &context).await?.messages {
         println!("{message}");
+    }
+    if !rendered.load(Ordering::SeqCst) {
+        return Err(Error::message("The registered prompt section did not run"));
     }
     harness.close(&context).await
 }

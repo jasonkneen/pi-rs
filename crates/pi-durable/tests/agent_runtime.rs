@@ -166,7 +166,7 @@ fn install_hook(
     calls: &Arc<Mutex<Vec<&'static str>>>,
 ) {
     let mut ext = Ext::new(label);
-    ext.hooks.push(HookRegistration::for_task(
+    ext.hooks.push(hook(
         task,
         Arc::new(Hooks {
             label,

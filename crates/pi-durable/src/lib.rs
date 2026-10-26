@@ -21,33 +21,68 @@ mod wire;
 pub use documents::*;
 pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
+pub use harness::agent::{AGENT_DOC, Agent, AgentState, configure};
 pub use harness::compaction::{
-    COMPACTION_TASK, CompactionCheckpoint, CompactionHooks, CompactionInput, CompactionResult,
-    compaction_task,
+    COMPACTION_TASK, CompactionCheckpoint, CompactionHooks, CompactionInput, CompactionPolicy,
+    CompactionResult, SummaryRequest, compaction_task,
 };
 pub use harness::context::ContextView;
+pub use harness::conversation::{ConversationHandle, InputSubmissionDraft};
+pub use harness::declaration::{DeclaredTool as ToolDeclarationProvider, ToolDeclaration};
+pub use harness::define::{
+    SectionOptions, define_extension, define_tool, hook, section, wrap_section, wrap_tool,
+};
+pub use harness::events::{
+    AgentEvent, AgentEventStream, MessageChange, SnapshotEvent, ToolEventCall, watch_events,
+};
+pub use harness::generation::{
+    GenerationCheckpoint, GenerationHooks, GenerationInput, GenerationResult, GenerationTask,
+    generation_task,
+};
+pub use harness::hooks::{HookKey, HookRunner};
 pub use harness::inbox::{INBOX_DOC, InboxItem, InboxState, inbox_doc};
 pub use harness::inspect::{HarnessInspection, Scheduling, TaskInspection, TaskInspectionState};
-pub use harness::live::{LIVE_DOC, LiveState, live_doc};
-pub use harness::prompt::{PromptInput, PromptSection};
+pub use harness::live::{
+    CompactionFailure, CompactionReason, CompactionStatus, LIVE_DOC, LiveState, NestedToolSlot,
+    NestedToolSummary, ToolDiagnostic, ToolSlot, live_doc,
+};
+pub use harness::prompt::{
+    NativePromptInput, NativeSection, NativeSectionRender, PromptInput, PromptSection,
+};
 pub use harness::provider::{PROVIDER_DOC, ProviderState, provider_doc};
-pub use harness::scheduler::{ReportTask, TaskReport as ReportInfo};
+pub use harness::reader::{RegistryReader, RegistryView};
+pub use harness::registry::{
+    Extension, HookRegistration, RegisteredSection, RegisteredTool, Registry, RegistrySnapshot,
+    Wrap,
+};
+pub use harness::scheduler::{BlockedReason, ReportTask, TaskReport as ReportInfo, Wake};
+pub use harness::settings::{
+    DEFAULT_COMPACTION_POLICY, DEFAULT_PROGRESS_POLICY, DEFAULT_RESTART_LIMIT,
+    DEFAULT_RETRY_POLICY, HarnessSettings, ProgressPolicy, Settings,
+};
 pub use harness::submissions::{Submission, SubmissionAbort, Submissions, SubmissionsOptions};
 pub use harness::task_graph::{
     TaskGraph, TaskGraphNode, TaskGraphOutcome, TaskGraphState, TaskGraphWatch,
+};
+pub use harness::telemetry::DURABLE_TELEMETRY_SCHEMA;
+pub use harness::tool::{
+    NESTED_CALL_DOC, NativeTool, NestedCallState, NestedToolExecutionResult, TOOL_TASK,
+    ToolControl, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHookCall, ToolHooks,
+    ToolTask, ToolTaskCheckpoint, ToolTaskInput, ToolTaskResult, tool_task,
 };
 pub use harness::types::{
     InputEntry, ModelRef, QueueMode, QueueModes, SettledSubmissionRecord, SubmissionDraft,
     UserInput, WhenBusy,
 };
 pub use harness::usage::{USAGE_DOC, UsageState, usage_doc};
+pub use harness::view::{ConversationView, ConversationViewWatch};
 pub use harness::{
     Conversation, ConversationCreateOptions, ConversationCreated, ConversationEntryQuery,
     ConversationInit, ConversationOptions, EnvTarget, EnvironmentFactory, Harness, HarnessOptions,
-    create_registry,
+    create_registry, default_harness_identity,
 };
 pub use harness::{runtime::TaskRuntime, state::NextTaskState};
-pub use pi_chord::{Context, JsonString, JsonValue, WatchEnd};
+pub use pi_chord::{Context, JsonString, JsonValue, Watch as WatchHandle, WatchEnd};
 pub use session::*;
 pub use storage::{
     JsonlStorage, JsonlStorageOptions, MemoryStorage, SqliteStorage, SqliteStorageOptions, Storage,

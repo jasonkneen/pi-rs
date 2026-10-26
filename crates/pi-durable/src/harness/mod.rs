@@ -5,6 +5,7 @@ pub mod compaction;
 pub mod context;
 pub mod conversation;
 pub mod declaration;
+pub mod define;
 pub mod events;
 #[path = "harness.rs"]
 mod facade;
