@@ -131,6 +131,16 @@ impl Tracker {
 }
 
 impl Change {
+    /// A change that lost its revision can never be prepared. Drop its snapshot of
+    /// the obsolete root as soon as it is next touched instead of waiting for abort.
+    fn release_if_stale(&mut self) {
+        if !self.settled && self.lease.stale() {
+            self.settled = true;
+            self.state = None;
+            self.base = None;
+            self.edits = Edits::Diff;
+        }
+    }
     fn check_open(&self) -> Result<(), Error> {
         if self.settled || self.lease.stale() || *self.lease.status.lock() != Status::Open {
             return Err(error("Cannot use a settled overlay"));
@@ -144,6 +154,7 @@ impl Change {
             .ok_or_else(|| error("Cannot use a settled overlay"))
     }
     pub fn state(&mut self) -> Result<&mut JsonValue, Error> {
+        self.release_if_stale();
         self.check_open()?;
         if let Edits::Recorded { untracked_base, .. } = &mut self.edits
             && untracked_base.is_none()
@@ -182,6 +193,7 @@ impl Change {
         ops: &[Op],
         validate: impl FnOnce(&JsonValue) -> Result<(), Error>,
     ) -> Result<(), Error> {
+        self.release_if_stale();
         let current = self.current()?;
         if ops.is_empty() {
             return validate(current);
@@ -203,6 +215,7 @@ impl Change {
         Ok(())
     }
     pub fn prepare(&mut self) -> Result<Prepared, Error> {
+        self.release_if_stale();
         if self.settled {
             return Err(error("Change has already been settled"));
         }

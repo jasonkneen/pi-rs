@@ -192,63 +192,136 @@
     },
     {
       "reference": "packages/chord/test/context.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/context.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-a.json",
+        "cargo test -p pi-chord",
+        "7 cases: 7 native, 0 embedded-only, 0 n/a",
+        "span addLink assertions not reproduced (ContextRef has no add_link)"
+      ]
     },
     {
       "reference": "packages/chord/test/delta-apply-immutable.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/delta.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-b.json",
+        "cargo test -p pi-chord",
+        "8 cases: 7 native, 1 embedded-only, 0 n/a",
+        "embedded-only cases await the embedded JS binding"
+      ]
     },
     {
       "reference": "packages/chord/test/delta-clone.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/delta_clone.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-a.json",
+        "cargo test -p pi-chord",
+        "4 cases: 2 native, 2 embedded-only, 0 n/a",
+        "embedded-only cases await the embedded JS binding"
+      ]
     },
     {
       "reference": "packages/chord/test/delta-diff.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/delta_diff.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-b.json",
+        "cargo test -p pi-chord",
+        "29 cases: 28 native, 1 embedded-only, 0 n/a",
+        "embedded-only cases await the embedded JS binding",
+        "identity-guided diff alignment (semanticallyAligned) not ported; shared-subtree case checks replay only"
+      ]
     },
     {
       "reference": "packages/chord/test/delta-tracker/retention.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/tracker_upstream.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-c.json",
+        "cargo test -p pi-chord",
+        "14 cases: 8 native, 6 embedded-only, 0 n/a",
+        "embedded-only cases await the embedded JS binding"
+      ]
     },
     {
       "reference": "packages/chord/test/delta-tracker/tracker.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/tracker.rs",
+        "crates/pi-chord/tests/tracker_upstream.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-c.json",
+        "cargo test -p pi-chord",
+        "70 cases: 47 native, 19 embedded-only, 4 n/a",
+        "embedded-only cases await the embedded JS binding",
+        "one native case missing (piece-array normalization); several cases use explicit ops or assert native diff shape instead of upstream op shape"
+      ]
     },
     {
       "reference": "packages/chord/test/delta.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/delta.rs",
+        "crates/pi-chord/tests/tracker.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-b.json",
+        "cargo test -p pi-chord",
+        "41 cases: 36 native, 4 embedded-only, 1 n/a",
+        "embedded-only cases await the embedded JS binding"
+      ]
     },
     {
       "reference": "packages/chord/test/json.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/json.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-a.json",
+        "cargo test -p pi-chord",
+        "5 cases: 3 native, 2 embedded-only, 0 n/a",
+        "embedded-only cases await the embedded JS binding"
+      ]
     },
     {
       "reference": "packages/chord/test/output-skip.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-chord/tests/output.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-d.json",
+        "cargo test -p pi-chord",
+        "4 cases: 4 native, 0 embedded-only, 0 n/a"
+      ]
     },
     {
       "reference": "packages/chord/test/output.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "verified",
+      "rust": [
+        "crates/pi-chord/tests/output.rs",
+        "crates/pi-chord/tests/progress.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-d.json",
+        "cargo test -p pi-chord",
+        "21 cases: 21 native, 0 embedded-only, 0 n/a"
+      ]
     },
     {
       "reference": "packages/chord/test/sqlite/cloudflare.test.ts",
@@ -285,9 +358,17 @@
     },
     {
       "reference": "packages/chord/test/watch.test.ts",
-      "status": "pending",
-      "rust": [],
-      "evidence": []
+      "status": "partial",
+      "rust": [
+        "crates/pi-chord/tests/watch.rs"
+      ],
+      "evidence": [
+        "porting/durable/mappings/chord-d.json",
+        "cargo test -p pi-chord",
+        "24 cases: 22 native, 1 embedded-only, 1 n/a",
+        "embedded-only cases await the embedded JS binding",
+        "AbortSignal weak-retention check not reproduced"
+      ]
     },
     {
       "reference": "packages/durable/src/codemode/codemode.ts",

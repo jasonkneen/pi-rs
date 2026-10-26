@@ -104,3 +104,52 @@ fn numbers_have_javascript_equality_across_json_spellings() {
         parse("9007199254740992").unwrap()
     );
 }
+
+// json.test.ts > isJsonValue > checks strict JSON without normalizing it
+#[test]
+fn is_json_value_checks_strict_json_without_normalizing_it() {
+    let nested = parse(r#"{"nested":[1,true,null]}"#).unwrap();
+    assert_eq!(stringify(&nested), r#"{"nested":[1,true,null]}"#);
+    assert!(serde_json::Number::from_f64(f64::INFINITY).is_none());
+    assert!(serde_json::Number::from_f64(f64::NAN).is_none());
+    for source in ["Infinity", "-Infinity", "NaN", "undefined", "[undefined]"] {
+        assert!(parse(source).is_err(), "accepted {source:?}");
+    }
+}
+
+// json.test.ts > copyJson > copies strict JSON without retaining aliases
+#[test]
+fn copy_json_copies_strict_json_without_retaining_aliases() {
+    let shared = parse(r#"{"value":1}"#).unwrap();
+    let mut input = parse(r#"{}"#).unwrap();
+    let map = input.as_object_mut().unwrap();
+    map.insert("left".into(), shared.clone());
+    map.insert("right".into(), shared.clone());
+    let mut copied = pi_chord::copy_json(&input);
+    assert_eq!(copied, input);
+    copied
+        .as_object_mut()
+        .unwrap()
+        .get_mut(&JsonString::from("left"))
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert("value".into(), parse("2").unwrap());
+    assert_eq!(copied["left"]["value"], parse("2").unwrap());
+    assert_eq!(copied["right"]["value"], parse("1").unwrap());
+    assert_eq!(input["left"]["value"], parse("1").unwrap());
+    assert_eq!(input["right"]["value"], parse("1").unwrap());
+    assert_eq!(shared["value"], parse("1").unwrap());
+}
+
+// json.test.ts > copyJson > preserves null prototypes and own __proto__ data properties
+#[test]
+fn copy_json_preserves_null_prototypes_and_own_proto_data_properties() {
+    let input = parse(r#"{"__proto__":{"safe":true}}"#).unwrap();
+    assert_eq!(input.as_object().unwrap().len(), 1);
+    let copied = pi_chord::copy_json(&input);
+    assert_eq!(copied, input);
+    assert_eq!(copied.as_object().unwrap().len(), 1);
+    assert_eq!(copied["__proto__"]["safe"].as_bool(), Some(true));
+    assert_eq!(parse(&stringify(&copied)).unwrap(), copied);
+}

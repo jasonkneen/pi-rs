@@ -259,7 +259,22 @@ fn key_string(segment: &Seg) -> JsonString {
     }
 }
 
-fn resolve_mut<'a>(mut value: &'a mut Value, path: &[Seg]) -> Result<&'a mut Value> {
+/// Whether a string names an own property of an array of `len` elements.
+fn array_owns_key(key: &JsonString, len: usize) -> bool {
+    let key = key.to_string_lossy();
+    key == "length"
+        || key
+            .parse::<usize>()
+            .is_ok_and(|index| index < len && index.to_string() == key)
+}
+
+/// `own_first` selects the immutable replay's walk order, which reports a missing
+/// own property as unresolvable before rejecting a non-index segment of an array.
+fn resolve_mut<'a>(
+    mut value: &'a mut Value,
+    path: &[Seg],
+    own_first: bool,
+) -> Result<&'a mut Value> {
     for segment in path {
         value = match value {
             Value::Object(map) => Arc::make_mut(map)
@@ -269,6 +284,9 @@ fn resolve_mut<'a>(mut value: &'a mut Value, path: &[Seg]) -> Result<&'a mut Val
                 Seg::Index(index) => Arc::make_mut(items)
                     .get_mut(*index)
                     .ok_or_else(|| path_error(path))?,
+                Seg::Key(key) if own_first && !array_owns_key(key, items.len()) => {
+                    return Err(path_error(path));
+                }
                 Seg::Key(key) => return Err(Error::UnsafePath(key.to_string_lossy())),
             },
             _ => return Err(path_error(path)),
@@ -282,7 +300,11 @@ fn resolve_mut<'a>(mut value: &'a mut Value, path: &[Seg]) -> Result<&'a mut Val
 
 /// Apply an owned batch to an exclusively owned mutable replica. Errors may leave
 /// earlier operations applied, as in Chord. Discard a failed replica and recover at a base.
-pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
+pub fn apply(root: Value, ops: &[Op]) -> Result<Value> {
+    apply_with(root, ops, false)
+}
+
+fn apply_with(mut root: Value, ops: &[Op], own_first: bool) -> Result<Value> {
     for op in ops {
         op.validate()?;
         if let Op::Replace(value) = op {
@@ -291,7 +313,7 @@ pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
         }
         let path = op.path().unwrap();
         if let Op::Splice(_, index, remove, items) = op {
-            let target = resolve_mut(&mut root, path)?
+            let target = resolve_mut(&mut root, path, own_first)?
                 .as_array_mut()
                 .ok_or_else(|| path_error(path))?;
             let start = (*index).min(target.len());
@@ -300,7 +322,7 @@ pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
             continue;
         }
         if let Op::Move(_, order) = op {
-            let target = resolve_mut(&mut root, path)?
+            let target = resolve_mut(&mut root, path, own_first)?
                 .as_array_mut()
                 .ok_or_else(|| path_error(path))?;
             if target.len() != order.len() {
@@ -313,7 +335,7 @@ pub fn apply(mut root: Value, ops: &[Op]) -> Result<Value> {
             continue;
         }
         let (key, parent_path) = path.split_last().ok_or_else(|| shape("path is empty"))?;
-        let parent = resolve_mut(&mut root, parent_path)?;
+        let parent = resolve_mut(&mut root, parent_path, own_first)?;
         if let Value::Array(items) = parent {
             let items = Arc::make_mut(items);
             let Seg::Index(index) = key else {
@@ -364,7 +386,7 @@ fn update_string(value: Option<&mut Value>, op: &Op, path: &[Seg]) -> Result<()>
 }
 
 pub fn apply_immutable(target: Option<&Value>, ops: &[Op]) -> Result<Value> {
-    apply(target.cloned().unwrap_or(Value::Null), ops)
+    apply_with(target.cloned().unwrap_or(Value::Null), ops, true)
 }
 
 pub fn apply_immutable_batches<'a>(
@@ -373,7 +395,7 @@ pub fn apply_immutable_batches<'a>(
 ) -> Result<Value> {
     let mut value = target.cloned().unwrap_or(Value::Null);
     for ops in batches {
-        value = apply(value, ops)?;
+        value = apply_with(value, ops, true)?;
     }
     Ok(value)
 }

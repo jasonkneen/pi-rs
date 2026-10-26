@@ -137,3 +137,150 @@ async fn trace_in_preserves_values_and_creates_explicit_parent_chain() {
     assert_eq!(spans[1].parent_id, Some(spans[0].id));
     assert_eq!(spans[2].parent_id, Some(spans[1].id));
 }
+
+fn same_telemetry(a: &pi_telemetry::ContextRef, b: &pi_telemetry::ContextRef) -> bool {
+    std::ptr::eq(Arc::as_ptr(a) as *const (), Arc::as_ptr(b) as *const ())
+}
+
+// context.test.ts > Context > provides distinct empty root contexts
+#[test]
+fn provides_distinct_empty_root_contexts() {
+    let key = create_context_key::<String>("value");
+    let noop: pi_telemetry::ContextRef = pi_telemetry::noop_telemetry_context();
+    assert_ne!(TODO_CONTEXT.to_string(), BACKGROUND_CONTEXT.to_string());
+    assert!(TODO_CONTEXT.abort_signal().is_none());
+    assert!(same_telemetry(TODO_CONTEXT.telemetry(), &noop));
+    assert!(same_telemetry(BACKGROUND_CONTEXT.telemetry(), &noop));
+    assert!(TODO_CONTEXT.value(&key).is_none());
+    assert_eq!(
+        BACKGROUND_CONTEXT.to_string(),
+        "[Context BACKGROUND_CONTEXT]"
+    );
+}
+
+// context.test.ts > Context > derives telemetry independently from values and cancellation
+#[tokio::test]
+async fn derives_telemetry_independently_from_values_and_cancellation() {
+    let telemetry = Arc::new(InMemoryTelemetryContext::new());
+    let other = Arc::new(InMemoryTelemetryContext::new());
+    let noop: pi_telemetry::ContextRef = pi_telemetry::noop_telemetry_context();
+    let other_for_span = other.clone();
+    telemetry
+        .start_span(SpanOptions::new("caller"), |parent| async move {
+            other_for_span
+                .start_span(SpanOptions::new("other"), |other_span| async move {
+                    let key = create_context_key::<String>("principal");
+                    let (with_signal, controller) = with_cancel(&BACKGROUND_CONTEXT);
+                    let base = with_context_value(&key, "owner".into(), &with_signal);
+                    let parent_ref: pi_telemetry::ContextRef = parent.clone();
+                    let context = with_telemetry(parent_ref.clone(), &base);
+                    let replaced = with_telemetry(other_span.clone(), &context);
+                    assert!(same_telemetry(base.telemetry(), &noop));
+                    assert!(same_telemetry(context.telemetry(), &parent_ref));
+                    let other_ref: pi_telemetry::ContextRef = other_span.clone();
+                    assert!(same_telemetry(replaced.telemetry(), &other_ref));
+                    assert_eq!(&*replaced.value(&key).unwrap(), "owner");
+                    assert!(replaced.abort_signal().is_some());
+                    assert!(!replaced.abort_signal().unwrap().aborted());
+                    assert!(same_telemetry(
+                        without_abort_signal(&context).telemetry(),
+                        &parent_ref
+                    ));
+                    trace_in(
+                        "outer",
+                        |child| async move {
+                            assert_eq!(&*child.value(&key).unwrap(), "owner");
+                            assert!(child.abort_signal().is_some());
+                            child
+                                .telemetry()
+                                .record_event("started", Default::default());
+                            trace_in(
+                                "inner",
+                                |nested| async move {
+                                    nested
+                                        .telemetry()
+                                        .record_event("nested", Default::default());
+                                    42
+                                },
+                                &child,
+                            )
+                            .await;
+                        },
+                        &context,
+                    )
+                    .await;
+                    assert!(same_telemetry(context.telemetry(), &parent_ref));
+                    controller.abort();
+                    assert!(context.check().is_err());
+                })
+                .await;
+        })
+        .await;
+    let spans = telemetry.get_spans();
+    let (caller, outer, inner) = (&spans[0], &spans[1], &spans[2]);
+    assert_eq!(outer.parent_id, Some(caller.id));
+    assert_eq!(inner.parent_id, Some(outer.id));
+    assert_eq!(outer.events[0].name, "started");
+    assert_eq!(other.get_spans().len(), 1);
+}
+
+// context.test.ts > Context > isolates concurrent traceIn branches and preserves callback results and errors
+#[tokio::test]
+async fn isolates_concurrent_trace_in_branches_and_preserves_callback_results_and_errors() {
+    let telemetry = Arc::new(InMemoryTelemetryContext::new());
+    telemetry
+        .start_span(SpanOptions::new("caller"), |parent| async move {
+            let parent_ref: pi_telemetry::ContextRef = parent.clone();
+            let context = with_telemetry(parent_ref.clone(), &BACKGROUND_CONTEXT);
+            let (release, gate) = tokio::sync::oneshot::channel::<()>();
+            let first = trace_in(
+                "first",
+                |child| async move {
+                    gate.await.unwrap();
+                    trace_in("first.child", |_| async { "first" }, &child).await
+                },
+                &context,
+            );
+            let second = trace_in(
+                "second",
+                |child| async move {
+                    let result = trace_in("second.child", |_| async { "second" }, &child).await;
+                    release.send(()).unwrap();
+                    result
+                },
+                &context,
+            );
+            assert_eq!(tokio::join!(first, second), ("first", "second"));
+            let failure = value_of("same value");
+            let thrown: Result<(), _> =
+                trace_in("throw", |_| async { Err(failure.clone()) }, &context).await;
+            assert_eq!(thrown, Err(failure.clone()));
+            let rejected: Result<(), _> =
+                trace_in("reject", |_| async { Err(failure.clone()) }, &context).await;
+            assert_eq!(rejected, Err(failure));
+            let result = trace_in(
+                "noop",
+                |child| async move {
+                    child.telemetry().record_event("noop", Default::default());
+                    42
+                },
+                &BACKGROUND_CONTEXT,
+            )
+            .await;
+            assert_eq!(result, 42);
+        })
+        .await;
+    let spans = telemetry.get_spans();
+    for name in ["first", "second"] {
+        let owner = spans.iter().find(|s| s.name == name).unwrap();
+        let child = spans
+            .iter()
+            .find(|s| s.name == format!("{name}.child"))
+            .unwrap();
+        assert_eq!(child.parent_id, Some(owner.id));
+    }
+}
+
+fn value_of(text: &str) -> pi_chord::JsonValue {
+    pi_chord::json::parse(&format!("{text:?}")).unwrap()
+}

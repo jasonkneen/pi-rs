@@ -1,5 +1,5 @@
 //! Immutable JSON revisions with copy-on-write containers and stable child identity.
-use super::{Error, Op, Seg, key_string, path_error};
+use super::{Error, Op, Seg, array_owns_key, key_string, path_error};
 use crate::json::{JsonString, Value};
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -195,6 +195,9 @@ fn container_mut<'a>(root: &'a mut SharedJson, path: &[Seg]) -> Result<&'a mut N
         current = match Arc::make_mut(&mut current.0) {
             Node::Array(values) => match segment {
                 Seg::Index(index) => values.get_mut(*index).ok_or_else(|| path_error(path))?,
+                Seg::Key(key) if !array_owns_key(key, values.len()) => {
+                    return Err(path_error(path));
+                }
                 Seg::Key(key) => return Err(Error::UnsafePath(key.to_string_lossy())),
             },
             Node::Object(values) => values
