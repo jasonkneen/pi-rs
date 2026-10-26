@@ -4,6 +4,7 @@ import "./durable-transaction-probes.mjs";
 // Test transport only. The native process owns task state, invocation lifetime,
 // reservations and the Session line. These callbacks run the original JS tasks.
 import {nativeMemoryHandle} from "./durable-memory-adapter.mjs";
+import {nativeSqliteHandle} from "./durable-task-sqlite-adapter.mjs";
 import {environmentContext} from "./durable-env-signals.mjs";
 import {writeFileSync} from "node:fs";
 import {mergeClientIdentity,withClientIdentity} from "@earendil-works/pi-ai/utils/identity";
@@ -25,6 +26,17 @@ nativeTransport.error("readAfterWrite",value=>new ReadAfterWrite(value.method));
 let storageNext=1,callbackNext=1;
 const storages=new Map(),callbacks=new Map(),runtimes=new Map(),harnesses=new Map(),graphRevisions=new Map();
 const drafts=new Map(),viewBindings=new WeakMap();
+const crashOwners=new WeakMap();
+function trackCrashFixture(storage,owner){
+ if(typeof storage.crash!=="function")return;
+ let owners=crashOwners.get(storage);
+ if(owners===undefined){
+  owners=new Set();crashOwners.set(storage,owners);const crash=storage.crash;
+  Object.defineProperty(storage,"crash",{configurable:true,writable:true,value:function(...args){const result=Reflect.apply(crash,this,args);for(const owner of owners)nativeTransport.crashActor(owner);owners.clear();return result;}});
+ }
+ owners.add(owner);
+}
+
 // Table identities cross this JSON-only test transport as record/revision identities.
 // This does not claim pointer or allocation parity for Rust's owned record types.
 const tableRecords=new Map(),tableWrites=new Map();
@@ -41,11 +53,12 @@ function graphValue(snapshot){if("shared" in snapshot)return sharedValue(snapsho
 function watchValue(snapshot){return graphValue(snapshot);}
 nativeTransport.register("graphFrame",(args,context)=>objectFor(args.callback)(watchValue(args.snapshot),graphValue(args.ops),withoutAbortSignal(context??BACKGROUND_CONTEXT)));
 nativeTransport.afterCallback("graphFrame",frame=>nativeTransport.sync("graph.turn",{watch:frame.args.watch,serial:frame.args.serial}));
-nativeTransport.afterCallback("phase",frame=>nativeTransport.sync("phase.turn",{runtime:frame.args[3],serial:frame.args[4]}));
+nativeTransport.afterCallback("phase",frame=>nativeTransport.sync("phase.turn",{runtime:frame.args[3],serial:frame.args[4],harness:frame.args[5]}));
 nativeTransport.afterCallback("change",frame=>nativeTransport.sync("change.turn",{request:frame.args.request}));
+nativeTransport.afterCallback("onWake",frame=>nativeTransport.sync("host.turn",{harness:frame.args.harness}));
 function graphWatch(descriptor,context,source){
  if(descriptor===undefined)return undefined;
- const watch=descriptor.watch,closed=call("graph.closed",{watch});closed.catch(()=>{});
+ const watch=descriptor.watch,closed=call("graph.closed",{watch}).then(end=>end.error?{...end,error:error(end.error)}:end);closed.catch(()=>{});
  let stopped,listener;const held={source},signal=context?.abortSignal,cancel=()=>nativeTransport.sync("graph.cancel",{watch});
  signal?.addEventListener("abort",cancel,{once:true});
  const release=()=>{held.source=undefined;listener?.release();signal?.removeEventListener("abort",cancel);};
@@ -145,14 +158,17 @@ export function runtime(id){
   conversation:(conversation,context)=>call("runtimeConversation",{runtime:id,conversation},context).then(descriptor=>descriptor===undefined?undefined:boundConversation(descriptor)),
   now:()=>nativeTransport.sync("runtimeNow",{runtime:id}),
   report:(failure,scope)=>nativeTransport.sync("runtimeReport",{runtime:id,error:nativeTransport.encodeError(failure),scope}),
-  sleepUntil:(until,checkpoint,context)=>call("sleepUntil",{runtime:id,until,checkpoint},context),
+  sleepUntil:(until,checkpoint,context)=>call("sleepUntil",{runtime:id,until:typeof until==="number"&&!Number.isFinite(until)?String(until):until,checkpoint},context),
  };
  runtimes.set(id,held);return held;
 }
 async function invoke(method,args,context){
  if(method==="phase"){
-  stats.phases++;const[id,phase,task,runtimeId,_serial,harnessId]=args;const current=runtime(runtimeId);current.taskId=task.id;current.conversationId=task.conversationId;current.harness=harnessId;
+  stats.phases++;const[id,phase,task,runtimeId,_serial,harnessId]=args;nativeTransport.actorRuntime(runtimeId,harnessId);const current=runtime(runtimeId);current.taskId=task.id;current.conversationId=task.conversationId;current.harness=harnessId;
   const callContext=withAbortSignal(current.signal,context??BACKGROUND_CONTEXT);const definition=objectFor(id).definition;
+  // Native admission can be sealed while this callback crosses the pipe. A
+  // handler that has not entered yet must not start under an ended invocation.
+  if(current.signal.aborted||phase==="$abort"&&!nativeTransport.sync("phase.enter",{runtime:runtimeId,harness:harnessId}))return;
   return (phase==="$abort"?definition.abort:definition.phases[phase])(task,current,callContext);
  }
  if(method==="change")return captureChange(args.tx,tx=>callbacks.get(args.callback)(tx,args.current??undefined));
@@ -180,12 +196,13 @@ export const Harness={async open(storage,options,context){
  const storageId=storageNext++;storages.set(storageId,storage);
  const registry=nativeRegistryId(options.registry);const reader=registry===undefined?handle(options.registry):undefined;
  const expected=nativeTransport.nextId;harnesses.set(expected,{options,onReport:options.onReport,storage});
- const id=await call("open",{rootTelemetry:describeTelemetry(options.telemetry),storage:storageId,nativeMemory:nativeMemoryHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,setTimer:options.setTimer!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:getDefaultDocumentRetention()},context);
- const closed=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
+ const id=await call("open",{rootTelemetry:describeTelemetry(options.telemetry),storage:storageId,nativeMemory:nativeMemoryHandle(storage),nativeSqlite:nativeSqliteHandle(storage),readOnly:options.readOnly===true,onWake:options.onWake!==undefined,setTimer:options.setTimer!==undefined,conversationCreated:options.conversationCreated!==undefined,nativeGeneration:process.env.PI_DURABLE_NATIVE_GENERATION_TASK==="1",registry,reader,environment:options.env!==undefined,clock:options.now!==undefined,settings:options.settings!==undefined,retention:getDefaultDocumentRetention()},context);
+ let closed;
+ const observeClosed=()=>closed??=call("closed",{harness:id}).then(end=>end.error?{...end,error:error(end.error)}:end);
  const modelsOption=options.models;
  const identity=mergeClientIdentity(DEFAULT_HARNESS_IDENTITY,options.identity);
  const fixedModels=modelsOption&&typeof modelsOption!=="function"?withClientIdentity(modelsOption,identity):undefined;
- const harness={subscribeClose:callback=>{const subscription=nativeTransport.sync("view.subscribeClose",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},subscribeCommits:callback=>{const subscription=nativeTransport.sync("view.subscribeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},options,onReport:options.onReport,storage,currentModels:()=>fixedModels??(typeof modelsOption==="function"?withClientIdentity(modelsOption(),identity):undefined),
+ const harness={observeCommits:callback=>{const subscription=nativeTransport.sync("view.observeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},subscribeClose:callback=>{const subscription=nativeTransport.sync("view.subscribeClose",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},subscribeCommits:callback=>{const subscription=nativeTransport.sync("view.subscribeCommits",{harness:id,callback:handle(callback)});return()=>nativeTransport.sync("view.unsubscribeCommits",{subscription});},options,onReport:options.onReport,storage,currentModels:()=>fixedModels??(typeof modelsOption==="function"?withClientIdentity(modelsOption(),identity):undefined),
   submission:(submission,context)=>call("submission.get",{harness:id,submission},context).then(submission=>submission===undefined?undefined:submissionHandle(submission)),
   abortSubmission:(submission,context,conversation)=>call("submission.abort",{harness:id,submission,conversation},context),
   wake:()=>nativeTransport.sync("wake",{harness:id}),
@@ -204,14 +221,15 @@ export const Harness={async open(storage,options,context){
   abortTask:(task,context)=>call("abortTask",{harness:id,task},context),
   commit:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
   commitWith:(callback,context)=>change("commit",{harness:id,conversation:null},callback,context),
-  closed,close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
+  get closed(){return observeClosed();},close:context=>nativeTransport.requestAdmitted("close",{harness:id},context),
   unloadDocuments:()=>call("unloadDocuments",{harness:id}),
   readOnLine:callback=>readSessionLine(id,callback),
   get documentCacheSizes(){return nativeTransport.sync("session.cache",{harness:id});},
+  get [Symbol.for("pi-durable.schedulerIndexSizes")](){return nativeTransport.sync("indexSizes",{harness:id});},
  };
  function submissionHandle(submission){return {id:submission,status:context=>call("submission.status",{harness:id,submission},context),wait:context=>call("submission.wait",{harness:id,submission},context),abort:context=>call("submission.abort",{harness:id,submission,handle:true},context)};}
  function conversation(conversationId){return{id:conversationId,compact:(instructions,context)=>call("conversation.compact",{harness:id,conversation:conversationId,instructions},context),context:(context,options)=>call("conversationContext",{harness:id,conversation:conversationId,at:options?.at},context),fork:(at,options,context)=>call("forkConversation",{harness:id,conversation:conversationId,at,options:conversationOptions(options)},context).then(conversation),reset:async(handoff,context)=>{const entry={kind:"pi.reset",head:"self"};if(handoff!==undefined)entry.model=[{role:"user",content:handoff,timestamp:options.now?.()??Date.now()}];await call("submission.submit",{harness:id,conversation:conversationId,draft:{type:"write",entry}},context);},watch:context=>call("view.watch",{harness:id,conversation:conversationId},context).then(graphWatch),abort:(context,options)=>call("conversation.abort",{harness:id,conversation:conversationId,background:options?.background},context),agent:context=>call("conversationAgent",{harness:id,conversation:conversationId},context).then(hydrateAgent),submit:(draft,context)=>call("submission.submit",{harness:id,conversation:conversationId,draft},context).then(submissionHandle),entries:(query,limit,cursor,context)=>call("entries",{harness:id,conversation:conversationId,query,limit,cursor},context),configure:(change,context)=>call("configure",{harness:id,conversation:conversationId,change:configuration(change)},context),waitForIdle:context=>call("waitForIdle",{harness:id,conversation:conversationId},context),commit:(callback,context)=>change("commit",{harness:id,conversation:conversationId},callback,context)};}
- viewBindings.set(harness,id);harnesses.set(id,harness);return harness;
+ viewBindings.set(harness,id);harnesses.set(id,harness);trackCrashFixture(storage,id);return harness;
 }};
 const storageIds=new WeakMap();let shuttingDown=false;
 export const transport={request:call,storage(storage){let id=storageIds.get(storage);if(id===undefined){id=storageNext++;storageIds.set(storage,id);storages.set(id,storage);}return id;},release(range){if(!shuttingDown&&nativeTransport.started)send({type:"context.release",range});}};
@@ -222,7 +240,7 @@ async function finish(contextOnly,submissionsOnly=false,checkpointPolicies=false
  if(checkpointPolicies){if(native.nativeCodemodeCheckpointPolicies===0)throw new Error("Native checkpoint policies were bypassed");}
  else if(contextOnly){if(native.contextReads===0||stats.storageCalls===0)throw new Error("Native context implementation was bypassed");}
  else if(submissionsOnly){if(native.submissionAdmissions===0||native.submissionReads===0||native.submissionWaits===0||stats.storageCalls===0)throw new Error("Native submissions were bypassed");}
- else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0&&native.nativeHarnessOpens===0)||(native.commits===0&&native.nativeMemoryCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0))throw new Error("Native scheduler was bypassed");
+ else if(native.phases!==stats.phases||(native.phases===0&&native.nativeModelRequests===0&&native.nativeHarnessOpens===0)||(native.commits===0&&native.nativeMemoryCommits===0&&native.nativeSqliteCommits===0)||(stats.storageCalls===0&&native.nativeMemoryCalls===0&&native.nativeSqliteCalls===0))throw new Error("Native scheduler was bypassed");
  if(process.env.PI_DURABLE_NATIVE_DUMP_STATE)writeFileSync(process.env.PI_DURABLE_NATIVE_DUMP_STATE,JSON.stringify(await call("diagnostics"),null,2));
  Object.assign(stats,native);
  if(process.env.PI_DURABLE_NATIVE_TASK_STATS)writeFileSync(process.env.PI_DURABLE_NATIVE_TASK_STATS,JSON.stringify(stats));
@@ -302,8 +320,18 @@ nativeTransport.register("environment.call",async(args,context)=>{
 nativeTransport.register("tool.copyValue",id=>copyJson(objectFor(id),{omitUndefinedProperties:true}));
 
 const commitListenerPromises=new Map();
+function listenerResult(result){if(result&&typeof result.then==="function"){const promise=Promise.resolve(result);promise.catch(()=>{});const capability=temporaryHandle(promise);commitListenerPromises.set(capability.id,capability);return {pending:capability.id};}return {};}
+function publicationValue(publication){return {...publication,changes:publication.changes.map(({nativeValue,nativeOps,...change})=>{if(nativeValue!==undefined)change.value=graphValue(nativeValue);if(nativeOps!==undefined)change.ops=graphValue(nativeOps);return tableWrite(change);})};}
 nativeTransport.register("commit.listenerResult",id=>{const capability=commitListenerPromises.get(id);commitListenerPromises.delete(id);return objectFor(id).finally(capability.release);});
-nativeTransport.register("commit.publication",args=>{const result=objectFor(args.callback)({...args.publication,changes:args.publication.changes.map(({nativeValue,nativeOps,...change})=>{if(nativeValue!==undefined)change.value=graphValue(nativeValue);if(nativeOps!==undefined)change.ops=graphValue(nativeOps);return tableWrite(change);})},BACKGROUND_CONTEXT);if(result&&typeof result.then==="function"){const promise=Promise.resolve(result);promise.catch(()=>{});const capability=temporaryHandle(promise);commitListenerPromises.set(capability.id,capability);return {pending:capability.id};}return {};});
+nativeTransport.register("commit.publication",args=>listenerResult(objectFor(args.callback)(publicationValue(args.publication),BACKGROUND_CONTEXT)));
+
+nativeTransport.register("view.create",async args=>handle(await objectFor(args.callback)(graphValue(args.value),()=>nativeTransport.sync("view.detachObserver",{attachment:args.attachment}))));
+nativeTransport.register("view.publication",args=>{objectFor(args.callback).publication?.(graphValue(args.before),graphValue(args.after),args.ops,publicationValue(args.publication),BACKGROUND_CONTEXT);return null;});
+nativeTransport.register("view.end",args=>{objectFor(args.callback).end(args.failure===null?undefined:{error:error(args.failure)});return null;});
+export function conversationViews(harness){
+ const id=viewBindings.get(harness);if(id===undefined)throw new Error("Not a Harness");
+ return {attach:async(conversation,create,context)=>{const factory=temporaryHandle(create);try{const result=await call("view.attach",{harness:id,conversation,callback:factory.id},context);return {observer:objectFor(result.observer),detach:()=>nativeTransport.sync("view.detachObserver",{attachment:result.attachment})};}finally{factory.release();}}};
+}
 
 export async function watchEvents(harness,conversation,context){
  const id=viewBindings.get(harness);if(id===undefined)throw new Error("Not a Harness");
@@ -376,7 +404,7 @@ function readSessionLine(id,callback){
 nativeTransport.register("session.now",id=>sessions.get(id).now());
 nativeTransport.register("session.retention",id=>{const value=sessions.get(id).retention();return typeof value==="number"&&!Number.isFinite(value)?String(value):value??null;});
 nativeTransport.register("session.conversationCreated",args=>captureChange(args.tx,tx=>sessions.get(args.harness).session.deref().conversationCreated(tx,args.record)));
-nativeTransport.register("session.closeListener",id=>{objectFor(id)();return null;});
+nativeTransport.register("session.closeListener",id=>listenerResult(objectFor(id)()));
 nativeTransport.register("session.beforeClose",id=>sessions.get(id).session.deref().beforeClose());
 installSessionBinding((session,storage,now,retention,setTimer,readOnly)=>{
  const storageId=storageNext++;storages.set(storageId,storage);

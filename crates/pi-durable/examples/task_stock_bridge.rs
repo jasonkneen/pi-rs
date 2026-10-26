@@ -176,6 +176,7 @@ struct Hub {
     pending: Mutex<HashMap<u64, Pending>>,
     host_pending: Mutex<HashSet<u64>>,
     phase_serials: Mutex<HashMap<u64, u64>>,
+    abort_receipts: Mutex<HashMap<(u64, TaskId), HashSet<u64>>>,
     changed: tokio::sync::Notify,
     input_closed: AtomicBool,
     adoptions: Mutex<HashMap<u64, Adopt>>,
@@ -187,6 +188,7 @@ struct Hub {
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
     runtimes: Mutex<HashMap<u64, TaskRuntime>>,
+    runtime_ids: Mutex<HashMap<(u64, TaskId), u64>>,
     native_runtimes: Mutex<HashMap<u64, ErasedRuntime>>,
     tool: tool_bridge::ToolBridge,
     environment: tool_environment::EnvironmentBridge,
@@ -387,15 +389,21 @@ impl Hub {
             self.source_compaction_phases
                 .fetch_add(1, Ordering::Relaxed);
         }
-        let existing = self
-            .runtimes
-            .lock()
-            .iter()
-            .find(|(_, held)| held.same_invocation(&runtime))
-            .map(|(id, _)| *id);
+        let key = (
+            *context.value(&HARNESS_CONTEXT).expect("invocation Harness"),
+            task.record().id(),
+        );
+        let candidate = self.runtime_ids.lock().get(&key).copied();
+        let existing = candidate.filter(|id| {
+            self.runtimes
+                .lock()
+                .get(id)
+                .is_some_and(|held| held.same_invocation(&runtime))
+        });
         let id = existing.unwrap_or_else(|| {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             self.runtimes.lock().insert(id, runtime.clone());
+            self.runtime_ids.lock().insert(key, id);
             id
         });
         if existing.is_none() {
@@ -407,19 +415,34 @@ impl Hub {
             *serial += 1;
             *serial
         };
-        let call = self.call(
-            "phase",
-            encode(&(
-                definition,
-                phase,
-                task.record(),
-                id,
-                serial,
-                context.value(&HARNESS_CONTEXT).map(|id| *id),
-            )),
-        );
+        let abort = phase.equals_str("$abort");
+        let receipt_key = context
+            .value(&HARNESS_CONTEXT)
+            .map(|harness| (*harness, task.record().id()));
+        let args = encode(&(
+            definition,
+            phase,
+            task.record(),
+            id,
+            serial,
+            context.value(&HARNESS_CONTEXT).map(|id| *id),
+        ));
+        let hub = self.clone();
         Box::pin(async move {
-            call.await?;
+            if abort {
+                loop {
+                    let changed = hub.changed.notified();
+                    tokio::pin!(changed);
+                    changed.as_mut().enable();
+                    if receipt_key.is_none_or(|key| !hub.abort_receipts.lock().contains_key(&key)) {
+                        break;
+                    }
+                    changed.await;
+                }
+            }
+            // The caller joined the previous run before this fresh abort
+            // handler. Preserve that order across the additional RPC reply.
+            hub.call("phase", args).await?;
             Ok(())
         })
     }
@@ -658,7 +681,7 @@ impl Hub {
         if method.starts_with("builtin.") {
             return self.builtin_request(&method, request, context);
         }
-        if method.starts_with("memory.") {
+        if method.starts_with("memory.") || method.starts_with("sqlite.") {
             return self.memory_request(&method, request);
         }
         if method.starts_with("view.") {
@@ -709,7 +732,12 @@ impl Hub {
                 let handle: u64 = field(&request, "storage")?;
                 let registry = self.registry_reader(&request)?;
                 self.readers.lock().insert(harness, registry.clone());
-                let storage: Arc<dyn Storage> = if let Some(id) = request["nativeMemory"].as_u64() {
+                let storage: Arc<dyn Storage> = if let Some(id) = request["nativeSqlite"].as_u64() {
+                    self.memory
+                        .sqlite_direct_opens
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.sqlite_for_harness(id, handle)?
+                } else if let Some(id) = request["nativeMemory"].as_u64() {
                     self.memory.direct_opens.fetch_add(1, Ordering::Relaxed);
                     self.memory_storage(id)?
                 } else {
@@ -1053,18 +1081,22 @@ impl Hub {
             }
             "conversationContext" => {
                 self.context_reads.fetch_add(1, Ordering::Relaxed);
-                mapped(pi_durable::harness::context::read_context(
-                    &self.scheduler(&request)?.session(),
-                    self.harness_storage
-                        .lock()
-                        .get(&field::<u64>(&request, "harness")?)
-                        .cloned()
-                        .ok_or_else(|| Error::message("Unknown harness storage"))?,
-                    field(&request, "conversation")?,
-                    &context,
-                    field(&request, "at")?,
-                ))
+                let conversation = self
+                    .facade(&request)?
+                    .conversation(field(&request, "conversation")?, &context);
+                let at = field(&request, "at")?;
+                Box::pin(async move {
+                    let conversation = conversation
+                        .await?
+                        .ok_or_else(|| Error::message("Conversation does not exist"))?;
+                    Ok(Some(encode(&conversation.context(at, &context).await?)))
+                })
             }
+            "phase.enter" => {
+                let active = !self.runtime(&request)?.signal().aborted();
+                Box::pin(async move { Ok(Some(encode(&active))) })
+            }
+            "host.turn" => Box::pin(async { Ok(None) }),
             "change.turn" => {
                 let request: u64 = field(&request, "request")?;
                 Box::pin(async move {
@@ -1086,13 +1118,14 @@ impl Hub {
                 let runtime = self.runtime(&request)?;
                 let id: u64 = field(&request, "runtime")?;
                 let serial: u64 = field(&request, "serial")?;
+                let owner = self.session(&request)?;
                 Box::pin(async move {
                     loop {
                         let changed = self.changed.notified();
                         tokio::pin!(changed);
                         changed.as_mut().enable();
                         // The source continues its synchronous/microtask work
-                        // before a host timer. Yield once the invocation ends,
+                        // before a host timer. Yield when the invocation ends,
                         // another phase starts, or a host promise can block it.
                         if runtime.signal().aborted()
                             || self
@@ -1106,6 +1139,16 @@ impl Hub {
                         }
                         changed.await;
                     }
+                    // Cleanup may have queued wake delivery behind this turn.
+                    // Drain that cooperative queue without joining storage or a
+                    // crashed invocation whose backend can intentionally hang.
+                    let (send, receive) = tokio::sync::oneshot::channel();
+                    owner.spawn(async move {
+                        let _ = send.send(());
+                    });
+                    receive
+                        .await
+                        .map_err(|error| Error::message(error.to_string()))?;
                     Ok(None)
                 })
             }
@@ -1234,11 +1277,22 @@ impl Hub {
                     .map_err(|error| Error::message(error.to_string()))?
                 })
             }
-            "sleepUntil" => mapped(self.runtime(&request)?.sleep_until(
-                field(&request, "until")?,
-                field(&request, "checkpoint")?,
-                &context,
-            )),
+            "sleepUntil" => mapped(
+                self.runtime(&request)?.sleep_until(
+                    match request["until"]
+                        .as_string()
+                        .and_then(|value| value.to_string_checked().ok())
+                        .as_deref()
+                    {
+                        Some("NaN") => f64::NAN,
+                        Some("Infinity") => f64::INFINITY,
+                        Some("-Infinity") => f64::NEG_INFINITY,
+                        _ => field(&request, "until")?,
+                    },
+                    field(&request, "checkpoint")?,
+                    &context,
+                ),
+            ),
             "runtimeAgent" => {
                 self.agent_reads.fetch_add(1, Ordering::Relaxed);
                 let operation = self.runtime(&request)?.agent(&context);
@@ -1441,6 +1495,10 @@ impl Hub {
                 create.abandon_on_restart = options["abandonOnRestart"].as_bool().unwrap_or(false);
                 mapped(tx.create_erased_task(&task, request["input"].clone(), create))
             }
+            "indexSizes" => {
+                let sizes = self.scheduler(&request)?.index_sizes();
+                Box::pin(async move { Ok(Some(encode(&sizes))) })
+            }
             "diagnostics" => {
                 let schedulers = self
                     .schedulers
@@ -1478,6 +1536,24 @@ impl Hub {
                 let mut value = encode(
                     &serde_json::json!({"nativeMemoryOpens":self.memory.direct_opens.load(Ordering::Relaxed),"nativeMemoryCalls":self.memory.calls.load(Ordering::Relaxed),"nativeMemoryCommits":self.memory.commits.load(Ordering::Relaxed),"nativeModelRequests":self.models.requests.load(Ordering::Relaxed),"nativeModelCompletions":self.models.completions.load(Ordering::Relaxed),"nativeCompactionHooks":self.models.compaction_hooks.load(Ordering::Relaxed),"sourceCompactionPhases":self.source_compaction_phases.load(Ordering::Relaxed),"nativeGenerationHooks":self.models.hook_calls.load(Ordering::Relaxed),"nativeModelPolls":self.models.polls.load(Ordering::Relaxed),"nativeModelCancels":self.models.cancellations.load(Ordering::Relaxed),"nativeEventFrames":self.views.event_frames.load(Ordering::Relaxed),"nativeEventReads":self.views.event_reads.load(Ordering::Relaxed),"viewReads":self.views.reads.load(Ordering::Relaxed),"nativeToolHooks":self.tool.hook_calls.load(Ordering::Relaxed),"nativeToolCalls":self.tool.executions.load(Ordering::Relaxed),"compactionReads":self.compaction_reads.load(Ordering::Relaxed),"promptReplays":self.prompt.replays.load(Ordering::Relaxed),"promptPlans":self.prompt.plans.load(Ordering::Relaxed),"promptRenders":self.prompt.renders.load(Ordering::Relaxed),"promptSectionCalls":self.prompt.section_calls.load(Ordering::Relaxed),"phases":self.phases.load(Ordering::Relaxed),"sourceGenerationPhases":self.source_generation_phases.load(Ordering::Relaxed),"commits":self.commits.load(Ordering::Relaxed),"contextReads":self.context_reads.load(Ordering::Relaxed),"registryReads":self.registry_reads.load(Ordering::Relaxed),"agentReads":self.agent_reads.load(Ordering::Relaxed),"nativeHarnessOpens":self.harness_opens.load(Ordering::Relaxed),"hookCalls":self.hook_calls.load(Ordering::Relaxed),"graphReads":self.graph.reads.load(Ordering::Relaxed),"graphFrames":self.graph.frames.load(Ordering::Relaxed),"inspections":self.inspections.load(Ordering::Relaxed),"readerSnapshots":self.registry.reader_snapshots.load(Ordering::Relaxed),"readerSubscriptions":self.registry.reader_subscriptions.load(Ordering::Relaxed),"documentReads":self.documents.reads.load(Ordering::Relaxed),"documentWrites":self.documents.writes.load(Ordering::Relaxed),"documentWatches":self.documents.watches.load(Ordering::Relaxed),"documentFrames":self.documents.watch_frames.load(Ordering::Relaxed),"submissionAdmissions":self.submissions.admissions.load(Ordering::Relaxed),"submissionReads":self.submissions.reads.load(Ordering::Relaxed),"submissionWaits":self.submissions.waits.load(Ordering::Relaxed),"submissionAborts":self.submissions.aborts.load(Ordering::Relaxed)}),
                 );
+                value.as_object_mut().unwrap().extend([
+                    (
+                        "nativeSqliteOpens".into(),
+                        encode(&self.memory.sqlite_opens.load(Ordering::Relaxed)),
+                    ),
+                    (
+                        "nativeSqliteDirectOpens".into(),
+                        encode(&self.memory.sqlite_direct_opens.load(Ordering::Relaxed)),
+                    ),
+                    (
+                        "nativeSqliteCalls".into(),
+                        encode(&self.memory.sqlite_calls.load(Ordering::Relaxed)),
+                    ),
+                    (
+                        "nativeSqliteCommits".into(),
+                        encode(&self.memory.sqlite_commits.load(Ordering::Relaxed)),
+                    ),
+                ]);
                 value.as_object_mut().unwrap().insert(
                     "nativeSessionOpens".into(),
                     encode(&self.sessions.lock().len()),
@@ -1581,6 +1657,7 @@ async fn main() {
         pending: Mutex::new(HashMap::new()),
         host_pending: Mutex::new(HashSet::new()),
         phase_serials: Mutex::new(HashMap::new()),
+        abort_receipts: Mutex::new(HashMap::new()),
         changed: tokio::sync::Notify::new(),
         input_closed: AtomicBool::new(false),
         adoptions: Mutex::new(HashMap::new()),
@@ -1592,6 +1669,7 @@ async fn main() {
         readers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),
         runtimes: Mutex::new(HashMap::new()),
+        runtime_ids: Mutex::new(HashMap::new()),
         native_runtimes: Mutex::new(HashMap::new()),
         tool: tool_bridge::ToolBridge::default(),
         environment: tool_environment::EnvironmentBridge::default(),
@@ -1783,6 +1861,20 @@ fn begin_request(
 ) {
     let id = field::<u64>(&value, "id").unwrap();
     let admit = value["admit"].as_bool() == Some(true);
+    let abort_receipt = (value["method"].to_utf8().as_deref() == Some("abortTask"))
+        .then(|| {
+            value["harness"]
+                .as_u64()
+                .zip(field::<TaskId>(&value, "task").ok())
+        })
+        .flatten();
+    if let Some(task) = abort_receipt {
+        hub.abort_receipts
+            .lock()
+            .entry(task)
+            .or_default()
+            .insert(id);
+    }
     let owner = value["harness"]
         .as_u64()
         .and_then(|_| hub.session(&value).ok());
@@ -1816,6 +1908,15 @@ fn begin_request(
             Err(error) => object([("id", encode(&id)), ("error", error_value(&error))]),
         });
         hub.contexts.lock().remove(&id);
+        if let Some(task) = abort_receipt {
+            let mut receipts = hub.abort_receipts.lock();
+            if let Some(pending) = receipts.get_mut(&task) {
+                pending.remove(&id);
+                if pending.is_empty() {
+                    receipts.remove(&task);
+                }
+            }
+        }
         hub.changed.notify_waiters();
     };
     if let Some(owner) = owner {

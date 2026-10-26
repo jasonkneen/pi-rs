@@ -1247,3 +1247,119 @@ async fn task_times_owners_submissions_and_terminal_document_retirement() {
     );
     session.close(&Context::default()).await.unwrap();
 }
+
+#[tokio::test]
+async fn failed_document_watches_preserve_the_session_error_identity() {
+    let (_, session) = open();
+    bump(&session).await.unwrap();
+    let watch = session
+        .watch_doc(&counter(), (), &Context::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let original = Error::host("DiskError", "original failure".into());
+    session.fail(original.clone());
+    let pi_chord::WatchEnd::Failed { error } = watch.closed().await else {
+        panic!("watch did not fail")
+    };
+    assert!(error.cause::<Error>().unwrap().same_error(&original));
+    let _ = session.close(&Context::default()).await;
+}
+
+#[tokio::test]
+async fn document_listener_failures_retain_native_error_identity() {
+    let storage = Arc::new(ControlledStorage::default());
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let capture = reports.clone();
+    let session = Session::new(
+        storage,
+        SessionOptions {
+            report: Arc::new(move |error| capture.lock().push(error)),
+            ..Default::default()
+        },
+    );
+    bump(&session).await.unwrap();
+    let watch = session
+        .watch_doc(&counter(), (), &Context::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let original = Error::host("ListenerError", "original listener failure".into());
+    let thrown = original.clone();
+    watch
+        .start(move |_| {
+            let thrown = thrown.clone();
+            async move { Err(thrown) }
+        })
+        .unwrap();
+    bump(&session).await.unwrap();
+    let pi_chord::WatchEnd::ListenerError { error } = watch.closed().await else {
+        panic!("watch listener did not fail")
+    };
+    assert!(error.cause::<Error>().unwrap().same_error(&original));
+    assert!(reports.lock()[0].same_error(&original));
+    session.close(&Context::default()).await.unwrap();
+}
+
+#[tokio::test]
+async fn close_listener_failures_are_contained_without_joining_pending_listeners() {
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let reported = Arc::new(tokio::sync::Notify::new());
+    let capture = reports.clone();
+    let notify = reported.clone();
+    let session = Session::new(
+        Arc::new(ControlledStorage::default()),
+        SessionOptions {
+            report: Arc::new(move |error| {
+                capture.lock().push(error);
+                notify.notify_one();
+            }),
+            ..Default::default()
+        },
+    );
+    let synchronous = Error::message("close listener failed synchronously");
+    let cause = synchronous.clone();
+    let _first = session
+        .subscribe_close_async(move || Err(cause.clone()))
+        .unwrap();
+    let asynchronous = Error::message("close listener failed asynchronously");
+    let cause = asynchronous.clone();
+    let (release, wait) = tokio::sync::oneshot::channel::<()>();
+    let wait = Arc::new(Mutex::new(Some(wait)));
+    let _second = session
+        .subscribe_close_async(move || {
+            let wait = wait.lock().take().unwrap();
+            let cause = cause.clone();
+            Ok(Box::pin(async move {
+                let _ = wait.await;
+                Err(cause)
+            }))
+        })
+        .unwrap();
+    let seen = Arc::new(AtomicUsize::new(0));
+    let count = seen.clone();
+    let _third = session
+        .subscribe_close(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        session.close(&Context::default()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+    assert!(session.failure().is_none());
+    assert!(reports.lock()[0].same_error(&synchronous));
+    release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while reports.lock().len() != 2 {
+            reported.notified().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(reports.lock()[1].same_error(&asynchronous));
+}

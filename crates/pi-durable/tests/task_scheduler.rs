@@ -834,6 +834,8 @@ async fn seed(
 async fn recovery_counts_crashes_parks_at_the_limit_and_retry_resets_the_count() {
     let storage = Arc::new(MemoryStorage::new());
     let id = seed(storage.clone(), "restart", true, Some(1), false).await;
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let report = reports.clone();
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = calls.clone();
     let task = one_step(
@@ -851,6 +853,7 @@ async fn recovery_counts_crashes_parks_at_the_limit_and_retry_resets_the_count()
         storage,
         catalog(&[task]),
         SchedulerOptions {
+            on_report: Arc::new(move |error, info, _| report.lock().push((error, info))),
             settings: Arc::new(|| {
                 Ok(pi_durable::harness::settings::resolve_settings(
                     pi_durable::harness::settings::HarnessSettings {
@@ -869,6 +872,9 @@ async fn recovery_counts_crashes_parks_at_the_limit_and_retry_resets_the_count()
     let recovered = record(&scheduler, id).await;
     assert_eq!(recovered.state.status(), TaskStatus::Pending);
     assert_eq!(recovered.info.restarts, Some(2));
+    assert_eq!(reports.lock().len(), 1);
+    assert_eq!(reports.lock()[0].1.kind, "task_parked");
+    assert_eq!(reports.lock()[0].1.task.as_ref().unwrap().id, id);
     assert_eq!(
         scheduler.blocked_reason(&recovered),
         Some(BlockedReason::RestartLimit)
@@ -997,10 +1003,21 @@ async fn migrations_are_cached_by_definition_identity_and_replacement_can_repair
     };
     let installed = define_task(broken);
     let catalog = catalog(&[installed]);
+    let wakes = Arc::new(Mutex::new(Vec::new()));
+    let delivered = Arc::new(tokio::sync::Notify::new());
+    let capture = wakes.clone();
+    let notification = delivered.clone();
     let scheduler = TaskScheduler::open(
         storage,
         catalog.clone(),
-        Default::default(),
+        SchedulerOptions {
+            on_wake: Some(Arc::new(move |wake| {
+                capture.lock().push(wake);
+                notification.notify_one();
+                Ok(())
+            })),
+            ..Default::default()
+        },
         Default::default(),
         &context,
     )
@@ -1017,6 +1034,13 @@ async fn migrations_are_cached_by_definition_identity_and_replacement_can_repair
         scheduler.blocked_reason(&record(&scheduler, id).await),
         Some(BlockedReason::MigrationFailed)
     );
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while wakes.lock().last().is_none_or(|wake| wake.active) {
+            delivered.notified().await;
+        }
+    })
+    .await
+    .unwrap();
     scheduler.resume().unwrap();
     for _ in 0..20 {
         tokio::task::yield_now().await;

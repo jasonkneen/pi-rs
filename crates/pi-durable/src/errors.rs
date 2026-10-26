@@ -209,3 +209,17 @@ impl From<String> for Error {
         Self::message(message)
     }
 }
+
+impl From<Error> for pi_chord::WatchError {
+    fn from(error: Error) -> Self {
+        Self::with_cause(error.to_string(), error)
+    }
+}
+impl From<pi_chord::WatchError> for Error {
+    fn from(error: pi_chord::WatchError) -> Self {
+        error
+            .cause::<Error>()
+            .cloned()
+            .unwrap_or_else(|| Error::message(error.to_string()))
+    }
+}

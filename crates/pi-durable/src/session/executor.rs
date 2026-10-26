@@ -160,7 +160,17 @@ impl Drop for RunGuard {
                 state.stopped = true;
                 std::mem::take(&mut state.ready)
             };
-            // Dropping captured futures can run arbitrary destructors.
+            // Detach every future before dropping any of them. A shared future
+            // can retain this job's waker, and wake/drop another job while its
+            // own notification lock is held. Leaving the future inside that
+            // waker's job creates a cycle or reenters the shared lock at shutdown.
+            let futures = self
+                .active
+                .values()
+                .chain(ready.iter())
+                .filter_map(|job| job.future.lock().take())
+                .collect::<Vec<_>>();
+            drop(futures);
             drop(ready);
         }
     }
@@ -193,6 +203,36 @@ pub(crate) fn spawn(operation: impl Future<Output = ()> + Send + 'static) {
 mod tests {
     use super::*;
     use tokio::sync::{mpsc, oneshot};
+
+    #[test]
+    fn runtime_shutdown_detaches_pending_futures_from_their_own_shared_wakers() {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let executor = Executor::default();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let retained = dropped.clone();
+        let shared = std::future::pending::<()>().boxed().shared();
+        let pending = shared.clone();
+        runtime.block_on(async {
+            executor.spawn(async move {
+                let _retained = Dropped(retained);
+                pending.await;
+            });
+            tokio::task::yield_now().await;
+        });
+        assert!(!dropped.load(Ordering::SeqCst));
+        drop(runtime);
+        assert!(dropped.load(Ordering::SeqCst));
+        drop(shared);
+    }
 
     #[tokio::test]
     async fn jobs_start_and_resume_in_admission_and_wake_order() {

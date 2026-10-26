@@ -136,7 +136,7 @@ impl TaskGraphView {
                 if let Some(mount) = mount {
                     let observers = mount.lock().observers.values().cloned().collect::<Vec<_>>();
                     for observer in observers {
-                        observer.end(inner.session.failure().map(|error| error.to_string()));
+                        observer.end_with_error(inner.session.failure().map(Into::into));
                     }
                 }
             }
@@ -176,7 +176,7 @@ impl TaskGraphView {
                         }
                     }
                 },
-                move |error| report.report(Error::message(error)),
+                move |error| report.report(Error::from(error)),
                 |value| vec![Op::Replace(crate::wire::encode(value.as_ref()))],
             );
             let mut current = graph.inner.mount.lock();

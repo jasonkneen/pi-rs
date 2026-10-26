@@ -70,7 +70,7 @@ pub(crate) fn inject_trace(context: &Context) -> Result<Option<JsonObject>> {
 }
 type Report = Arc<dyn Fn(Error) + Send + Sync>;
 type Listener = Arc<dyn Fn(&CommitPublication, &Context) -> Result<()> + Send + Sync>;
-type CloseListener = Arc<dyn Fn() + Send + Sync>;
+type CloseListener = Arc<dyn Fn() -> Result<()> + Send + Sync>;
 type ConversationHook =
     Arc<dyn Fn(Transaction, ConversationRecord) -> StorageFuture<()> + Send + Sync>;
 type BeforeClose = Arc<dyn Fn(Session) -> StorageFuture<()> + Send + Sync>;
@@ -556,6 +556,40 @@ impl Session {
         &self,
         listener: impl Fn() + Send + Sync + 'static,
     ) -> Result<Subscription> {
+        self.subscribe_close_result(move || {
+            listener();
+            Ok(())
+        })
+    }
+    /// Observe a close listener's future without delaying shutdown. Listener
+    /// failures are reported and cannot prevent the other listeners from running.
+    pub fn subscribe_close_async(
+        &self,
+        listener: impl Fn() -> Result<StorageFuture<()>> + Send + Sync + 'static,
+    ) -> Result<Subscription> {
+        let weak = Arc::downgrade(&self.inner);
+        self.subscribe_close_result(move || {
+            let operation = listener()?;
+            if let Some(inner) = weak.upgrade() {
+                let session = Session { inner };
+                let owner = session.clone();
+                session.spawn(async move {
+                    let result = std::panic::AssertUnwindSafe(operation)
+                        .catch_unwind()
+                        .await
+                        .unwrap_or_else(|panic| Err(panic_error(panic)));
+                    if let Err(error) = result {
+                        owner.report_kind(error, SessionReportKind::Listener, None);
+                    }
+                });
+            }
+            Ok(())
+        })
+    }
+    fn subscribe_close_result(
+        &self,
+        listener: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Subscription> {
         let listener: CloseListener = Arc::new(listener);
         let mut state = self.inner.state.lock();
         self.healthy()?;
@@ -1011,7 +1045,7 @@ impl Session {
                 move || detach_observer(Arc::downgrade(&source.inner), token),
                 move |error| {
                     if let Some(inner) = report.upgrade() {
-                        Session { inner }.report(Error::message(error));
+                        Session { inner }.report(Error::from(error));
                     }
                 },
             );
@@ -1048,10 +1082,11 @@ impl Session {
                     let failure = closing
                         .upgrade()
                         .and_then(|inner| inner.guard.failure())
-                        .map(|e| e.to_string());
+                        .map(Into::into);
                     if let Some(watch) = closing_watch.upgrade() {
-                        watch.end(failure);
+                        watch.end_with_error(failure);
                     }
+                    Ok(())
                 }),
             );
             drop(state);
@@ -1278,8 +1313,10 @@ impl Session {
             timer();
         }
         for listener in listeners.into_values() {
-            if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener())) {
-                self.report(panic_error(p));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener()))
+                .unwrap_or_else(|panic| Err(panic_error(panic)));
+            if let Err(error) = result {
+                self.report_kind(error, SessionReportKind::Listener, None);
             }
         }
         let session = self.clone();
@@ -1334,10 +1371,10 @@ impl Session {
             if let Some(timer) = timer {
                 timer();
             }
-            let failure = session.inner.guard.failure().map(|e| e.to_string());
+            let failure = session.inner.guard.failure().map(Into::into);
             for observer in observers.into_values() {
                 if let Some(watch) = observer.watch.upgrade() {
-                    watch.end(failure.clone());
+                    watch.end_with_error(failure.clone());
                 }
             }
             let result = session.inner.guard.close_backend(context).await;
@@ -1531,13 +1568,15 @@ impl<T: DocumentState> DocumentWatch<T> {
     {
         let listener = Arc::new(listener);
         self.watch
-            .start(move |frame| {
+            .start_with_error(move |frame| {
                 let listener = listener.clone();
                 async move {
                     let value = if frame.value.is_null() {
                         None
                     } else {
-                        Some(Arc::new(wire::decode(&frame.value)?))
+                        Some(Arc::new(
+                            wire::decode(&frame.value).map_err(pi_chord::WatchError::from)?,
+                        ))
                     };
                     listener(DocumentFrame {
                         value,
@@ -1545,7 +1584,7 @@ impl<T: DocumentState> DocumentWatch<T> {
                         context: frame.context,
                     })
                     .await
-                    .map_err(|e| e.to_string())
+                    .map_err(pi_chord::WatchError::from)
                 }
             })
             .map_err(Error::message)

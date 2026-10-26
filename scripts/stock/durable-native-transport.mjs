@@ -2,11 +2,17 @@
 // calls. A synchronous caller pumps frames so nested host callbacks can finish.
 import {Worker,MessageChannel,receiveMessageOnPort,threadId} from "node:worker_threads";
 import {appendFileSync} from "node:fs";
-let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,pumping=0,synchronousCallbacks=0;
+let worker,port,signal,next=1,closed=false,closing=false,transportFailure,exitResolve,synchronousCallbacks=0;
 const pending=new Map(),handlers=new Map(),events=new Map(),completions=new Map(),cancellations=new WeakSet(),admissionFailures=new WeakSet();
 const errors=new Map(),foreignErrors=new Map();let nextForeignError=1;
-const contexts=new Map();
+const contexts=new Map(),runtimeOwners=new Map(),abandoned=new Set();
 function captureError(value){const id=nextForeignError++;foreignErrors.set(id,value);return id;}
+function encodeError(error){
+ let name="Error",message;
+ try{if(typeof error?.name==="string")name=error.name;}catch{}
+ try{message=error instanceof Error?error.message:String(error);}catch{try{message=Object.prototype.toString.call(error);}catch{message="[unformattable error]";}}
+ return {foreignId:captureError(error),name,message};
+}
 let exited,contextAdapter;
 const bufferedTrace=process.env.PI_DURABLE_NATIVE_TRACE_BUFFERED==="1"?[]:undefined;
 function flushTrace(){if(bufferedTrace?.length&&process.env.PI_DURABLE_NATIVE_TRACE){appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,bufferedTrace.join(""));bufferedTrace.length=0;}}
@@ -15,17 +21,19 @@ export function failure(value){if(foreignErrors.has(value.foreignId))return fore
 function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE){const row=JSON.stringify({at:performance.now(),pid:process.pid,threadId,direction,type:frame.type,id:frame.id,method:frame.method,operation:frame.args?.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,run:frame.run??frame.args?.run,event:frame.event,...(frame.method==="codemode.vm.start"?{codePrefix:typeof frame.args?.code==="string"?frame.args.code.slice(0,256):undefined}:{}),error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n";if(bufferedTrace)bufferedTrace.push(row);else appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,row);}}
 function send(frame){trace("send",frame);port.postMessage(frame);}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
-function dispatch(frame){
- // Preserve promise continuations when a synchronous call pumps several
- // frames. Later asynchronous callbacks must wait for that call to return.
- if(pumping&&frame.type==="callback"&&!frame.sync){queueMicrotask(()=>dispatch(frame));return;}
+function dispatch(frame,delivered=false){
+ // MessagePort can deliver a batch before running promise continuations.
+ // A callback after a reply must follow that reply's queued continuations,
+ // including when a synchronous caller is pumping the batch itself.
+ if(!delivered&&frame.type==="callback"&&!frame.sync){queueMicrotask(()=>dispatch(frame,true));return;}
  trace("receive",frame);
  if(frame.type==="context.drop"){contexts.delete(frame.id);return;}
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
  if(frame.type==="callback"){
+  if(closing||closed)return;
   const handler=handlers.get(frame.method);
-  const reject=error=>{send({type:"callback.result",id:frame.id,error:{foreignId:captureError(error),name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}});completions.get(frame.method)?.(frame);};
-  const reply=value=>{try{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});}catch(error){reject(error);return;}completions.get(frame.method)?.(frame);};
+  const reject=error=>{if(closing||closed)return;send({type:"callback.result",id:frame.id,error:encodeError(error)});completions.get(frame.method)?.(frame);};
+  const reply=value=>{if(closing||closed)return;try{send({type:"callback.result",id:frame.id,...(value===undefined?{missing:true}:{value})});}catch(error){reject(error);return;}completions.get(frame.method)?.(frame);};
   if(frame.sync)synchronousCallbacks++;
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
@@ -41,6 +49,7 @@ function dispatch(frame){
   if(frame.code!==0||pending.size)fail(new Error(`Native durable bridge exited ${frame.code}`));return;
  }
  if(events.has(frame.type)){events.get(frame.type)(frame);return;}
+ if(abandoned.delete(frame.id))return;
  const waiter=pending.get(frame.id);
  if(!waiter){fail(new Error(`Unknown native response ${frame.id}`));return;}
  if(waiter.sync){waiter.frame=frame;return;}
@@ -53,9 +62,14 @@ function start(){
  worker=new Worker(new URL("./durable-sync-worker.mjs",import.meta.url),{workerData:{port:port2,signal:signal.buffer,binary},transferList:[port2]});
  port.on("message",dispatch);worker.on("error",fail);
 }
-function drain(){pumping++;try{for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}finally{pumping--;}}
+function drain(){for(let message;(message=receiveMessageOnPort(port));)dispatch(message.message);}
 export const nativeTransport={
- encodeError:error=>({foreignId:captureError(error),name:error?.name??"Error",message:error instanceof Error?error.message:String(error)}),
+ encodeError,
+ // Only explicit crash fixtures retire an actor this way. Its promises stay
+ // unresolved, matching a lost process; every live actor still must settle all
+ // requests before shutdown. Late replies from the retired actor are discarded.
+ actorRuntime(runtime,owner){runtimeOwners.set(runtime,owner);},
+ crashActor(owner){trace("fixture",{type:"actor.crash",harness:owner});for(const [id,waiter] of pending){if(waiter.owner===owner){pending.delete(id);waiter.detach?.();contexts.delete(id);abandoned.add(id);}}},
  contextAdapter(adapter){contextAdapter=adapter;},
  error(kind,create){if(errors.has(kind))throw new Error(`Duplicate native error ${kind}`);errors.set(kind,create);},
  isCancellation:error=>cancellations.has(error),isAdmissionFailure:error=>admissionFailures.has(error),
@@ -69,7 +83,7 @@ export const nativeTransport={
   if(context!==undefined)contexts.set(id,context);
   const response=new Promise((resolve,reject)=>{
    const signal=context?.abortSignal;const abort=()=>send({type:"abort",id,message:signal.reason?.message??String(signal.reason)});
-   pending.set(id,{method,resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
+   pending.set(id,{method,owner:args.harness??runtimeOwners.get(args.runtime),resolve,reject,context,detach:()=>signal?.removeEventListener("abort",abort)});
    try{send({id,method,...args,...(contextAdapter?{telemetry:contextAdapter.encode(context)}:{}),...(signal?.aborted?{abortInitially:signal.reason?.message??String(signal.reason)}:{})});}catch(error){pending.delete(id);admissionFailures.add(error);reject(error);return;}
    if(!signal?.aborted)signal?.addEventListener("abort",abort,{once:true});
   });

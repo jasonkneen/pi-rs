@@ -352,3 +352,53 @@ async fn delivery_idle_waits_for_the_listener_and_wakes_every_waiter_on_stop() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn watch_failures_retain_the_original_native_cause() {
+    use pi_chord::WatchError;
+    let original = Arc::new(String::from("original failure"));
+    let observed = Arc::new(parking_lot::Mutex::new(None));
+    let capture = observed.clone();
+    let watch = Watch::new(
+        number(0),
+        || {},
+        move |error| {
+            *capture.lock() = Some(error);
+        },
+    );
+    let cause = original.clone();
+    watch
+        .start_with_error(move |_| {
+            let cause = cause.clone();
+            async move { Err(WatchError::with_cause("original failure", cause)) }
+        })
+        .unwrap();
+    advance(&watch, 1);
+    let WatchEnd::ListenerError { error } = watch.closed().await else {
+        panic!("listener failure missing")
+    };
+    assert!(Arc::ptr_eq(
+        error.cause::<Arc<String>>().unwrap(),
+        &original
+    ));
+    assert!(Arc::ptr_eq(
+        observed
+            .lock()
+            .as_ref()
+            .unwrap()
+            .cause::<Arc<String>>()
+            .unwrap(),
+        &original
+    ));
+    let source = Watch::new(number(0), || {}, |_| {});
+    let WatchEnd::Failed { error } = source.end_with_error(Some(WatchError::with_cause(
+        "source failure",
+        original.clone(),
+    ))) else {
+        panic!("source failure missing")
+    };
+    assert!(Arc::ptr_eq(
+        error.cause::<Arc<String>>().unwrap(),
+        &original
+    ));
+}

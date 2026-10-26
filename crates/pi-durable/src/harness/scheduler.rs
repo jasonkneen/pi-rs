@@ -386,6 +386,9 @@ impl TaskScheduler {
             }
         };
         *scheduler.inner.subscriptions.lock() = Some((publication, close, Some(registry)));
+        let parked = Arc::new(Mutex::new(Vec::<TaskRecord>::new()));
+        let recovered_parked = parked.clone();
+        let limit = scheduler.restart_limit();
         let initialize = scheduler.clone();
         let result = scheduler
             .inner
@@ -431,6 +434,11 @@ impl TaskScheduler {
                             let mut recovered = with_state(record, TaskState::pending(checkpoint));
                             recovered.info.restarts =
                                 Some(recovered.info.restarts.unwrap_or(0) + 1);
+                            if !recovered.info.abort_requested
+                                && recovered.info.restarts.unwrap_or(0) as f64 >= limit
+                            {
+                                recovered_parked.lock().push(recovered.clone());
+                            }
                             tx.set_task(recovered)?;
                         }
                     }
@@ -442,6 +450,20 @@ impl TaskScheduler {
         if let Err(error) = result {
             let _ = scheduler.inner.session.close(&Context::default()).await;
             return Err(error);
+        }
+        for record in std::mem::take(&mut *parked.lock()) {
+            let message = format!(
+                "Task {} ({}) was cut off {} times without progress; it is parked until retryTask()",
+                record.id(),
+                record.info.kind,
+                record.info.restarts.unwrap_or(0)
+            );
+            scheduler.report(
+                Error::message(message),
+                "task_parked",
+                Some(scheduler.about_task(&record)),
+                None,
+            );
         }
         if !scheduler.inner.read_only {
             scheduler.inner.state.lock().cascade = true;
@@ -475,6 +497,21 @@ impl TaskScheduler {
     }
     fn now(&self) -> f64 {
         (self.inner.now)()
+    }
+    fn about_task(&self, record: &TaskRecord) -> ReportSubject {
+        let extension = match read_registry(self.inner.registry.as_ref()) {
+            Ok(snapshot) => snapshot
+                .task(&record.info.kind)
+                .and_then(|installed| installed.extension.clone()),
+            Err(error) => {
+                self.report_host(error, "registry");
+                None
+            }
+        };
+        ReportSubject {
+            task: record.into(),
+            extension,
+        }
     }
     fn report(
         &self,
@@ -583,9 +620,9 @@ impl TaskScheduler {
     fn not_due(&self, record: &TaskRecord) -> bool {
         matches!(record.state, TaskState::Sleeping { until, .. } if !record.info.abort_requested && until > self.now())
     }
-    fn waiting_on(&self, record: &TaskRecord) -> Vec<TaskId> {
+    fn waiting_on(&self, record: &TaskRecord, first: bool) -> Vec<TaskId> {
         if record.info.abort_requested {
-            return self.inner.tree.owned_live(record.id(), None, false, None);
+            return self.inner.tree.owned_live(record.id(), None, first, None);
         }
         match &record.state {
             TaskState::Waiting { on, .. } => on
@@ -1134,6 +1171,7 @@ impl TaskScheduler {
                     },
                 );
                 self.defer_blocked_notification();
+                self.schedule_wake();
                 self.report(
                     error,
                     "migration_failed",
@@ -1314,7 +1352,7 @@ impl TaskScheduler {
         if record.state.status() == TaskStatus::Completing {
             return State::Completing;
         }
-        let on = self.waiting_on(record);
+        let on = self.waiting_on(record, false);
         if !on.is_empty() {
             return State::Waiting { on };
         }
@@ -1393,6 +1431,8 @@ impl TaskScheduler {
         let scheduler = self.clone();
         let reservations = Arc::new(Mutex::new(Vec::<Reservation>::new()));
         let capture = reservations.clone();
+        let faulted = Arc::new(Mutex::new(Vec::<(Arc<TaskRecord>, String)>::new()));
+        let capture_faulted = faulted.clone();
         let operation = self.inner.session.commit(move |tx| async move {
             let stopped = { let state = scheduler.inner.state.lock(); !state.enabled || state.closing };
             if stopped { return Ok(()); }
@@ -1416,13 +1456,14 @@ impl TaskScheduler {
                 let record = scheduler.inner.tree.live(id);
                 if record.as_ref().is_none_or(|r| r.state.status() == TaskStatus::Completing) || scheduler.inner.state.lock().invocations.contains_key(&id) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
                 let record = record.unwrap();
-                if !scheduler.waiting_on(&record).is_empty() || scheduler.not_due(&record) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
+                if !scheduler.waiting_on(&record, true).is_empty() || scheduler.not_due(&record) { scheduler.inner.state.lock().runnable.shift_remove(&id); continue; }
                 if scheduler.parked(&record) { let newly = { let mut state = scheduler.inner.state.lock(); state.runnable.shift_remove(&id); state.parked.insert(id) }; if newly { scheduler.defer_blocked_notification(); } continue; }
                 let mode = if record.info.abort_requested { InvocationMode::Abort } else { InvocationMode::Run };
                 if mode == InvocationMode::Run && !record.info.background && scheduler.inner.tree.cancelling_owner(TaskNode::of(&record).parent()).is_some() { scheduler.inner.state.lock().cascade = true; scheduler.schedule_reconcile(); continue; }
                 if mode == InvocationMode::Abort && record.info.restarts.unwrap_or(0) as f64 >= scheduler.restart_limit() {
                     let message = format!("Abort handler of task {id} ({}) was cut off {} times", record.info.kind, record.info.restarts.unwrap_or(0));
-                    scheduler.terminate(&tx, &record, TaskOutcome::Faulted { error: TaskOutcomeError { message: message.into(), detail: Some(crate::wire::encode(&serde_json::json!({"reason":"restart_limit"}))) } }).await?;
+                    scheduler.terminate(&tx, &record, TaskOutcome::Faulted { error: TaskOutcomeError { message: message.clone().into(), detail: Some(crate::wire::encode(&serde_json::json!({"reason":"restart_limit"}))) } }).await?;
+                    capture_faulted.lock().push((record.clone(), message));
                     continue;
                 }
                 if snapshot.is_none() { snapshot = Some(read_registry(scheduler.inner.registry.as_ref())?); }
@@ -1449,6 +1490,14 @@ impl TaskScheduler {
                     reservation.invocation.done.send_replace(true);
                 }
                 return Err(error);
+            }
+            for (record, message) in std::mem::take(&mut *faulted.lock()) {
+                scheduler.report(
+                    Error::message(message),
+                    "task_faulted",
+                    Some(scheduler.about_task(&record)),
+                    Some("restart_limit"),
+                );
             }
             let mut state = scheduler.inner.state.lock();
             if !state.abandoned.is_empty() {
@@ -2230,6 +2279,32 @@ impl TaskScheduler {
                 at: None,
             }
         };
+        if wake.active {
+            // Active work already determines the foreground bit. Only sleeping
+            // records can contribute a deadline; cloning every live record for
+            // every phase makes a deep concurrently running tree quadratic.
+            let sleeping = self
+                .inner
+                .state
+                .lock()
+                .sleeping
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            for id in sleeping {
+                if self.inner.state.lock().invocations.contains_key(&id) {
+                    continue;
+                }
+                if let Some(record) = self.inner.tree.live(id)
+                    && self.not_due(&record)
+                    && let TaskState::Sleeping { until, .. } = record.state
+                    && wake.at.is_none_or(|at| until < at)
+                {
+                    wake.at = Some(until);
+                }
+            }
+            return wake;
+        }
         let mut snapshot = None;
         let mut snapshot_failed = false;
         for record in self.inner.tree.live_records() {
@@ -2243,7 +2318,7 @@ impl TaskScheduler {
             {
                 continue;
             }
-            if !self.waiting_on(&record).is_empty() {
+            if !self.waiting_on(&record, true).is_empty() {
                 continue;
             }
             if self.not_due(&record) {
@@ -2770,8 +2845,13 @@ impl TaskDriver for Driver {
                 task_id: Some(self.invocation.task),
             },
         );
+        let sweep = self.scheduler.clone();
         eager(async move {
-            operation.await?;
+            let result = operation.await;
+            if sweep.inner.tree.sizes().drop_queue != 0 {
+                sweep.schedule_sweep();
+            }
+            result?;
             if let Some(phase) = phase.lock().take() {
                 invocation_context.telemetry().record_event(
                     "pi.durable.checkpoint",

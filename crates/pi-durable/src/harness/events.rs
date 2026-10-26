@@ -43,7 +43,7 @@ impl ViewObserver for EventObserver {
         Ok(())
     }
     fn end(&self, failure: Option<Error>) -> Result<()> {
-        self.watch.end(failure.map(|error| error.to_string()));
+        self.watch.end_with_error(failure.map(Into::into));
         Ok(())
     }
 }

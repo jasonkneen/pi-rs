@@ -92,7 +92,8 @@ struct State {
 pub struct TaskTree {
     state: Arc<Mutex<State>>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexSizes {
     pub live: usize,
     pub settled: usize,
@@ -176,7 +177,7 @@ impl TaskTree {
     ) -> Vec<Reached> {
         self.state
             .lock()
-            .walk_down(start, overlay, cross_background, &enter)
+            .walk_down(start, overlay, cross_background, &enter, false)
     }
     pub fn owned_live(
         &self,
@@ -185,9 +186,13 @@ impl TaskTree {
         first: bool,
         done: Option<&HashSet<TaskId>>,
     ) -> Vec<TaskId> {
-        let found = self.walk_down(Node::Task(owner), overlay, false, |id| {
-            !done.is_some_and(|done| done.contains(&id))
-        });
+        let found = self.state.lock().walk_down(
+            Node::Task(owner),
+            overlay,
+            false,
+            &|id| !done.is_some_and(|done| done.contains(&id)),
+            first,
+        );
         let ids = found
             .into_iter()
             .filter(|r| r.live.is_some() && !r.node.background)
@@ -275,7 +280,7 @@ impl TaskTree {
         );
         for start in starts {
             if state
-                .walk_down(Node::Conversation(start), None, false, &|_| true)
+                .walk_down(Node::Conversation(start), None, false, &|_| true, true)
                 .iter()
                 .any(|r| r.live.is_some() && !r.node.background)
             {
@@ -598,6 +603,7 @@ impl State {
         overlay: Option<&TaskOverlay>,
         cross_background: bool,
         enter: &dyn Fn(TaskId) -> bool,
+        first_live: bool,
     ) -> Vec<Reached> {
         let links = overlay.map(|o| o.links.get_or_init(|| self.overlay_links(o)));
         let mut pending = vec![start];
@@ -627,7 +633,11 @@ impl State {
                             let live = record
                                 .filter(|r| r.state.status() != TaskStatus::Terminal)
                                 .cloned();
+                            let stop = first_live && live.is_some() && !node.background;
                             result.push(Reached { id, node, live });
+                            if stop {
+                                return result;
+                            }
                             if (cross_background || !node.background) && enter(id) {
                                 pending.push(*child);
                             }

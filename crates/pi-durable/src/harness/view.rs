@@ -113,7 +113,7 @@ impl ViewObserver for ConversationViewWatch {
         Ok(())
     }
     fn end(&self, failure: Option<Error>) -> Result<()> {
-        self.end(failure.map(|error| error.to_string()));
+        self.end_with_error(failure.map(Into::into));
         Ok(())
     }
 }
@@ -191,11 +191,11 @@ impl ConversationViews {
     pub fn report(&self, error: Error) {
         self.inner.session.report(error);
     }
-    pub(crate) fn reporter(&self) -> impl Fn(String) + Send + Sync + 'static {
+    pub(crate) fn reporter(&self) -> impl Fn(pi_chord::WatchError) + Send + Sync + 'static {
         let weak = Arc::downgrade(&self.inner);
         move |error| {
             if let Some(inner) = weak.upgrade() {
-                inner.session.report(Error::message(error));
+                inner.session.report(Error::from(error));
             }
         }
     }
@@ -283,7 +283,7 @@ impl ConversationViews {
                 Ok(Arc::new(Watch::with_frames(
                     value,
                     move || release(),
-                    move |error| report.report(Error::message(error)),
+                    move |error| report.report(Error::from(error)),
                     |value| vec![Op::Replace(crate::wire::encode(value.as_ref()))],
                 )))
             },

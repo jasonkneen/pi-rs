@@ -11,7 +11,7 @@ pub mod watch;
 
 pub use context::{AbortController, AbortSignal, Context};
 pub use json::{JsonString, Value as JsonValue};
-pub use watch::{NativeWatch, Watch, WatchEnd};
+pub use watch::{NativeWatch, Watch, WatchEnd, WatchError};
 
 /// An independent strict-JSON tree. Rust's JSON type excludes cycles, sparse arrays,
 /// accessors, undefined and non-finite numbers at construction.

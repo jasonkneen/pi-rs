@@ -1,19 +1,25 @@
-//! Native memory storage for stock task tests. Decorated host stores keep their
-//! original callbacks; plain memory stores share this backend with the Session.
+//! Native memory and SQLite storage for stock task tests. Decorated stores keep
+//! their original callbacks; plain stores share their backend with the Session.
 use super::*;
 use pi_durable::storage::StoredEntry;
 
 #[derive(Default)]
 pub(super) struct MemoryBridge {
-    stores: Mutex<HashMap<u64, Arc<ObservedMemory>>>,
+    stores: Mutex<HashMap<u64, Arc<ObservedStorage>>>,
+    sqlite_stores: Mutex<HashMap<u64, Arc<ObservedStorage>>>,
+    pub sqlite_opens: AtomicU64,
+    pub sqlite_direct_opens: AtomicU64,
+    pub sqlite_calls: Arc<AtomicU64>,
+    pub sqlite_commits: Arc<AtomicU64>,
     pub direct_opens: AtomicU64,
     pub calls: Arc<AtomicU64>,
     pub commits: Arc<AtomicU64>,
 }
-struct ObservedMemory {
-    backend: MemoryStorage,
+struct ObservedStorage {
+    backend: Arc<dyn Storage>,
     calls: Arc<AtomicU64>,
     commits: Arc<AtomicU64>,
+    decorated: Arc<AtomicBool>,
 }
 macro_rules! forward {
     ($name:ident($($arg:ident:$ty:ty),*) -> $out:ty) => {
@@ -23,7 +29,7 @@ macro_rules! forward {
         }
     };
 }
-impl Storage for ObservedMemory {
+impl Storage for ObservedStorage {
     fn commit(
         &self,
         writes: &[StorageWrite],
@@ -54,6 +60,55 @@ impl Storage for ObservedMemory {
     forward!(scan_documents(query:&DocumentQuery,limit:usize,cursor:Option<&Cursor>) -> Page<DocumentRecord>);
     forward!(close() -> ());
 }
+struct MutableHostStorage {
+    native: Arc<dyn Storage>,
+    host: Arc<dyn Storage>,
+    decorated: Arc<AtomicBool>,
+}
+impl MutableHostStorage {
+    fn backend(&self) -> &dyn Storage {
+        if self.decorated.load(Ordering::Acquire) {
+            self.host.as_ref()
+        } else {
+            self.native.as_ref()
+        }
+    }
+}
+macro_rules! route {
+    ($name:ident($($arg:ident:$ty:ty),*) -> $out:ty) => {
+        fn $name(&self,$($arg:$ty,)*context:&Context)->StorageFuture<$out> {
+            self.backend().$name($($arg,)* context)
+        }
+    };
+}
+impl Storage for MutableHostStorage {
+    fn mint_id(&self) -> StorageFuture<i64> {
+        self.backend().mint_id()
+    }
+    fn commit(
+        &self,
+        writes: &[StorageWrite],
+        adopt: Adopt,
+        context: &Context,
+    ) -> StorageFuture<Seq> {
+        self.backend().commit(writes, adopt, context)
+    }
+    route!(conversation(id:ConversationId) -> Option<ConversationRecord>);
+    route!(scan_conversations(query:&ConversationQuery,limit:usize,cursor:Option<&Cursor>) -> Page<ConversationRecord>);
+    route!(entry(id:EntryId) -> Option<StoredEntry>);
+    route!(entry_in(conversation:ConversationId,id:EntryId) -> Option<StoredEntry>);
+    route!(find_latest_head_marker(conversation:ConversationId,at:Option<EntryId>) -> Option<EntryRecord>);
+    route!(scan_entries(query:&EntryQuery,limit:usize,cursor:Option<&Cursor>) -> Page<EntryRecord>);
+    route!(task(id:TaskId) -> Option<TaskRecord>);
+    route!(scan_tasks(query:&TaskQuery,limit:usize,cursor:Option<&Cursor>) -> Page<TaskRecord>);
+    route!(submission(id:SubmissionId) -> Option<SubmissionRecord>);
+    route!(scan_submissions(query:&SubmissionQuery,limit:usize,cursor:Option<&Cursor>) -> Page<SubmissionRecord>);
+    route!(submission_by_request(conversation:ConversationId,request:&JsonString) -> Option<SubmissionRecord>);
+    route!(find_document(address:&DocumentAddress,at:DocumentPoint) -> Option<DocumentRecord>);
+    route!(document(id:DocumentId,at:DocumentPoint) -> Option<StoredDocument>);
+    route!(scan_documents(query:&DocumentQuery,limit:usize,cursor:Option<&Cursor>) -> Page<DocumentRecord>);
+    route!(close() -> ());
+}
 impl Hub {
     pub(super) fn memory_storage(&self, id: u64) -> Result<Arc<dyn Storage>> {
         self.memory
@@ -64,24 +119,106 @@ impl Hub {
             .map(|store| store as Arc<dyn Storage>)
             .ok_or_else(|| Error::message("Unknown native memory store"))
     }
+    pub(super) fn sqlite_storage(&self, id: u64) -> Result<Arc<dyn Storage>> {
+        self.memory
+            .sqlite_stores
+            .lock()
+            .get(&id)
+            .cloned()
+            .map(|store| store as Arc<dyn Storage>)
+            .ok_or_else(|| Error::message("Unknown native SQLite store"))
+    }
+    pub(super) fn sqlite_for_harness(
+        self: &Arc<Self>,
+        id: u64,
+        handle: u64,
+    ) -> Result<Arc<dyn Storage>> {
+        let store = self
+            .memory
+            .sqlite_stores
+            .lock()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| Error::message("Unknown native SQLite store"))?;
+        Ok(Arc::new(MutableHostStorage {
+            decorated: store.decorated.clone(),
+            native: store,
+            host: Arc::new(remote_storage::RemoteStorage {
+                hub: self.clone(),
+                handle,
+            }),
+        }))
+    }
     pub(super) fn memory_request(
         self: &Arc<Self>,
         method: &str,
         request: JsonValue,
     ) -> Result<StorageFuture<Option<JsonValue>>> {
+        if method == "sqlite.decorate" {
+            let id = field(&request, "sqlite")?;
+            self.memory
+                .sqlite_stores
+                .lock()
+                .get(&id)
+                .ok_or_else(|| Error::message("Unknown native SQLite store"))?
+                .decorated
+                .store(true, Ordering::Release);
+            return Ok(Box::pin(async { Ok(None) }));
+        }
         if method == "memory.new" {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
             self.memory.stores.lock().insert(
                 id,
-                Arc::new(ObservedMemory {
-                    backend: MemoryStorage::new(),
+                Arc::new(ObservedStorage {
+                    backend: Arc::new(MemoryStorage::new()),
                     calls: self.memory.calls.clone(),
                     commits: self.memory.commits.clone(),
+                    decorated: Arc::new(AtomicBool::new(false)),
                 }),
             );
             return Ok(Box::pin(async move { Ok(Some(encode(&id))) }));
         }
-        let storage = self.memory_storage(field(&request, "memory")?)?;
+        if method == "sqlite.new" {
+            use pi_durable::storage::sqlite::{
+                NativeSqliteDatabaseOptions, NativeSqliteStorageOptions, open_native_sqlite_storage,
+            };
+            let hub = self.clone();
+            return Ok(Box::pin(async move {
+                let backend = open_native_sqlite_storage(
+                    field::<String>(&request, "path")?,
+                    NativeSqliteStorageOptions {
+                        prefix: field(&request["options"], "prefix")?,
+                        database: NativeSqliteDatabaseOptions {
+                            wal_auto_checkpoint_pages: request["options"]["walAutoCheckpointPages"]
+                                .as_u64()
+                                .unwrap_or(1000)
+                                as u32,
+                            busy_timeout_ms: request["options"]["busyTimeoutMs"]
+                                .as_u64()
+                                .unwrap_or(5000),
+                        },
+                    },
+                )
+                .await?;
+                let id = hub.next.fetch_add(1, Ordering::Relaxed);
+                hub.memory.sqlite_stores.lock().insert(
+                    id,
+                    Arc::new(ObservedStorage {
+                        backend: Arc::new(backend),
+                        calls: hub.memory.sqlite_calls.clone(),
+                        commits: hub.memory.sqlite_commits.clone(),
+                        decorated: Arc::new(AtomicBool::new(false)),
+                    }),
+                );
+                hub.memory.sqlite_opens.fetch_add(1, Ordering::Relaxed);
+                Ok(Some(encode(&id)))
+            }));
+        }
+        let storage = if method == "sqlite.call" {
+            self.sqlite_storage(field(&request, "sqlite")?)?
+        } else {
+            self.memory_storage(field(&request, "memory")?)?
+        };
         let callback: Option<u64> = field(&request, "adopt")?;
         let weak = Arc::downgrade(self);
         let adoption_error = Arc::new(Mutex::new(None));

@@ -8,6 +8,7 @@ use crate::{
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{
+    any::Any,
     collections::VecDeque,
     future::Future,
     pin::Pin,
@@ -16,14 +17,74 @@ use std::{
 
 const MAX_PENDING_WATCH_FRAMES: usize = 100;
 
+/// A watch failure retains its native cause while keeping a displayable message.
+#[derive(Clone)]
+pub struct WatchError {
+    message: Arc<str>,
+    cause: Option<Arc<dyn Any + Send + Sync>>,
+}
+impl WatchError {
+    pub fn with_cause<T: Any + Send + Sync>(message: impl Into<String>, cause: T) -> Self {
+        Self {
+            message: Arc::from(message.into()),
+            cause: Some(Arc::new(cause)),
+        }
+    }
+    pub fn cause<T: Any>(&self) -> Option<&T> {
+        self.cause.as_ref()?.downcast_ref()
+    }
+}
+impl From<String> for WatchError {
+    fn from(message: String) -> Self {
+        Self {
+            message: Arc::from(message),
+            cause: None,
+        }
+    }
+}
+impl From<&str> for WatchError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+impl From<WatchError> for String {
+    fn from(error: WatchError) -> Self {
+        error.to_string()
+    }
+}
+impl std::fmt::Display for WatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::fmt::Debug for WatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WatchError")
+            .field("message", &self.message)
+            .field("has_cause", &self.cause.is_some())
+            .finish()
+    }
+}
+impl PartialEq for WatchError {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+    }
+}
+impl Eq for WatchError {}
+impl PartialEq<&str> for WatchError {
+    fn eq(&self, other: &&str) -> bool {
+        self.message.as_ref() == *other
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WatchEnd {
     Stopped,
     Cancelled,
     Retired,
     Ended,
-    ListenerError { error: String },
-    Failed { error: String },
+    ListenerError { error: WatchError },
+    Failed { error: WatchError },
 }
 
 #[derive(Clone)]
@@ -34,7 +95,9 @@ pub struct WatchFrame<T> {
     retires: bool,
 }
 type Callback<T> = Arc<
-    dyn Fn(WatchFrame<T>) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync,
+    dyn Fn(WatchFrame<T>) -> Pin<Box<dyn Future<Output = Result<(), WatchError>> + Send>>
+        + Send
+        + Sync,
 >;
 type Replace<T> = Arc<dyn Fn() -> Arc<T> + Send + Sync>;
 type Overflow<T> = Arc<dyn Fn(&Arc<T>) -> Vec<Op> + Send + Sync>;
@@ -43,7 +106,7 @@ struct State<T> {
     value: Arc<T>,
     listener: Option<Callback<T>>,
     detach: Option<Box<dyn FnOnce() + Send>>,
-    report: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    report: Option<Arc<dyn Fn(WatchError) + Send + Sync>>,
     replace: Option<Replace<T>>,
     overflow: Overflow<T>,
     pending: VecDeque<WatchFrame<T>>,
@@ -104,7 +167,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
     pub fn with_frames(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
         overflow: impl Fn(&Arc<T>) -> Vec<Op> + Send + Sync + 'static,
     ) -> Self {
         Self::build(value, detach, report, None, Arc::new(overflow))
@@ -114,7 +177,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
     pub fn with_source(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
         replace: impl Fn() -> Arc<T> + Send + Sync + 'static,
     ) -> Self {
         Self::build(
@@ -128,7 +191,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
     fn build(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
         replace: Option<Replace<T>>,
         overflow: Overflow<T>,
     ) -> Self {
@@ -184,6 +247,16 @@ impl<T: Send + Sync + 'static> Watch<T> {
     where
         F: Fn(WatchFrame<T>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<(), String>> + Send + 'static,
+    {
+        self.start_with_error(move |frame| {
+            let operation = listener(frame);
+            async move { operation.await.map_err(WatchError::from) }
+        })
+    }
+    pub fn start_with_error<F, Fut>(&self, listener: F) -> Result<(), String>
+    where
+        F: Fn(WatchFrame<T>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), WatchError>> + Send + 'static,
     {
         {
             let mut state = self.inner.state.lock();
@@ -320,7 +393,8 @@ impl<T: Send + Sync + 'static> Watch<T> {
                         .downcast_ref::<String>()
                         .cloned()
                         .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).into()))
-                        .unwrap_or_else(|| "Watch listener panicked".into()),
+                        .unwrap_or_else(|| "Watch listener panicked".into())
+                        .into(),
                 ),
             };
             let watch = Self {
@@ -384,6 +458,9 @@ impl<T: Send + Sync + 'static> Watch<T> {
         self.terminate(WatchEnd::Cancelled)
     }
     pub fn end(&self, failure: Option<String>) -> WatchEnd {
+        self.end_with_error(failure.map(Into::into))
+    }
+    pub fn end_with_error(&self, failure: Option<WatchError>) -> WatchEnd {
         self.terminate(failure.map_or(WatchEnd::Ended, |error| WatchEnd::Failed { error }))
     }
     pub async fn closed(&self) -> WatchEnd {
@@ -432,14 +509,14 @@ impl Watch<JsonValue> {
     pub fn new(
         value: JsonValue,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
     ) -> Self {
         Self::with_replacement(value, detach, report, None)
     }
     pub fn with_replacement(
         value: JsonValue,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
         replace: Option<Replace<JsonValue>>,
     ) -> Self {
         Self::build(
@@ -474,7 +551,7 @@ impl<T: Send + Sync + 'static> NativeWatch<T> {
     pub fn new(
         value: Arc<T>,
         detach: impl FnOnce() + Send + 'static,
-        report: impl Fn(String) + Send + Sync + 'static,
+        report: impl Fn(WatchError) + Send + Sync + 'static,
     ) -> Self {
         Self {
             watch: Watch::build(value, detach, report, None, Arc::new(|_| Vec::new())),

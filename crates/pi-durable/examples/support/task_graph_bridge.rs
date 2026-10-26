@@ -91,12 +91,14 @@ fn end(reason: WatchEnd) -> JsonValue {
         WatchEnd::Cancelled => encode(&serde_json::json!({"reason":"cancelled"})),
         WatchEnd::Retired => encode(&serde_json::json!({"reason":"retired"})),
         WatchEnd::Ended => encode(&serde_json::json!({"reason":"ended"})),
-        WatchEnd::Failed { error } => {
-            encode(&serde_json::json!({"reason":"failed","error":{"message":error}}))
-        }
-        WatchEnd::ListenerError { error } => {
-            encode(&serde_json::json!({"reason":"listener_error","error":{"message":error}}))
-        }
+        WatchEnd::Failed { error } => object([
+            ("reason", encode(&"failed")),
+            ("error", error_value(&Error::from(error))),
+        ]),
+        WatchEnd::ListenerError { error } => object([
+            ("reason", encode(&"listener_error")),
+            ("error", error_value(&Error::from(error))),
+        ]),
     }
 }
 impl Hub {
@@ -198,7 +200,7 @@ impl Hub {
     ) -> Result<()> {
         let hub = self.clone();
         watch
-            .start(move |frame| {
+            .start_with_error(move |frame| {
                 if document {
                     hub.documents.watch_frames.fetch_add(1, Ordering::Relaxed);
                 } else {
@@ -220,7 +222,7 @@ impl Hub {
                 });
                 let activity = activity.clone();
                 async move {
-                    let result = call.await.map(|_| ()).map_err(|error| error.to_string());
+                    let result = call.await.map(|_| ()).map_err(pi_chord::WatchError::from);
                     activity.send_modify(|activity| activity.active = false);
                     result
                 }

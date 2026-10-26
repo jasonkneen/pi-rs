@@ -49,6 +49,13 @@ node scripts/run-stock-durable-builtins.mjs "$reference" --report=/tmp/pi-durabl
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=read-differential --report=/tmp/pi-durable-stock-read-differential-report.json
 node scripts/run-stock-durable-builtins.mjs "$reference" --suite=images --report=/tmp/pi-durable-stock-native-images-report.json
 node scripts/run-stock-durable-tasks.mjs "$reference" --report=/tmp/pi-durable-stock-tasks-report.json
+for suite in \
+  harness-input-entries harness-live-deltas harness-scheduler-indexes harness-callers \
+  harness-failed-run-inbox harness-inbox harness-cancellation-barrier harness-sleep \
+  harness-storage-failure harness-tasks-recovery harness-blocked \
+  harness-ownership harness-scheduler-retention; do
+  node scripts/run-stock-durable-tasks.mjs "$reference" --suite="$suite" --report="/tmp/pi-durable-stock-$suite-report.json"
+done
 node scripts/run-stock-durable-session.mjs "$reference" --suite=definitions --report=/tmp/pi-durable-stock-session-definitions-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=tables --report=/tmp/pi-durable-stock-session-tables-report.json
 node scripts/run-stock-durable-session.mjs "$reference" --suite=forks --report=/tmp/pi-durable-stock-session-forks-report.json
