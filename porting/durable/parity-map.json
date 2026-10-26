@@ -2003,7 +2003,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2024,7 +2025,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2045,7 +2047,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2139,7 +2142,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2224,7 +2228,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2245,7 +2250,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2305,7 +2311,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2372,7 +2379,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2471,12 +2479,13 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
       "reference": "packages/durable/test/harness-scheduler-retention.test.ts",
-      "status": "verified",
+      "status": "partial",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
@@ -2487,11 +2496,11 @@
         "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged pinned file passes all 14 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-complete-harness-scheduler-retention.log",
-        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
-        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
-        "Native execution counters required; source generation and compaction phases remain zero",
-        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "Complete unchanged file passes all 14 cases in both retention modes in the combined prefix, a traced repeat and two current untraced repeats",
+        "Current untraced logs: /tmp/pi-durable-retention-handles-untraced-1.log and /tmp/pi-durable-retention-handles-untraced-2.log; 20,000-task cases 32.61/23.13 and 25.62/26.25 seconds under unchanged 60-second deadline",
+        "One intervening attempt timed out at 76.11 seconds and then produced stale transport response errors; cause unestablished, so this mapping remains partial",
+        "Native SQLite direct-open and commit counters required; no source fallback, test filter, rewritten assertion or deadline change",
+        "porting/durable/VALIDATION.json",
         "porting/durable/STATUS.md"
       ]
     },
@@ -2513,7 +2522,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2534,7 +2544,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
@@ -2643,7 +2654,8 @@
         "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
         "Native execution counters required; source generation and compaction phases remain zero",
         "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
-        "porting/durable/STATUS.md"
+        "porting/durable/STATUS.md",
+        "porting/durable/VALIDATION.json"
       ]
     },
     {
