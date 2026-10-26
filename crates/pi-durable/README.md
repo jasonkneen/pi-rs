@@ -18,9 +18,10 @@ compaction definitions; `SchedulerOptions::models` supplies the model collection
 
 Generation supports prompt preparation, pinned requests, trailing partial
 writes, retries, deferred polling/cancellation, tool rounds and run settlement.
-The default provider boundary currently uses the existing typed Rust SDK.
-Lossless SDK 1.4 alignment, arbitrary hosted model values, complete host callback
-bindings and the combined public Harness API remain open.
+The public `Harness` and `Conversation` APIs compose these native services.
+Model collections can retain hosted assistant values until a durable writer
+requests strict JSON. The default provider boundary uses the existing typed
+Rust SDK; complete lossless SDK 1.4 conversion remains open.
 
 The port gate runs native tests and pinned stock pi-mono tests against Rust:
 

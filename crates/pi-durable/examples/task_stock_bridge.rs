@@ -184,6 +184,9 @@ struct Hub {
     sessions: Mutex<HashMap<u64, Session>>,
     strict: strict_bridge::StrictBridge,
     harnesses: Mutex<HashMap<u64, pi_durable::Harness>>,
+    // Preserve the public handle returned to JS. Reacquiring it per method
+    // would insert a second admission point before context reads and forks.
+    conversations: Mutex<HashMap<(u64, ConversationId), pi_durable::Conversation>>,
     harness_storage: Mutex<HashMap<u64, Arc<dyn Storage>>>,
     readers: Mutex<HashMap<u64, Arc<dyn pi_durable::harness::reader::RegistryReader>>>,
     tasks: Mutex<HashMap<u64, JsonTask>>,
@@ -842,10 +845,17 @@ impl Hub {
                 Ok(Some(encode(&harness)))
             }),
             "root" => {
+                let harness = field(&request, "harness")?;
                 let root = self
                     .facade(&request)?
                     .root(self.conversation_options(&request["options"])?, &context);
-                Box::pin(async move { Ok(Some(encode(&root.await?.id))) })
+                let hub = self.clone();
+                Box::pin(async move {
+                    let conversation = root.await?;
+                    let id = conversation.id;
+                    hub.conversations.lock().insert((harness, id), conversation);
+                    Ok(Some(encode(&id)))
+                })
             }
             "wake" => {
                 let wake = self.scheduler(&request)?.wake();
@@ -874,12 +884,16 @@ impl Hub {
                 })
             }
             "conversation" => {
+                let harness = field(&request, "harness")?;
                 let id = field(&request, "conversation")?;
-                mapped(
-                    self.scheduler(&request)?
-                        .session()
-                        .commit(move |tx| async move { tx.conversation(id).await }, &context),
-                )
+                let read = self.facade(&request)?.conversation(id, &context);
+                let hub = self.clone();
+                Box::pin(async move {
+                    Ok(read.await?.map(|conversation| {
+                        hub.conversations.lock().insert((harness, id), conversation);
+                        object([("id", encode(&id))])
+                    }))
+                })
             }
             "conversation.abort" => {
                 let scheduler = self.scheduler(&request)?;
@@ -936,6 +950,7 @@ impl Hub {
                 }
             }
             "createConversation" | "forkConversation" => {
+                let harness = field(&request, "harness")?;
                 let facade = self.facade(&request)?;
                 let ownership = match request["options"]["ownership"]["kind"].to_utf8().as_deref() {
                     Some("ownerless") => ConversationOwnership::Ownerless,
@@ -954,18 +969,22 @@ impl Hub {
                 let operation = if method == "createConversation" {
                     facade.create_conversation(options, &context)
                 } else {
-                    let conversation =
-                        facade.conversation(field(&request, "conversation")?, &context);
+                    let conversation = self
+                        .conversations
+                        .lock()
+                        .get(&(harness, field(&request, "conversation")?))
+                        .cloned()
+                        .ok_or_else(|| Error::message("Unknown conversation handle"))?;
                     let at = field(&request, "at")?;
-                    Box::pin(async move {
-                        conversation
-                            .await?
-                            .ok_or_else(|| Error::message("Conversation does not exist"))?
-                            .fork(at, options, &context)
-                            .await
-                    })
+                    conversation.fork(at, options, &context)
                 };
-                Box::pin(async move { Ok(Some(encode(&operation.await?.id))) })
+                let hub = self.clone();
+                Box::pin(async move {
+                    let conversation = operation.await?;
+                    let id = conversation.id;
+                    hub.conversations.lock().insert((harness, id), conversation);
+                    Ok(Some(encode(&id)))
+                })
             }
             "usage" => mapped(self.facade(&request)?.usage(&context)),
             "retryTask" => mapped(
@@ -1081,16 +1100,14 @@ impl Hub {
             }
             "conversationContext" => {
                 self.context_reads.fetch_add(1, Ordering::Relaxed);
+                let harness = field(&request, "harness")?;
                 let conversation = self
-                    .facade(&request)?
-                    .conversation(field(&request, "conversation")?, &context);
-                let at = field(&request, "at")?;
-                Box::pin(async move {
-                    let conversation = conversation
-                        .await?
-                        .ok_or_else(|| Error::message("Conversation does not exist"))?;
-                    Ok(Some(encode(&conversation.context(at, &context).await?)))
-                })
+                    .conversations
+                    .lock()
+                    .get(&(harness, field(&request, "conversation")?))
+                    .cloned()
+                    .ok_or_else(|| Error::message("Unknown conversation handle"))?;
+                mapped(conversation.context(field(&request, "at")?, &context))
             }
             "phase.enter" => {
                 let active = !self.runtime(&request)?.signal().aborted();
@@ -1665,6 +1682,7 @@ async fn main() {
         sessions: Mutex::new(HashMap::new()),
         strict: strict_bridge::StrictBridge::default(),
         harnesses: Mutex::new(HashMap::new()),
+        conversations: Mutex::new(HashMap::new()),
         harness_storage: Mutex::new(HashMap::new()),
         readers: Mutex::new(HashMap::new()),
         tasks: Mutex::new(HashMap::new()),

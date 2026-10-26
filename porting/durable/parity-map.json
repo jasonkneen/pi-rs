@@ -1987,44 +1987,65 @@
     },
     {
       "reference": "packages/durable/test/harness-blocked.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-blocked.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 12 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-handoff-final-harness-blocked.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-callers.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-callers-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 5 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-callers.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-cancellation-barrier.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-cancellation-barrier-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 4 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-cancellation-barrier.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2102,16 +2123,23 @@
     },
     {
       "reference": "packages/durable/test/harness-failed-run-inbox.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-failed-run-inbox-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 4 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-failed-run-inbox.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2180,30 +2208,44 @@
     },
     {
       "reference": "packages/durable/test/harness-inbox.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-inbox-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 32 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-inbox.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-input-entries.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-input-entries-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 11 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-input-entries.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2247,16 +2289,23 @@
     },
     {
       "reference": "packages/durable/test/harness-live-deltas.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-live-deltas-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 11 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-live-deltas.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2307,16 +2356,23 @@
     },
     {
       "reference": "packages/durable/test/harness-ownership.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-ownership.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 41 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-complete-harness-ownership.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2399,58 +2455,86 @@
     },
     {
       "reference": "packages/durable/test/harness-scheduler-indexes.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Complete unchanged original file passes both retention modes with native scheduling and original host capabilities: /tmp/pi-durable-extra-harness/harness-scheduler-indexes-final.log",
-        "No cases filtered, skipped or rewritten; explicit native binary override avoids overlapping Cargo builds during diagnostic audit",
-        "Embedded package exports and complete portable target parity remain open"
+        "Complete unchanged pinned file passes all 5 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-final-harness-scheduler-indexes.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-scheduler-retention.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-scheduler-retention.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 14 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-runtime-complete-harness-scheduler-retention.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-sleep.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-sleep.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 13 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-handoff-final-harness-sleep.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
       "reference": "packages/durable/test/harness-storage-failure.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-storage-failure.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 24 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-handoff-final-harness-storage-failure.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
@@ -2543,16 +2627,23 @@
     },
     {
       "reference": "packages/durable/test/harness-tasks-recovery.test.ts",
-      "status": "partial",
+      "status": "verified",
       "rust": [
         "crates/pi-durable/src/harness/scheduler.rs",
         "crates/pi-durable/examples/task_stock_bridge.rs",
-        "scripts/run-stock-durable-tasks.mjs"
+        "crates/pi-durable/examples/support/memory_bridge.rs",
+        "scripts/stock/durable-task-adapter.mjs",
+        "scripts/stock/durable-task-sqlite-adapter.mjs",
+        "scripts/run-stock-durable-tasks.mjs",
+        "scripts/check-durable-port.sh"
       ],
       "evidence": [
-        "Expanded unchanged stock audit attempted: /tmp/pi-durable-extra-harness/harness-tasks-recovery.log",
-        "Not a passing file. Failures and/or unsettled transport waits remain. Ownership run was interrupted after hanging; it is incomplete, not verified.",
-        "Native-versus-transport causes must be separated before remediation or any parity claim"
+        "Complete unchanged pinned file passes all 24 cases under retention 600000 and 0; terminal exit 0 in /tmp/pi-durable-handoff-final-harness-tasks-recovery.log",
+        "No tests, assertions, timers or deadlines changed; no cases skipped or filtered",
+        "Native Harness, Session, scheduling, ownership and plain memory/SQLite storage; original user callbacks, controlled/decorated storage and model I/O remain host capabilities",
+        "Native execution counters required; source generation and compaction phases remain zero",
+        "The combined gate now includes this entire file in both retention modes; this file mapping does not imply complete embedded/browser package parity",
+        "porting/durable/STATUS.md"
       ]
     },
     {
