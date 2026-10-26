@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Offline Rust checks and interoperability with a locally pinned reference.
 set -euo pipefail
+# Rust's default uses every logical CPU. Each sandbox fixture also starts a VM;
+# bound fixture concurrency without changing their own execution deadlines.
+export RUST_TEST_THREADS=${RUST_TEST_THREADS:-4}
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 reference=${1:-../pi-mono}
 native_output=$(mktemp "${TMPDIR:-/tmp}/pi-durable-check.XXXXXX")
