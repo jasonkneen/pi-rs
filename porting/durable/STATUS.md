@@ -42,7 +42,7 @@ Crates: `pi-chord`, `pi-durable`, `pi-durable-jsrt` (the embedded package, see
 
 ## How it's verified
 
-Three layers, all against the pinned reference, never against modified test files:
+Four checks, all against the pinned reference, never against modified test files:
 
 1. **Native Rust tests** in each crate (`cargo test -p pi-chord -p pi-durable -p pi-durable-jsrt`
    plus `-p pi-ai -p pi-telemetry -p pi-json`).
