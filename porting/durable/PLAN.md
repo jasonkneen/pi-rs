@@ -1,7 +1,7 @@
 # Native pi-durable port
 
 Reference: pi-mono `5e63241d0294ed3fcfc4388c737a8ea27e09c74e`, durable and Chord 1.4.0.
-Base: pi-rs `2a274f9`. Worktree: `../pi-rs-durable`, branch `feat/pi-durable`.
+The work lives on `dev` in this repository.
 
 ## Plan review
 

@@ -1,7 +1,7 @@
 # Embedded JavaScript package exports (milestone 8)
 
 Reference: pi-mono `5e63241d0294ed3fcfc4388c737a8ea27e09c74e`, `@earendil-works/pi-durable` 1.4.0 and `@earendil-works/chord` 1.4.0.
-Worktree: `/Users/jkneen/Documents/GitHub/pi-rs-durable`, branch `feat/pi-durable`. Read-only planning; nothing below is implemented yet.
+The work lives on `dev` in this repository. This was read-only planning when written; the embedded crate (`crates/pi-durable-jsrt`) is now implemented. Current scope and test counts are in [STATUS.md](STATUS.md); treat the plan below as the design record, not the current state.
 
 ## 1. What "embedded exports" means here
 

@@ -1,7 +1,11 @@
 # pi-durable
 
-Native Rust services for durable conversations, tasks and document storage. The
-port is in progress; the complete acceptance scope and remaining gaps are in
+Native Rust port of the TypeScript `@earendil-works/pi-durable` package: sessions, transactions,
+documents, storage (memory, JSONL, SQLite, IndexedDB, Cloudflare Durable Objects), the task
+scheduler, tasks, tools, code mode and compaction, behind a public `Harness`/`Conversation` API.
+Built on [`pi-chord`](../pi-chord) for JSON revisions and invocation context. Served to pi
+extensions, unchanged, by [`pi-durable-jsrt`](../pi-durable-jsrt). The port is in progress; the
+complete acceptance scope, test counts and open items are in
 [the port status](../../porting/durable/STATUS.md).
 
 Run an offline conversation through the native generation task, scheduler,

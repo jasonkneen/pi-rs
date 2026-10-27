@@ -1,9 +1,0 @@
-### Host-ack step barrier
-
-Two stock retention cases ("holds an owner for work its own terminal commit creates…", "aborts work created in a forgotten conversation…") failed under load in both the process bridge and the embedded runtime. Native line work the scheduler starts (a task's first step, an abort handler's start) overtook the JS caller's continuation, which upstream's microtask order always runs first, so a task ran with stale input or after its cancelling owner had ended.
-
-Fix: an optional `StepGate(TaskId)` on `SchedulerOptions`/`HarnessOptions`, awaited before each step. Reservation and abort marking are not gated, keeping upstream's tree → reserve → continuation → step order. The host acknowledges frames once its microtask queue drains: `setImmediate` (captured at module load) in the process transport, after a leading `host.acks` offer so other bridges are untouched; a posted runtime task (`transport.ackLater`, through the reader) in the embedded transport, since pi-jsrt's `setImmediate` is a test-fakeable timer. A step waits until every frame written before it is acknowledged; only a synchronous phase.turn opens the gate, and only for its own task. A microtask-time ack was measured and breaks the order (2/40 failures). Regression: `tests/scheduler_step_gate.rs`.
-
-Results: 80-loader stress 0/40 for both cases on the process bridge (was 4/40 and 8/25), 0/32 embedded (was 7/16). All 38 stock task suites (597 cases per mode), sqlite 105/105 per mode, all 8 session suites, codemode-declarations, and all 42 embedded harness/codemode files (1482 cases, both modes) pass; harness-sleep 20/20; embedded commit budget unchanged at 13.0 sends.
-
-Cost and open risk: ~5% on step-heavy cases under heavy load (2.83s vs 2.97s at load 220); at load ≥200 "forgets ended subagent chains" occasionally exceeds its 5s limit (2/40 in one batch). Separately, the embedded 20,000-deep retention case times out at load ≥200 with or without the gate.
