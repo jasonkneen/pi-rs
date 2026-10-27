@@ -13,6 +13,34 @@ pub enum ExecutionErrorCode {
     CallbackError,
     Unknown,
 }
+impl ExecutionErrorCode {
+    pub const ALL: [Self; 6] = [
+        Self::Aborted,
+        Self::Timeout,
+        Self::ShellUnavailable,
+        Self::SpawnError,
+        Self::CallbackError,
+        Self::Unknown,
+    ];
+    /// The reference's code string (`ExecutionErrorCode` in `env/index.ts`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Aborted => "aborted",
+            Self::Timeout => "timeout",
+            Self::ShellUnavailable => "shell_unavailable",
+            Self::SpawnError => "spawn_error",
+            Self::CallbackError => "callback_error",
+            Self::Unknown => "unknown",
+        }
+    }
+    /// The code for a reference code string; anything else is `Unknown`.
+    pub fn from_name(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|code| code.as_str() == name)
+            .unwrap_or(Self::Unknown)
+    }
+}
 #[derive(Debug)]
 struct Failure {
     code: ExecutionErrorCode,

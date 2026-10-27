@@ -266,6 +266,7 @@ struct ExecutionOptions {
     store: IndexMap<String, String>,
     store_json: Option<String>,
     deterministic: Option<super::protocol::VmDeterministic>,
+    timezone: Option<String>,
     control: Option<Control>,
     launcher: Arc<dyn VmLauncher>,
 }
@@ -327,6 +328,7 @@ impl Execution {
             store_json: options.store_json,
             lossless_json: execution.control.as_ref().is_some_and(|c| matches!(c.on_call, CallHandler::Json(_))),
             deterministic: options.deterministic,
+            timezone: options.timezone,
         };
         let (tx, rx) = mpsc::unbounded_channel();
         let events = VmEvents { tx };
@@ -953,6 +955,7 @@ impl CodemodeSandbox {
             store: serialize_store(options.store.as_ref()),
             store_json: None,
             deterministic: None,
+            timezone: options.timezone,
             control: None,
             launcher: self.inner.launcher.clone(),
         });
@@ -985,6 +988,7 @@ impl CodemodeSandbox {
             store: serialize_store(options.store.as_ref()),
             store_json: None,
             deterministic: Some(super::protocol::VmDeterministic { started_at: options.started_at, seed: options.seed }),
+            timezone: None,
             control: Some(Control {
                 on_started: options.on_started,
                 on_call: CallHandler::Typed(options.on_call),
@@ -1058,6 +1062,7 @@ impl CodemodeSandbox {
             store: IndexMap::new(),
             store_json,
             deterministic: Some(super::protocol::VmDeterministic { started_at: options.started_at, seed: options.seed }),
+            timezone: None,
             control: Some(Control {
                 on_started: options.on_started,
                 on_call: CallHandler::Json(options.on_call),

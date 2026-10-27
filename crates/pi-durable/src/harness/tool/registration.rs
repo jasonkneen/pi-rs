@@ -56,8 +56,12 @@ pub type PrepareArguments = Arc<dyn Fn(JsonValue) -> Result<JsonValue> + Send + 
 pub type ValidateArguments =
     Arc<dyn Fn(&ToolDeclaration, &ToolCall, JsonValue) -> Result<JsonObject> + Send + Sync>;
 
+#[derive(Clone)]
 pub struct NativeTool {
     pub declaration: ToolDeclaration,
+    /// Application metadata carried with the registration, such as a prompt snippet. It is never
+    /// model-visible or persisted; sections and hooks read it from the resolved agent's tools.
+    pub metadata: Option<JsonObject>,
     pub callers: Option<Vec<ToolCaller>>,
     pub deferred: bool,
     pub replay: ReplayPolicy,
@@ -70,9 +74,14 @@ pub struct NativeTool {
     pub execute: ExecuteTool,
 }
 impl NativeTool {
+    pub fn with_metadata(mut self, metadata: JsonObject) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
     pub fn new(declaration: ToolDeclaration, execute: ExecuteTool) -> Self {
         Self {
             declaration,
+            metadata: None,
             callers: None,
             deferred: false,
             replay: ReplayPolicy::Unsafe,
@@ -147,12 +156,6 @@ impl ExecutableTool for NativeTool {
     }
 }
 
-// The existing provider SDK accepts UTF8 JSON. Reject unsupported fields explicitly
-// at that boundary; never replace lone UTF16 units in durable data with U+FFFD.
-fn sdk_json(value: &JsonValue) -> Result<serde_json::Value> {
-    serde_json::from_str(&value.to_string())
-        .map_err(|error| Error::message(format!("Unsupported SDK JSON: {error}")))
-}
 fn check_arguments_error(call: &ToolCall) -> Result<()> {
     if let Some(error) = call
         .extra
@@ -181,25 +184,18 @@ pub fn validate_tool_arguments(
     arguments: JsonValue,
 ) -> Result<JsonObject> {
     check_arguments_error(call)?;
-    let parameters = sdk_json(&declaration.parameters)?;
-    let args = sdk_json(&arguments)?;
-    let serde_json::Value::Object(args) = args else {
+    if !arguments.is_object() {
         return Err(Error::message("Tool arguments must be an object"));
-    };
-    let name = declaration
-        .name
-        .to_string_checked()
-        .map_err(|e| Error::message(e.to_string()))?;
-    let tool = pi_ai::Tool::new(&name, "", parameters);
-    let call = pi_ai::ToolCall {
-        name,
-        arguments: args,
-        ..Default::default()
-    };
-    let result = pi_ai::utils::validation::validate_tool_arguments(&tool, &call)
-        .map_err(|error| Error::message(error.to_string()))?;
-    let value = pi_chord::json::parse(&result.to_string())
-        .map_err(|error| Error::message(error.to_string()))?;
+    }
+    // Validation keeps JavaScript strings, including unpaired surrogates.
+    let value = pi_ai::utils::validation::utf16::validate_tool_arguments(
+        &declaration.name,
+        &declaration.parameters,
+        false,
+        &arguments,
+        None,
+    )
+    .map_err(|message| Error::host("Error", message))?;
     JsonObject::try_from_value(value).map_err(Error::message)
 }
 fn structured_output_error(
@@ -216,28 +212,37 @@ fn structured_output_error(
         (Some(_), None) if result.is_error == Some(true) => return Ok(None),
         (Some(_), None) => " returned no structuredOutput".into(),
         (Some(schema), Some(value)) => {
-            let schema = sdk_json(schema)?;
-            let validator = pi_ai::utils::validation::SchemaValidator::new(&schema);
-            let value = sdk_json(&value.copy_json()?)?;
+            let validator = pi_ai::utils::validation::utf16::SchemaValidator::new(schema);
+            let value = value.copy_json()?;
             if validator.check(&value) {
                 return Ok(None);
             }
             let errors = validator.errors(&value);
             let first = errors.first();
+            // `instancePath.replace(/^\//, "").replace(/\//g, ".") || "root"`
             let path = first
                 .map(|error| {
-                    error
-                        .instance_path
-                        .trim_start_matches('/')
-                        .replace('/', ".")
+                    let units = error.instance_path.units();
+                    JsonString::from_utf16(
+                        units
+                            .strip_prefix(&[0x2f])
+                            .unwrap_or(units)
+                            .iter()
+                            .map(|&unit| if unit == 0x2f { 0x2e } else { unit })
+                            .collect(),
+                    )
                 })
-                .filter(|path| !path.is_empty())
+                .filter(|path| !path.units().is_empty())
                 .unwrap_or_else(|| "root".into());
-            format!(
-                " returned structuredOutput that does not match its schema: {path}: {}",
-                first.map_or("invalid", |error| &error.message)
+            result::join(
+                [
+                    " returned structuredOutput that does not match its schema: ".into(),
+                    path,
+                    ": ".into(),
+                    first.map_or_else(|| "invalid".into(), |error| error.message.clone()),
+                ],
+                "",
             )
-            .into()
         }
     };
     Ok(Some(result::join([prefix, message], "")))

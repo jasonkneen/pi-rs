@@ -50,30 +50,11 @@ struct Watched {
     closed: std::sync::atomic::AtomicBool,
 }
 fn code(value: FileErrorCode) -> &'static str {
-    match value {
-        FileErrorCode::Aborted => "aborted",
-        FileErrorCode::NotFound => "not_found",
-        FileErrorCode::PermissionDenied => "permission_denied",
-        FileErrorCode::NotDirectory => "not_directory",
-        FileErrorCode::IsDirectory => "is_directory",
-        FileErrorCode::Invalid => "invalid",
-        FileErrorCode::NotSupported => "not_supported",
-        FileErrorCode::Unknown => "unknown",
-    }
+    value.as_str()
 }
 fn file_error(value: &Value) -> FileError {
-    let kind = match value["code"].as_str() {
-        Some("aborted") => FileErrorCode::Aborted,
-        Some("not_found") => FileErrorCode::NotFound,
-        Some("permission_denied") => FileErrorCode::PermissionDenied,
-        Some("not_directory") => FileErrorCode::NotDirectory,
-        Some("is_directory") => FileErrorCode::IsDirectory,
-        Some("invalid") => FileErrorCode::Invalid,
-        Some("not_supported") => FileErrorCode::NotSupported,
-        _ => FileErrorCode::Unknown,
-    };
     FileError::new(
-        kind,
+        FileErrorCode::from_name(value["code"].as_str().unwrap_or_default()),
         value["message"]
             .as_str()
             .unwrap_or("Host file operation failed"),
@@ -579,15 +560,7 @@ impl Hub {
     }
 }
 fn execution_error(error: ExecutionError) -> Value {
-    let code = match error.code() {
-        ExecutionErrorCode::Aborted => "aborted",
-        ExecutionErrorCode::Timeout => "timeout",
-        ExecutionErrorCode::ShellUnavailable => "shell_unavailable",
-        ExecutionErrorCode::SpawnError => "spawn_error",
-        ExecutionErrorCode::CallbackError => "callback_error",
-        ExecutionErrorCode::Unknown => "unknown",
-    };
-    json!({"kind":"execution","name":"ExecutionError","code":code,"message":error.to_string(),"spillPath":error.spill_path()})
+    json!({"kind":"execution","name":"ExecutionError","code":error.code().as_str(),"message":error.to_string(),"spillPath":error.spill_path()})
 }
 fn host_execution_error(error: FileError) -> ExecutionError {
     ExecutionError::new(ExecutionErrorCode::Unknown, error.to_string()).with_cause(Arc::new(error))

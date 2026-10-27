@@ -14,15 +14,20 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use pi_chord::delta::{Op, apply_immutable_batches};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
+#[cfg(all(target_arch = "wasm32", feature = "cloudflare"))]
+pub mod cloudflare_js;
 pub mod migrations;
 pub mod schema;
 pub use migrations::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use pi_chord::sqlite::{
-    NativeSqliteDatabase, NativeSqliteDatabaseOptions, SqliteDatabase, SqliteDatabaseExt,
-    SqliteError, SqliteExecutor, SqliteFuture, SqliteRow, SqliteValue,
+    NativeSqliteDatabase, NativeSqliteDatabaseOptions, open_native_sqlite_database,
+};
+pub use pi_chord::sqlite::{
+    SqliteDatabase, SqliteDatabaseExt, SqliteError, SqliteExecutor, SqliteFuture, SqliteRow,
+    SqliteValue,
     cloudflare::{DurableObjectSqliteDatabase, DurableObjectSqliteStorage},
-    open_native_sqlite_database,
 };
 pub use schema::*;
 
@@ -30,6 +35,7 @@ pub use schema::*;
 pub struct SqliteStorageOptions {
     pub prefix: Option<String>,
 }
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Default)]
 pub struct NativeSqliteStorageOptions {
     pub prefix: Option<String>,
@@ -367,8 +373,9 @@ impl SqliteStorage {
         })
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub fn open_native_sqlite_storage(
-    path: impl AsRef<Path>,
+    path: impl AsRef<std::path::Path>,
     options: NativeSqliteStorageOptions,
 ) -> StorageFuture<SqliteStorage> {
     let valid = create_sqlite_schema(options.prefix.as_deref());

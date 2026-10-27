@@ -558,6 +558,10 @@ pub struct CodemodeExecuteOptions {
     /// Values the script reads with `load(key)`. The script's own `store()` calls come back as
     /// the result's store writes; persisting them is up to the caller.
     pub store: Option<Map<String, Value>>,
+    /// The host timezone the script's `Date` uses (an IANA name such as `Asia/Kolkata` or a POSIX
+    /// `TZ` string), like a worker reading its process's `TZ`. `None`: the VM thread's own (`TZ`
+    /// in the environment). Remote VMs keep the remote's timezone.
+    pub timezone: Option<String>,
 }
 
 /// A running [`crate::CodemodeSandbox::start`] execution.

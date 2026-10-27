@@ -20,12 +20,23 @@ process.once("exit",flushTrace);
 export function failure(value){if(foreignErrors.has(value.foreignId))return foreignErrors.get(value.foreignId);const error=errors.has(value.kind)?errors.get(value.kind)(value):new Error(value.message);if(value.aborted)cancellations.add(error);if(value.name&&value.name!=="Error")error.name=value.name;if(value.cause)Object.defineProperty(error,"cause",{value:failure(value.cause),configurable:true,writable:true});return error;}
 function trace(direction,frame){if(process.env.PI_DURABLE_NATIVE_TRACE){const row=JSON.stringify({at:performance.now(),pid:process.pid,threadId,direction,type:frame.type,id:frame.id,method:frame.method,operation:frame.args?.method,runtime:frame.runtime??frame.args?.runtime,callId:frame.args?.callId,run:frame.run??frame.args?.run,event:frame.event,...(frame.method==="codemode.vm.start"?{codePrefix:typeof frame.args?.code==="string"?frame.args.code.slice(0,256):undefined}:{}),error:frame.error??false,...(process.env.PI_DURABLE_NATIVE_TRACE_DETAIL==="1"?{frame}:{})})+"\n";if(bufferedTrace)bufferedTrace.push(row);else appendFileSync(process.env.PI_DURABLE_NATIVE_TRACE,row);}}
 function send(frame){trace("send",frame);port.postMessage(frame);}
+// Upstream runs a caller's continuation before native work that a later line job starts. Native
+// steps wait until every frame sent before them has been acknowledged here, once the microtask
+// queue has drained after the frame. A phase turn yields to native microtasks, so the gate stays
+// open while one pumps; other synchronous requests (a change turn waits for its commit) keep it shut.
+// Only a bridge that offers the gate (a leading host.acks frame) receives acknowledgements.
+let received=0,ackScheduled=false,acks=false;
+function acknowledge(){ackScheduled=false;if(acks&&worker&&!closing&&!closed)send({type:"host.ack",count:received});}
+const setImmediateReal=globalThis.setImmediate;// captured now: a test may fake the timers later
+function scheduleAck(){if(acks&&!ackScheduled){ackScheduled=true;setImmediateReal(acknowledge);}}
 function fail(error){transportFailure=error;for(const [id,waiter] of pending){if(!waiter.sync){pending.delete(id);waiter.detach?.();waiter.reject(error);}}}
-function dispatch(frame,delivered=false){
+function dispatch(frame,delivered=false,held){
+ if(!delivered&&frame.type!=="transport.error"&&frame.type!=="transport.exit"){received++;if(frame.type==="host.acks"){acks=true;trace("receive",frame);scheduleAck();return;}scheduleAck();}
  // MessagePort can deliver a batch before running promise continuations.
  // A callback after a reply must follow that reply's queued continuations,
  // including when a synchronous caller is pumping the batch itself.
- if(!delivered&&frame.type==="callback"&&!frame.sync){queueMicrotask(()=>dispatch(frame,true));return;}
+ // Take the callback's context now: a later context.drop must not erase it before dispatch.
+ if(!delivered&&frame.type==="callback"&&!frame.sync){const context=contexts.get(frame.context);queueMicrotask(()=>dispatch(frame,true,context));return;}
  trace("receive",frame);
  if(frame.type==="context.drop"){contexts.delete(frame.id);return;}
  if(frame.type==="admitted"){const waiter=pending.get(frame.id);if(waiter)waiter.admitted=true;return;}
@@ -37,7 +48,8 @@ function dispatch(frame,delivered=false){
   if(frame.sync)synchronousCallbacks++;
   try{
    if(!handler)throw new Error(`Unknown native callback ${frame.method}`);
-   const value=handler(frame.args,contextAdapter?.decode(contexts.get(frame.context),frame.telemetry)??contexts.get(frame.context),frame);
+   const context=held??contexts.get(frame.context);
+   const value=handler(frame.args,contextAdapter?.decode(context,frame.telemetry)??context,frame);
    if(frame.sync){if(value&&typeof value.then==="function")throw new Error(`Synchronous callback returned a Promise: ${frame.method}`);reply(value);}
    else Promise.resolve(value).then(reply,reject);
   }catch(error){reject(error);}finally{if(frame.sync)synchronousCallbacks--;}
@@ -103,7 +115,7 @@ export const nativeTransport={
   return response;
  },
  sync(method,args={}){
-  start();const id=next++,waiter={sync:true,method};pending.set(id,waiter);send({id,method,...args});const deadline=Date.now()+30000;
+  start();const id=next++,waiter={sync:true,method};pending.set(id,waiter);const opens=acks&&method==="phase.turn",acked=received;if(opens)send({type:"host.ack",count:acked,open:true,runtime:args.runtime});send({id,method,...args});const deadline=Date.now()+30000;
   try{
    while(!waiter.frame){
     const observed=Atomics.load(signal,0);drain();
@@ -112,7 +124,7 @@ export const nativeTransport={
     if(!waiter.frame)Atomics.wait(signal,0,observed,10);
    }
    if(waiter.frame.error)throw failure(waiter.frame.error);return waiter.frame.missing?undefined:waiter.frame.value;
-  }finally{pending.delete(id);}
+  }finally{pending.delete(id);if(opens&&!closing&&!closed)send({type:"host.ack",count:acked,open:false,runtime:args.runtime});scheduleAck();}
  },
  async close(){
   flushTrace();

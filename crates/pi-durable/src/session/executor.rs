@@ -11,11 +11,14 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{
-        Arc, OnceLock, Weak,
+        Arc, Weak,
         atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
 
 type JobFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 thread_local! {
@@ -25,14 +28,31 @@ thread_local! {
 pub(crate) struct Executor(Arc<Inner>);
 struct Inner {
     state: Mutex<State>,
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: OnceLock<tokio::runtime::Handle>,
     changed: tokio::sync::Notify,
+    /// Notified when the queue is seen settled (see `quiescent`).
+    settled: tokio::sync::Notify,
 }
 #[derive(Default)]
 struct State {
     ready: VecDeque<Arc<Job>>,
     running: bool,
     stopped: bool,
+    /// Work was queued since the queue was last seen settled: nothing ready or being polled,
+    /// confirmed after Tokio's deferred wakes ran.
+    unsettled: bool,
+    /// Incremented each time the queue is seen settled.
+    quiet_epoch: u64,
+    /// Pending `quiescent` calls.
+    watchers: usize,
+}
+/// Counts one pending `quiescent` call.
+struct Watching(Arc<Inner>);
+impl Drop for Watching {
+    fn drop(&mut self) {
+        self.0.state.lock().watchers -= 1;
+    }
 }
 struct Job {
     executor: Weak<Inner>,
@@ -43,13 +63,16 @@ impl Default for Executor {
     fn default() -> Self {
         Self(Arc::new(Inner {
             state: Mutex::new(State::default()),
+            #[cfg(not(target_arch = "wasm32"))]
             runtime: OnceLock::new(),
             changed: tokio::sync::Notify::new(),
+            settled: tokio::sync::Notify::new(),
         }))
     }
 }
 impl Executor {
     pub fn spawn(&self, operation: impl Future<Output = ()> + Send + 'static) {
+        #[cfg(not(target_arch = "wasm32"))]
         self.0.runtime.get_or_init(tokio::runtime::Handle::current);
         let job = Arc::new(Job {
             executor: Arc::downgrade(&self.0),
@@ -68,6 +91,7 @@ impl Executor {
             if state.stopped {
                 return;
             }
+            state.unsettled = true;
             state.ready.push_back(job);
             if state.running {
                 false
@@ -86,33 +110,115 @@ impl Executor {
                 completed: false,
                 active: HashMap::new(),
             };
+            let run = async move { executor.run(guard).await };
+            #[cfg(not(target_arch = "wasm32"))]
             self.0
                 .runtime
                 .get()
                 .expect("executor has a runtime")
-                .spawn(async move { executor.run(guard).await });
+                .spawn(run);
+            // Workers and browsers have no tokio runtime: the JavaScript microtask queue drives the loop.
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(run);
+        }
+    }
+    /// Resolves once nothing is ready or being polled on this queue: the native analogue of a
+    /// drained microtask queue. Jobs pending on I/O, a timer or a host callback do not count.
+    /// Awaited from one of this queue's own jobs, that job waits (pending) while the queue settles.
+    pub fn quiescent(&self) -> impl Future<Output = ()> + Send + 'static {
+        let executor = self.clone();
+        async move {
+            let inside = CURRENT.with(|current| {
+                current
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(&current.0, &executor.0))
+            });
+            if inside {
+                let (send, receive) = tokio::sync::oneshot::channel();
+                detached(async move {
+                    executor.settled().await;
+                    let _ = send.send(());
+                });
+                let _ = receive.await;
+            } else {
+                executor.settled().await;
+            }
+        }
+    }
+    /// `quiescent` from outside the queue: wait for a pass of the run loop that starts after this
+    /// call to find nothing ready, after Tokio's deferred wakes ran.
+    async fn settled(&self) {
+        let inner = self.0.clone();
+        let since = {
+            let mut state = inner.state.lock();
+            if state.stopped {
+                return;
+            }
+            state.watchers += 1;
+            state.quiet_epoch
+        };
+        let _watching = Watching(inner.clone());
+        self.spawn(async {});
+        loop {
+            let mut settled = std::pin::pin!(inner.settled.notified());
+            settled.as_mut().enable();
+            {
+                let state = inner.state.lock();
+                if state.stopped || state.quiet_epoch > since {
+                    return;
+                }
+            }
+            settled.await;
         }
     }
     async fn run(&self, mut guard: RunGuard) {
         // Pending jobs stay alive even if they have not retained a Waker.
         // Owning them in the Tokio task also releases them on shutdown.
         let mut polls = 0;
+        let (mut flushed, mut flush, mut notify) = (false, false, false);
         loop {
             let changed = self.0.changed.notified();
             let job = {
                 let mut state = self.0.state.lock();
                 match state.ready.pop_front() {
-                    Some(job) => Some(job),
-                    None if guard.active.is_empty() => {
-                        state.running = false;
-                        guard.completed = true;
-                        return;
+                    Some(job) => {
+                        flushed = false;
+                        Some(job)
                     }
-                    None => None,
+                    // Someone awaits quiescence: run Tokio's deferred wakes (`yield_now` defers
+                    // its wake until this task yields) before calling the queue settled.
+                    None if !flushed && state.watchers > 0 => {
+                        flush = true;
+                        None
+                    }
+                    None => {
+                        if flushed && state.unsettled {
+                            state.unsettled = false;
+                            state.quiet_epoch += 1;
+                            notify = true;
+                        }
+                        if guard.active.is_empty() {
+                            state.running = false;
+                            guard.completed = true;
+                        }
+                        None
+                    }
                 }
             };
+            if std::mem::take(&mut notify) {
+                self.0.settled.notify_waiters();
+            }
+            if guard.completed {
+                return;
+            }
             let Some(job) = job else {
-                changed.await;
+                if std::mem::take(&mut flush) {
+                    flushed = true;
+                    tokio::task::yield_now().await;
+                } else {
+                    changed.await;
+                }
                 continue;
             };
             job.queued.store(false, Ordering::Release);
@@ -172,6 +278,8 @@ impl Drop for RunGuard {
                 .collect::<Vec<_>>();
             drop(futures);
             drop(ready);
+            // Pending `quiescent` calls see the queue stopped.
+            self.executor.0.settled.notify_waiters();
         }
     }
 }
@@ -190,11 +298,23 @@ impl ArcWake for Job {
         job.schedule();
     }
 }
+/// Run a task independent of any Session line: tokio natively, the microtask queue on Workers and browsers.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn detached(task: impl Future<Output = ()> + Send + 'static) {
+    tokio::spawn(task);
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn detached(task: impl Future<Output = ()> + Send + 'static) {
+    wasm_bindgen_futures::spawn_local(task);
+}
 pub(crate) fn spawn(operation: impl Future<Output = ()> + Send + 'static) {
     match CURRENT.with(|current| current.borrow().clone()) {
         Some(executor) => executor.spawn(operation),
         None => {
+            #[cfg(not(target_arch = "wasm32"))]
             tokio::spawn(operation);
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(operation);
         }
     }
 }
@@ -289,6 +409,45 @@ mod tests {
         entered.await.unwrap();
         finished.await.unwrap();
         blocked.send(()).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn quiescent_waits_for_ready_work_but_not_for_pending_io() {
+        for _ in 0..200 {
+            quiescent_round().await;
+        }
+    }
+    async fn quiescent_round() {
+        let executor = Executor::default();
+        let steps = Arc::new(Mutex::new(0));
+        let (_blocked, receive) = oneshot::channel::<()>();
+        // Pending I/O never holds quiescence back.
+        executor.spawn(async move {
+            let _ = receive.await;
+        });
+        let counted = steps.clone();
+        executor.spawn(async move {
+            // Ready work: each hop re-queues the job.
+            for _ in 0..50 {
+                *counted.lock() += 1;
+                tokio::task::yield_now().await;
+            }
+        });
+        executor.quiescent().await;
+        assert_eq!(*steps.lock(), 50);
+        // From inside one of its own jobs, that job's poll does not count.
+        let (done, finished) = oneshot::channel();
+        let inner = executor.clone();
+        let counted = steps.clone();
+        executor.spawn(async move {
+            let late = counted.clone();
+            inner.spawn(async move {
+                *late.lock() += 1;
+            });
+            inner.quiescent().await;
+            done.send(*counted.lock()).unwrap();
+        });
+        assert_eq!(finished.await.unwrap(), 51);
     }
 
     #[test]

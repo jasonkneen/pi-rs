@@ -245,3 +245,30 @@ async fn infinite_retention_never_arms_timers_and_unload_preserves_observation()
     assert_eq!(timers.calls.load(Ordering::SeqCst), 0);
     session.close(&Context::default()).await.unwrap();
 }
+
+#[tokio::test]
+async fn commits_keep_the_pending_sweep_without_rearming_the_host_timer() {
+    // Upstream `#sweepDocuments` keeps a pending sweep due no later than the oldest idle document's.
+    let clock = Arc::new(AtomicU64::new(0));
+    let read_clock = clock.clone();
+    let timers = Arc::new(Timers::default());
+    let session = Session::new(
+        Arc::new(MemoryStorage::default()),
+        SessionOptions {
+            now: Arc::new(move || read_clock.load(Ordering::SeqCst) as f64),
+            document_retention_ms: 100.0,
+            set_timer: Some(timers.host()),
+            ..Default::default()
+        },
+    );
+    create(&session).await;
+    assert_eq!(timers.calls.load(Ordering::SeqCst), 1);
+    for at in 1..=20 {
+        clock.store(at, Ordering::SeqCst);
+        barrier(&session).await;
+    }
+    assert_eq!(timers.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(timers.armed(), 1);
+    assert_eq!(session.cache_sizes().cached, 1);
+    session.close(&Context::default()).await.unwrap();
+}

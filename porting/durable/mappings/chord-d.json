@@ -280,8 +280,8 @@
         {
           "name": "Watch references > retains neither its source, its listener, nor its signal once ended, while still referenced",
           "class": "native",
-          "rust": "crates/pi-chord/tests/watch.rs::watch_references_retains_neither_its_source_nor_its_listener_once_ended_while_still_referenced",
-          "note": "new; source/listener released for stop/cancel/end/retire with open-watch control; signal not asserted (AbortSignal exposes no weak handle)"
+          "rust": "crates/pi-chord/tests/watch.rs::watch_references_retains_neither_its_source_its_listener_nor_its_signal_once_ended_while_still_referenced",
+          "note": "source, listener and signal released for stop/cancel/end/retire with open-watch control; signal observed via new AbortSignal::downgrade -> WeakAbortSignal (Weak of the signal's shared source slice, the WeakRef equivalent)"
         },
         {
           "name": "NativeWatch > delivers values by identity in order with a context, never inline",

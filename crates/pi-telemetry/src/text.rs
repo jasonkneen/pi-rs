@@ -78,3 +78,25 @@ impl From<TelemetryText> for Value {
         Self::String(value.into_json_string())
     }
 }
+
+/// JavaScript string comparison: UTF-16 code unit order.
+impl PartialOrd for TelemetryText {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for TelemetryText {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.units().cmp(other.units())
+    }
+}
+impl PartialEq<str> for TelemetryText {
+    fn eq(&self, other: &str) -> bool {
+        self.units.equals_str(other)
+    }
+}
+impl PartialEq<&str> for TelemetryText {
+    fn eq(&self, other: &&str) -> bool {
+        self.units.equals_str(other)
+    }
+}

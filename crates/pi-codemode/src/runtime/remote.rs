@@ -175,6 +175,9 @@ pub struct CodemodeServeOptions {
     pub max_memory_limit_bytes: Option<u64>,
     /// Maximum JS call depth. Default: [`DEFAULT_RECURSION_LIMIT`].
     pub recursion_limit: Option<usize>,
+    /// The timezone the VMs' `Date` uses (IANA name or POSIX `TZ` string), the serving host's
+    /// own; `None`: this process's `TZ`.
+    pub timezone: Option<String>,
 }
 
 /// Start `future` and poll it once right away, so its synchronous part runs now (in order with
@@ -315,7 +318,7 @@ pub async fn serve_codemode_remote(request: CodemodeRemoteRequest, exchange: Cod
         (Some(requested), None) => Some(requested),
         (Some(requested), Some(max)) => Some(requested.min(max)),
     };
-    let data = VmStartData { memory_limit_bytes, ..request.data };
+    let data = VmStartData { memory_limit_bytes, timezone: options.timezone.clone(), ..request.data };
 
     let server = Arc::new(Server {
         state: Mutex::new(ServerState { handle: None, ended: false, buffered: Vec::new(), buffered_chars: 0 }),
@@ -454,7 +457,8 @@ impl VmLauncher for RemoteLauncher {
                 return Box::pin(async move { Err(message) });
             }
         };
-        let request = CodemodeRemoteRequest { data, interrupt_budget: self.interrupt_budget };
+        // The remote's VM keeps the remote's timezone.
+        let request = CodemodeRemoteRequest { data: VmStartData { timezone: None, ..data }, interrupt_budget: self.interrupt_budget };
         let run_state = state.clone();
         tokio::spawn(async move {
             let result = target.execute(request, exchange).await;

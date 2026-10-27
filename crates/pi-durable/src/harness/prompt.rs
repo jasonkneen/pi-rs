@@ -72,7 +72,8 @@ impl<I, S: PromptSection<I>> PromptSection<I> for AgentSection<S> {
     fn tagged(&self) -> bool {
         match self {
             Self::Registered(section) => section.tagged(),
-            Self::Instructions(_) => false,
+            // Upstream gives the instructions section no `tag: false`, so it renders wrapped.
+            Self::Instructions(_) => true,
         }
     }
 }
@@ -153,12 +154,12 @@ pub fn plan_system_entries(
         && !view
             .entries
             .iter()
-            .any(|entry| entry.kind.equals_str("pi.system") && entry.id > head.id)
+            .any(|entry| entry.kind == *SYSTEM_ENTRY.kind() && entry.id > head.id)
     {
         let edits = view
             .entries
             .iter()
-            .filter(|entry| entry.kind.equals_str("pi.system"))
+            .filter(|entry| entry.kind == *SYSTEM_ENTRY.kind())
             .map(|entry| ContextEdit::Omit { target: entry.id })
             .collect::<Vec<_>>();
         let patch = desired
@@ -323,7 +324,7 @@ fn system_entry(
         }
     }
     wire::put(&mut message, "timestamp", &timestamp);
-    let mut draft = EntryDraft::new("pi.system");
+    let mut draft = EntryDraft::new(SYSTEM_ENTRY.kind().clone());
     draft.model = Some(vec![message]);
     draft
 }

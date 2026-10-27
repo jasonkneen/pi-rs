@@ -1,5 +1,5 @@
 use pi_chord::context::*;
-use pi_telemetry::{InMemoryTelemetryContext, SpanOptions, TelemetryContextExt};
+use pi_telemetry::{InMemoryTelemetryContext, SpanLink, SpanOptions, TelemetryContextExt};
 use std::sync::Arc;
 
 #[test]
@@ -194,12 +194,13 @@ async fn derives_telemetry_independently_from_values_and_cancellation() {
                             child
                                 .telemetry()
                                 .record_event("started", Default::default());
+                            let outer_telemetry = child.telemetry().clone();
                             trace_in(
                                 "inner",
                                 |nested| async move {
                                     nested
                                         .telemetry()
-                                        .record_event("nested", Default::default());
+                                        .record_link(SpanLink::new(outer_telemetry));
                                     42
                                 },
                                 &child,
@@ -221,6 +222,7 @@ async fn derives_telemetry_independently_from_values_and_cancellation() {
     assert_eq!(outer.parent_id, Some(caller.id));
     assert_eq!(inner.parent_id, Some(outer.id));
     assert_eq!(outer.events[0].name, "started");
+    assert_eq!(inner.links[0].context, outer.context);
     assert_eq!(other.get_spans().len(), 1);
 }
 
@@ -261,7 +263,7 @@ async fn isolates_concurrent_trace_in_branches_and_preserves_callback_results_an
             let result = trace_in(
                 "noop",
                 |child| async move {
-                    child.telemetry().record_event("noop", Default::default());
+                    child.telemetry().record_link(SpanLink::new(parent_ref));
                     42
                 },
                 &BACKGROUND_CONTEXT,

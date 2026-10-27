@@ -23,7 +23,7 @@ pub(super) async fn append_assistant(
         &usage,
     )
     .await?;
-    let mut entry = EntryDraft::new("pi.assistant");
+    let mut entry = EntryDraft::new(ASSISTANT_ENTRY.kind().clone());
     entry.model = Some(vec![message.copy_json()?.into_value()]);
     tx.append_entry(conversation, entry).await
 }
@@ -32,10 +32,8 @@ pub async fn convert_partial(
     live: &DocDraft<LiveState>,
     conversation: ConversationId,
 ) -> Result<()> {
-    if let Some(mut message) = live
-        .read()?
-        .generation
-        .and_then(|generation| generation.message)
+    if let Some(mut message) =
+        live.with_json(|raw| JsonObject::try_from_value(raw["generation"]["message"].clone()).ok())?
     {
         message.insert("stopReason".into(), wire::encode(&"aborted"));
         append_assistant(

@@ -1,5 +1,6 @@
 //! Durable task scheduling. Reservations, state changes and decisions share the
 //! Session's mutation line. Handlers and joins always run outside it.
+pub(super) mod ordered;
 mod telemetry;
 #[cfg(test)]
 #[path = "scheduler/timer_tests.rs"]
@@ -20,6 +21,7 @@ use crate::{
 };
 use futures::FutureExt;
 use indexmap::{IndexMap, IndexSet};
+use ordered::{OrderedMap, OrderedSet};
 use parking_lot::Mutex;
 use pi_chord::{
     AbortController, Watch,
@@ -119,7 +121,14 @@ pub struct SchedulerOptions {
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
     pub settle_outcome: SettleOutcome,
     pub withdraw_inputs: WithdrawInputs,
+    /// Awaited before each step of an invocation is queued on the line: a phase's first step,
+    /// its next step after the handler returns, and an abort handler's start. A host across a
+    /// process boundary uses it to let the continuation of the caller it just answered queue its
+    /// own work first, as upstream's microtask order does. Reservation is never gated.
+    pub step_gate: Option<StepGate>,
 }
+/// See [`SchedulerOptions::step_gate`].
+pub type StepGate = Arc<dyn Fn(TaskId) -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
 impl Default for SchedulerOptions {
     fn default() -> Self {
         let models = pi_ai::models::Models::default();
@@ -135,6 +144,7 @@ impl Default for SchedulerOptions {
             on_wake: None,
             settle_outcome: Arc::new(|_, _, _| ready(Ok(()))),
             withdraw_inputs: Arc::new(|_, _| ready(Ok(()))),
+            step_gate: None,
         }
     }
 }
@@ -151,14 +161,14 @@ struct State {
     finalize_pending: bool,
     cascade: bool,
     sweep_pending: bool,
-    runnable: IndexSet<TaskId>,
+    runnable: OrderedSet<TaskId>,
     held: IndexSet<TaskId>,
     sleeping: IndexSet<TaskId>,
     parked: IndexSet<TaskId>,
     abandoned: IndexSet<TaskId>,
     fail_fast: IndexSet<TaskId>,
     waiting: HashMap<TaskId, IndexSet<TaskId>>,
-    invocations: IndexMap<TaskId, Arc<Invocation>>,
+    invocations: OrderedMap<TaskId, Arc<Invocation>>,
     resumed: HashSet<TaskId>,
     failed_migrations: HashMap<TaskId, FailedMigration>,
     blocked_listeners: IndexMap<u64, Arc<dyn Fn() -> Result<()> + Send + Sync>>,
@@ -1265,7 +1275,7 @@ impl TaskScheduler {
     }
     fn defer_blocked_notification(&self) {
         let scheduler = self.clone();
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             tokio::task::yield_now().await;
             scheduler.notify_blocked();
         });
@@ -1536,6 +1546,7 @@ impl TaskScheduler {
             scheduler: self.clone(),
             invocation: invocation.clone(),
         });
+        self.step_gate(invocation.task).await;
         let mut next = self
             .step(&invocation, None, &definition, &mut reported)
             .await;
@@ -1567,6 +1578,7 @@ impl TaskScheduler {
             .catch_unwind()
             .await
             .unwrap_or_else(|panic| Err(crate::session::panic_error(panic)));
+            self.step_gate(invocation.task).await;
             next = self
                 .step(
                     &invocation,
@@ -1576,6 +1588,12 @@ impl TaskScheduler {
                 )
                 .await;
             drop(phase);
+        }
+    }
+    fn step_gate(&self, task: TaskId) -> futures::future::BoxFuture<'static, ()> {
+        match &self.inner.options.step_gate {
+            Some(gate) => gate(task),
+            None => Box::pin(async {}),
         }
     }
     async fn step(
@@ -2053,7 +2071,7 @@ impl TaskScheduler {
                     },
                 );
                 tx.set_task(terminal.clone())?;
-                overlay.set_task(terminal);
+                self.inner.tree.stage(&mut overlay, terminal);
                 done.insert(id);
                 if matches!(
                     outcome,
@@ -2427,7 +2445,7 @@ impl TaskScheduler {
         // A foreground deadline is pending work. Retain the scheduler outside
         // its own timer state, so runtime shutdown can drop this owner too.
         let owner = self.clone();
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             let _owner = owner;
             let _ = released.await;
         });
@@ -2848,7 +2866,7 @@ impl TaskDriver for Driver {
         let sweep = self.scheduler.clone();
         eager(async move {
             let result = operation.await;
-            if sweep.inner.tree.sizes().drop_queue != 0 {
+            if sweep.inner.tree.has_drops() {
                 sweep.schedule_sweep();
             }
             result?;
@@ -2911,7 +2929,7 @@ impl TaskDriver for Driver {
         watches.insert(id, watch.clone());
         drop(watches);
         let invocation = Arc::downgrade(&self.invocation);
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             watch.closed().await;
             if let Some(invocation) = invocation.upgrade() {
                 invocation.watches.lock().shift_remove(&id);

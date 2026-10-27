@@ -206,7 +206,31 @@ impl From<usize> for Value {
 
 fn quote(value: &JsonString, out: &mut String) {
     out.push('"');
-    for character in char::decode_utf16(value.0.iter().copied()) {
+    let units = &value.0;
+    out.reserve(units.len());
+    let mut at = 0;
+    while at < units.len() {
+        // A run of printable ASCII needs no escape and no UTF-16 decoding.
+        let start = at;
+        while at < units.len()
+            && matches!(units[at], 0x20..=0x7e)
+            && units[at] != 0x22
+            && units[at] != 0x5c
+        {
+            at += 1;
+        }
+        out.extend(units[start..at].iter().map(|unit| *unit as u8 as char));
+        if at == units.len() {
+            break;
+        }
+        let window = &units[at..units.len().min(at + 2)];
+        let Some(character) = char::decode_utf16(window.iter().copied()).next() else {
+            break;
+        };
+        at += match character {
+            Ok(c) => c.len_utf16(),
+            Err(_) => 1,
+        };
         match character {
             Ok('"') => out.push_str("\\\""),
             Ok('\\') => out.push_str("\\\\"),
@@ -246,7 +270,20 @@ pub fn object_entries(map: &Map) -> impl Iterator<Item = (&JsonString, &Value)> 
         .chain(other)
 }
 pub fn stringify(value: &Value) -> String {
-    fn write(value: &Value, out: &mut String) {
+    stringify_pretty(value, "")
+}
+/// `JSON.stringify(value, null, indent)`: ECMAScript key order and `\uXXXX`
+/// escapes for unpaired UTF-16 units.
+pub fn stringify_pretty(value: &Value, indent: &str) -> String {
+    fn newline(out: &mut String, indent: &str, depth: usize) {
+        if !indent.is_empty() {
+            out.push('\n');
+            for _ in 0..depth {
+                out.push_str(indent);
+            }
+        }
+    }
+    fn write(value: &Value, indent: &str, depth: usize, out: &mut String) {
         match value {
             Value::Null => out.push_str("null"),
             Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -254,32 +291,41 @@ pub fn stringify(value: &Value) -> String {
                 n.as_f64().expect("finite JSON number"),
             )),
             Value::String(s) => quote(s, out),
+            Value::Array(a) if a.is_empty() => out.push_str("[]"),
             Value::Array(a) => {
                 out.push('[');
                 for (index, item) in a.iter().enumerate() {
                     if index > 0 {
                         out.push(',');
                     }
-                    write(item, out);
+                    newline(out, indent, depth + 1);
+                    write(item, indent, depth + 1, out);
                 }
+                newline(out, indent, depth);
                 out.push(']');
             }
+            Value::Object(m) if m.is_empty() => out.push_str("{}"),
             Value::Object(m) => {
                 out.push('{');
                 for (i, (key, value)) in object_entries(m).enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
+                    newline(out, indent, depth + 1);
                     quote(key, out);
                     out.push(':');
-                    write(value, out);
+                    if !indent.is_empty() {
+                        out.push(' ');
+                    }
+                    write(value, indent, depth + 1, out);
                 }
+                newline(out, indent, depth);
                 out.push('}');
             }
         }
     }
     let mut out = String::new();
-    write(value, &mut out);
+    write(value, indent, 0, &mut out);
     out
 }
 
@@ -289,11 +335,23 @@ impl fmt::Display for Value {
     }
 }
 
-impl Serialize for Value {
+/// The text form of a value, written as raw JSON so every serde serializer can carry it unchanged.
+struct RawText<'a>(&'a Value);
+impl Serialize for RawText<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serde_json::value::RawValue::from_string(stringify(self))
+        serde_json::value::RawValue::from_string(stringify(self.0))
             .map_err(serde::ser::Error::custom)?
             .serialize(serializer)
+    }
+}
+impl Serialize for Value {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // This crate's own serializer takes the value itself (lossless, no text); any other serializer
+        // ignores the newtype name and receives the raw JSON text.
+        crate::direct::offer_for_serialize(self);
+        let result = serializer.serialize_newtype_struct(crate::direct::MARKER, &RawText(self));
+        crate::direct::withdraw_serialize_offer();
+        result
     }
 }
 impl Serialize for JsonString {
@@ -301,10 +359,27 @@ impl Serialize for JsonString {
         Value::String(self.clone()).serialize(serializer)
     }
 }
-impl<'de> Deserialize<'de> for Value {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+struct ValueVisitor;
+impl<'de> serde::de::Visitor<'de> for ValueVisitor {
+    type Value = Value;
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("any JSON value")
+    }
+    fn visit_newtype_struct<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Value, D::Error> {
+        // This crate's own deserializer hands the value over directly; any other deserializer yields raw JSON.
+        if let Some(value) = crate::direct::take_deserialize_offer() {
+            return Ok(value);
+        }
         let raw = Box::<serde_json::value::RawValue>::deserialize(deserializer)?;
         parse(raw.get()).map_err(serde::de::Error::custom)
+    }
+}
+impl<'de> Deserialize<'de> for Value {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_newtype_struct(crate::direct::MARKER, ValueVisitor)
     }
 }
 impl<'de> Deserialize<'de> for JsonString {
@@ -316,9 +391,21 @@ impl<'de> Deserialize<'de> for JsonString {
     }
 }
 
-/// Serialize through JSON rather than serde's value visitor so raw UTF-16 strings survive.
+/// Serialize into a `Value`. The direct serializer keeps raw UTF-16 strings; a value it cannot represent falls back
+/// to the JSON text route, which reports the error serde_json always reported.
 pub fn to_value<T: Serialize + ?Sized>(value: &T) -> Result<Value, String> {
-    parse(&serde_json::to_string(value).map_err(|e| e.to_string())?)
+    match crate::direct::to_value_direct(value) {
+        Ok(value) => Ok(value),
+        Err(_) => parse(&serde_json::to_string(value).map_err(|e| e.to_string())?),
+    }
+}
+/// Deserialize from a `Value` without JSON text, falling back to the text route (and its error messages) when the
+/// direct deserializer cannot read the value.
+pub fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
+    match crate::direct::from_value_direct(value) {
+        Ok(value) => Ok(value),
+        Err(_) => serde_json::from_str(&stringify(value)).map_err(|e| e.to_string()),
+    }
 }
 
 pub fn parse(input: &str) -> Result<Value, String> {
@@ -385,6 +472,21 @@ pub fn parse(input: &str) -> Result<Value, String> {
                         });
                     }
                     Some(b) if b < 32 => return Err(self.error()),
+                    Some(b) if b < 0x80 => {
+                        // A run of plain ASCII needs no per-character decoding.
+                        let bytes = self.input.as_bytes();
+                        let start = self.at;
+                        let mut end = start + 1;
+                        while end < bytes.len()
+                            && (0x20..0x80).contains(&bytes[end])
+                            && bytes[end] != b'"'
+                            && bytes[end] != b'\\'
+                        {
+                            end += 1;
+                        }
+                        units.extend(bytes[start..end].iter().map(|byte| u16::from(*byte)));
+                        self.at = end;
+                    }
                     Some(_) => {
                         let c = self.input[self.at..]
                             .chars()

@@ -17,7 +17,7 @@ pub fn native_timer(callback: TimerCallback, delay_ms: f64, _background: bool) -
     let (cancel, receive) = tokio::sync::oneshot::channel();
     let cancel = Arc::new(Mutex::new(Some(cancel)));
     let keepalive = cancel.clone();
-    tokio::spawn(async move {
+    pi_chord::rt::spawn(async move {
         let _keepalive = keepalive;
         let wait = async move {
             let mut remaining = if delay_ms.is_nan() {
@@ -26,7 +26,7 @@ pub fn native_timer(callback: TimerCallback, delay_ms: f64, _background: bool) -
                 delay_ms.max(0.0)
             };
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(
+                pi_chord::rt::sleep(std::time::Duration::from_secs_f64(
                     remaining.min(MAX_TIMER_DELAY) / 1000.0,
                 ))
                 .await;

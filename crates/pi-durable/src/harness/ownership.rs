@@ -1,5 +1,6 @@
 //! The scheduler's ownership tree, bounded by live work. All mutations are made
 //! by its Session-line callbacks; storage reads never hold this index's mutex.
+use super::scheduler::ordered::OrderedSet;
 use crate::*;
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::Mutex;
@@ -73,8 +74,14 @@ impl TaskOverlay {
         Self::new(tx.staged_tasks(), tx.staged_conversations())
     }
     pub fn set_task(&mut self, record: TaskRecord) {
+        let kept = self
+            .tasks
+            .get(&record.id())
+            .is_some_and(|staged| TaskNode::of(staged) == TaskNode::of(&record));
         self.tasks.insert(record.id(), Arc::new(record));
-        self.links.take();
+        if !kept {
+            self.links.take();
+        }
     }
 }
 #[derive(Default)]
@@ -85,7 +92,7 @@ struct State {
     edges: HashMap<ConversationId, Option<TaskId>>,
     below: Links,
     roots: IndexSet<ConversationId>,
-    unloaded: IndexSet<TaskId>,
+    unloaded: OrderedSet<TaskId>,
     drop_queue: IndexSet<Node>,
 }
 #[derive(Clone, Default)]
@@ -122,6 +129,22 @@ impl TaskTree {
     }
     pub fn set_edge(&self, id: ConversationId, owner: Option<TaskId>) {
         self.state.lock().set_edge(id, owner);
+    }
+    /// Stage a new state of a task in `overlay`. Overlay links only connect tasks this tree
+    /// does not hold live, so a live task with unchanged ownership fields keeps the cached
+    /// links; recomputing them for each of a long chain's finalizations is quadratic.
+    pub fn stage(&self, overlay: &mut TaskOverlay, record: TaskRecord) {
+        let live = self
+            .state
+            .lock()
+            .live
+            .get(&record.id())
+            .is_some_and(|live| TaskNode::of(live) == TaskNode::of(&record));
+        if live {
+            overlay.tasks.insert(record.id(), Arc::new(record));
+        } else {
+            overlay.set_task(record);
+        }
     }
     /// Track one complete committed record. Returns the live owner potentially
     /// freed by terminalization, for finalization and bottom-up abort scheduling.
@@ -330,6 +353,9 @@ impl TaskTree {
     }
     pub fn clear(&self) {
         *self.state.lock() = State::default();
+    }
+    pub fn has_drops(&self) -> bool {
+        !self.state.lock().drop_queue.is_empty()
     }
     pub fn sizes(&self) -> IndexSizes {
         let s = self.state.lock();

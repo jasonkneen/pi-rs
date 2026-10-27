@@ -337,7 +337,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
             state.scheduled = true;
         }
         let weak = Arc::downgrade(&self.inner);
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             // Acquisition/start/advance never invoke a callback on their stack.
             tokio::task::yield_now().await;
             Self::drain(weak).await;
@@ -495,7 +495,7 @@ impl<T: Send + Sync + 'static> Watch<T> {
         if closed.borrow().is_some() {
             return Ok(());
         }
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             tokio::select! {
                 _ = signal.cancelled() => { if let Some(inner) = weak.upgrade() { Self {inner}.cancel(); } }
                 _ = closed.changed() => {}

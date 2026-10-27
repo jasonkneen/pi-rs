@@ -276,7 +276,8 @@ async fn read_text(
         } else {
             0
         };
-        let end = pi_chord::output::character_end(line.as_bytes(), DEFAULT_MAX_BYTES);
+        let end =
+            pi_chord::output::character_end(line.as_bytes(), DEFAULT_MAX_BYTES).min(line.len());
         let mut decoder = StreamDecoder::default();
         let mut text = decoder.decode(Some(&line.as_bytes()[..end]));
         text.push_str(&decoder.decode(None));

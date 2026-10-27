@@ -274,9 +274,26 @@ impl AnyDocDefinition {
 
 /// Typed object state. JSON decoding validates typed placements at the boundary;
 /// the erased runtime retains an object root and preserves arbitrary JSON data.
-pub trait DocumentState: Serialize + DeserializeOwned + Send + Sync + 'static {}
-impl DocumentState for JsonObject {}
+pub trait DocumentState: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// Decode this state from its stored JSON. Untyped states override it to avoid a text round trip.
+    fn from_state(value: &JsonValue) -> Result<Self> {
+        wire::decode(value).map_err(Error::message)
+    }
+    /// Encode this state as JSON. Untyped states override it to avoid a text round trip.
+    fn to_state(&self) -> Result<JsonValue> {
+        pi_chord::json::to_value(self).map_err(Error::message)
+    }
+}
+impl DocumentState for JsonObject {
+    fn from_state(value: &JsonValue) -> Result<Self> {
+        JsonObject::try_from_value(value.clone()).map_err(Error::message)
+    }
+    fn to_state(&self) -> Result<JsonValue> {
+        Ok(self.value().clone())
+    }
+}
 type TypedMigration<T> = Arc<dyn Fn(JsonObject, u64) -> Result<T> + Send + Sync>;
+type RawCheckpoint = Arc<dyn Fn(&JsonObject, &[Op], CheckpointInfo) -> bool + Send + Sync>;
 type TypedCheckpoint<T> = Arc<dyn Fn(&T, &[Op], CheckpointInfo) -> bool + Send + Sync>;
 pub struct DocDefinition<T, S> {
     kind: JsonString,
@@ -284,7 +301,8 @@ pub struct DocDefinition<T, S> {
     scope: S,
     initial: Arc<dyn Fn() -> Result<T> + Send + Sync>,
     migrate: Option<TypedMigration<T>>,
-    checkpoint: TypedCheckpoint<T>,
+    checkpoint: Option<TypedCheckpoint<T>>,
+    raw_checkpoint: Option<RawCheckpoint>,
 }
 impl<T, S> DocDefinition<T, S> {
     pub fn new(
@@ -300,7 +318,8 @@ impl<T, S> DocDefinition<T, S> {
             scope,
             initial: Arc::new(initial),
             migrate: None,
-            checkpoint: Arc::new(checkpoint),
+            checkpoint: Some(Arc::new(checkpoint)),
+            raw_checkpoint: None,
         }
     }
     pub fn with_migration(
@@ -310,6 +329,22 @@ impl<T, S> DocDefinition<T, S> {
         self.migrate = Some(Arc::new(migrate));
         self
     }
+    /// A document that never asks for a checkpoint. Unlike `|_, _, _| false`, this skips decoding the whole
+    /// document into `T` after every change, which costs time proportional to its size per commit.
+    pub fn never_checkpoint(mut self) -> Self {
+        self.checkpoint = None;
+        self.raw_checkpoint = None;
+        self
+    }
+    /// Decide checkpoints from the stored JSON itself. Replaces the typed predicate, so a commit never decodes the
+    /// whole document just to answer it.
+    pub fn raw_checkpoint(
+        mut self,
+        checkpoint: impl Fn(&JsonObject, &[Op], CheckpointInfo) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.raw_checkpoint = Some(Arc::new(checkpoint));
+        self
+    }
 }
 pub struct DocFamilyDefinition<T, I, S> {
     kind: JsonString,
@@ -317,7 +352,7 @@ pub struct DocFamilyDefinition<T, I, S> {
     scope: S,
     initial: Arc<dyn Fn(I) -> Result<T> + Send + Sync>,
     migrate: Option<TypedMigration<T>>,
-    checkpoint: TypedCheckpoint<T>,
+    checkpoint: Option<TypedCheckpoint<T>>,
 }
 impl<T, I, S> DocFamilyDefinition<T, I, S> {
     pub fn new(
@@ -333,7 +368,7 @@ impl<T, I, S> DocFamilyDefinition<T, I, S> {
             scope,
             initial: Arc::new(initial),
             migrate: None,
-            checkpoint: Arc::new(checkpoint),
+            checkpoint: Some(Arc::new(checkpoint)),
         }
     }
     pub fn with_migration(
@@ -341,6 +376,12 @@ impl<T, I, S> DocFamilyDefinition<T, I, S> {
         migrate: impl Fn(JsonObject, u64) -> Result<T> + Send + Sync + 'static,
     ) -> Self {
         self.migrate = Some(Arc::new(migrate));
+        self
+    }
+    /// A document that never asks for a checkpoint. Unlike `|_, _, _| false`, this skips decoding the whole
+    /// document into `T` after every change, which costs time proportional to its size per commit.
+    pub fn never_checkpoint(mut self) -> Self {
+        self.checkpoint = None;
         self
     }
 }
@@ -421,6 +462,7 @@ pub fn define_doc<T: DocumentState, S: DocScope>(
     validate(&definition.kind, definition.version)?;
     let initial = definition.initial;
     let checkpoint = definition.checkpoint;
+    let raw_checkpoint = definition.raw_checkpoint;
     let migrate = definition.migrate.map(|migrate| {
         Arc::new(move |value, version| to_object(&migrate(value, version)?)) as Migration
     });
@@ -432,13 +474,13 @@ pub fn define_doc<T: DocumentState, S: DocScope>(
             family: false,
             initial: Arc::new(move |_| to_object(&initial()?)),
             migrate,
-            checkpoint: Arc::new(move |value, ops, info| {
-                Ok(checkpoint(
-                    &wire::decode(value.value()).map_err(Error::message)?,
-                    ops,
-                    info,
-                ))
-            }),
+            checkpoint: match (raw_checkpoint, checkpoint) {
+                (Some(raw), _) => Arc::new(move |value, ops, info| Ok(raw(value, ops, info))),
+                (None, Some(checkpoint)) => Arc::new(move |value, ops, info| {
+                    Ok(checkpoint(&T::from_state(value.value())?, ops, info))
+                }),
+                (None, None) => Arc::new(|_, _, _| Ok(false)),
+            },
         }),
         marker: PhantomData,
     })
@@ -468,13 +510,12 @@ pub fn define_doc_family<
                 to_object(&initial(wire::decode(seed).map_err(Error::message)?)?)
             }),
             migrate,
-            checkpoint: Arc::new(move |value, ops, info| {
-                Ok(checkpoint(
-                    &wire::decode(value.value()).map_err(Error::message)?,
-                    ops,
-                    info,
-                ))
-            }),
+            checkpoint: match checkpoint {
+                Some(checkpoint) => Arc::new(move |value, ops, info| {
+                    Ok(checkpoint(&T::from_state(value.value())?, ops, info))
+                }),
+                None => Arc::new(|_, _, _| Ok(false)),
+            },
         }),
         marker: PhantomData,
     })

@@ -1,6 +1,9 @@
 use super::{api::Reported, *};
 use crate::{
-    harness::{json::assign_json_ops, live::LIVE_DOC},
+    harness::{
+        json::assign_json_ops,
+        live::{self, LIVE_DOC},
+    },
     wire, *,
 };
 use parking_lot::Mutex;
@@ -94,29 +97,14 @@ pub(crate) fn publish(
                     .commit(
                         move |tx, _| async move {
                             let live = tx.doc(&LIVE_DOC, conversation).await?;
-                            let state = live.read()?;
-                            let selected = state
-                                .tools
-                                .as_ref()
-                                .and_then(|slots| {
-                                    slots.iter().position(|slot| slot.task_id == Some(task))
-                                })
-                                .map(|index| ("tools", index))
-                                .or_else(|| {
-                                    state
-                                        .nested_tools
-                                        .as_ref()
-                                        .and_then(|slots| {
-                                            slots
-                                                .binary_search_by_key(&task, |slot| slot.task_id)
-                                                .ok()
-                                        })
-                                        .map(|index| ("nestedTools", index))
-                                });
-                            if let Some((field, index)) = selected {
+                            let selected = live.with_json(|raw| {
+                                live::locate_slot(raw, task)
+                                    .map(|at| (at, live::slot_json(raw, at).clone()))
+                            })?;
+                            if let Some((at, slot)) = selected {
                                 use pi_chord::delta::{Op, Seg};
-                                let value = wire::encode(&state);
-                                let slot = &value[field][index];
+                                let (field, index) = (at.field, at.index);
+                                let slot = &slot;
                                 let path = |field: &str| vec![Seg::from(field), Seg::Index(index)];
                                 let mut ops = Vec::new();
                                 let mut assign = |key: &str, value: JsonValue| {

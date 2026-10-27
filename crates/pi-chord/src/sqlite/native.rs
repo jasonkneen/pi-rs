@@ -10,7 +10,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
 };
@@ -23,8 +23,59 @@ enum Command {
 #[derive(Clone)]
 struct Worker {
     sender: mpsc::Sender<Command>,
+    connection: Arc<Mutex<Option<Connection>>>,
+    /// Commands sent and not yet run, changed only while the connection is locked.
+    queued: Arc<AtomicUsize>,
+    busy_timeout: std::time::Duration,
+    /// Write-ahead (or in-memory) journaling: a transaction holding the write lock then never
+    /// waits for another connection, so its statements and COMMIT may run in place. In rollback
+    /// journal modes COMMIT waits for readers on the busy handler, so everything stays on the worker.
+    in_place: bool,
 }
 impl Worker {
+    /// Begin in place when nothing is queued ahead and the write lock is free. A contended begin
+    /// waits on the busy handler, which must not block the caller's thread, so it returns false
+    /// for the worker to begin instead.
+    fn try_begin(&self) -> SqliteResult<bool> {
+        if !self.in_place {
+            return Ok(false);
+        }
+        let mut connection = self.connection.lock();
+        if self.queued.load(Ordering::Acquire) != 0 {
+            return Ok(false);
+        }
+        let connection = connection
+            .as_mut()
+            .ok_or_else(|| SqliteError::new("database is not open"))?;
+        connection.busy_timeout(std::time::Duration::ZERO)?;
+        let begun = connection.execute_batch("BEGIN IMMEDIATE");
+        connection.busy_timeout(self.busy_timeout)?;
+        match begun {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+    /// Run on the caller's thread. Only statements and COMMIT of an open transaction in
+    /// `in_place` mode come here: it already holds the write lock, so nothing waits on the busy
+    /// handler, and the queue barrier admits no other work. The caller is blocked only for the
+    /// statement's own work (for COMMIT, the WAL append and at most a passive checkpoint). A round
+    /// trip to the worker per statement dominates a small commit's latency.
+    fn inline<T>(
+        &self,
+        operation: impl FnOnce(&mut Connection) -> SqliteResult<T>,
+    ) -> SqliteResult<T> {
+        let mut connection = self.connection.lock();
+        let connection = connection
+            .as_mut()
+            .ok_or_else(|| SqliteError::new("database is not open"))?;
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(connection)))
+            .unwrap_or_else(|panic| Err(panic_error(panic)))
+    }
     fn call<T, F>(&self, operation: F) -> SqliteFuture<T>
     where
         T: Send + 'static,
@@ -37,7 +88,11 @@ impl Worker {
                     .unwrap_or_else(|panic| Err(panic_error(panic)));
             let _ = send.send(result);
         }));
+        self.queued.fetch_add(1, Ordering::AcqRel);
         let sent = self.sender.send(command);
+        if sent.is_err() {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        }
         Box::pin(async move {
             sent.map_err(|_| SqliteError::new("database is not open"))?;
             receive
@@ -84,6 +139,10 @@ pub async fn open_native_sqlite_database(
     let path = path.as_ref().to_owned();
     let (sender, receiver) = mpsc::channel();
     let (opened, ready) = tokio::sync::oneshot::channel();
+    let shared = Arc::new(Mutex::new(None::<Connection>));
+    let connection_slot = shared.clone();
+    let queued = Arc::new(AtomicUsize::new(0));
+    let worker_queued = queued.clone();
     std::thread::Builder::new()
         .name("pi-sqlite".into())
         .spawn(move || {
@@ -108,20 +167,35 @@ pub async fn open_native_sqlite_database(
                 )?;
                 Ok(connection)
             })();
-            let mut connection = match connection {
-                Ok(connection) => {
-                    let _ = opened.send(Ok(()));
-                    connection
+            let connection = connection.and_then(|connection| {
+                let mode: String =
+                    connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+                Ok((connection, matches!(mode.as_str(), "wal" | "memory")))
+            });
+            match connection {
+                Ok((connection, in_place)) => {
+                    *connection_slot.lock() = Some(connection);
+                    let _ = opened.send(Ok(in_place));
                 }
                 Err(error) => {
                     let _ = opened.send(Err(error));
                     return;
                 }
-            };
+            }
             while let Ok(command) = receiver.recv() {
                 match command {
-                    Command::Work(work) => work(&mut connection),
+                    Command::Work(work) => {
+                        let mut connection = connection_slot.lock();
+                        if let Some(connection) = connection.as_mut() {
+                            work(connection);
+                        }
+                        worker_queued.fetch_sub(1, Ordering::AcqRel);
+                    }
                     Command::Close(done) => {
+                        let Some(connection) = connection_slot.lock().take() else {
+                            let _ = done.send(Ok(()));
+                            return;
+                        };
                         connection.flush_prepared_statement_cache();
                         let checkpoint = connection
                             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -136,11 +210,17 @@ pub async fn open_native_sqlite_database(
             }
         })
         .map_err(|e| SqliteError::new(e.to_string()))?;
-    ready
+    let in_place = ready
         .await
         .map_err(|_| SqliteError::new("SQLite worker ended while opening"))??;
     Ok(NativeSqliteDatabase {
-        worker: Worker { sender },
+        worker: Worker {
+            sender,
+            connection: shared,
+            queued,
+            busy_timeout: std::time::Duration::from_millis(options.busy_timeout_ms),
+            in_place,
+        },
         queue: Arc::default(),
         closed: Arc::new(AtomicBool::new(false)),
     })
@@ -211,6 +291,10 @@ impl Executor {
                     "SQLite transaction handle is no longer active",
                 ))
             });
+        }
+        if active.is_some() && self.worker.in_place {
+            let result = self.worker.inline(operation);
+            return Box::pin(async move { result });
         }
         self.worker.call(operation)
     }
@@ -307,16 +391,20 @@ impl SqliteDatabase for NativeSqliteDatabase {
                     needs_rollback: needs_rollback.clone(),
                     active: active.clone(),
                 };
-                worker
-                    .call({
-                        let needs_rollback = needs_rollback.clone();
-                        move |c| {
-                            c.execute_batch("BEGIN IMMEDIATE")?;
-                            needs_rollback.store(true, Ordering::Release);
-                            Ok(())
-                        }
-                    })
-                    .await?;
+                if worker.try_begin()? {
+                    needs_rollback.store(true, Ordering::Release);
+                } else {
+                    worker
+                        .call({
+                            let needs_rollback = needs_rollback.clone();
+                            move |c| {
+                                c.execute_batch("BEGIN IMMEDIATE")?;
+                                needs_rollback.store(true, Ordering::Release);
+                                Ok(())
+                            }
+                        })
+                        .await?;
+                }
                 let executor = Arc::new(Executor {
                     worker: worker.clone(),
                     active: Some(active.clone()),
@@ -327,13 +415,19 @@ impl SqliteDatabase for NativeSqliteDatabase {
                     .unwrap_or_else(|panic| Err(panic_error(panic)));
                 *active.lock() = false;
                 let result = match result {
-                    Ok(value) => match worker
-                        .call(|c| c.execute_batch("COMMIT").map_err(Into::into))
-                        .await
-                    {
-                        Ok(()) => Ok(value),
-                        Err(error) => Err(error),
-                    },
+                    Ok(value) => {
+                        let commit =
+                            |c: &mut Connection| c.execute_batch("COMMIT").map_err(Into::into);
+                        let committed = if worker.in_place {
+                            worker.inline(commit)
+                        } else {
+                            worker.call(commit).await
+                        };
+                        match committed {
+                            Ok(()) => Ok(value),
+                            Err(error) => Err(error),
+                        }
+                    }
                     Err(error) => Err(error),
                 };
                 let result = if let Err(error) = result {

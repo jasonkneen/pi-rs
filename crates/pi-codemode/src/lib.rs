@@ -35,8 +35,7 @@
 //!
 //! Differences from the TS package (QuickJS in wasm) are listed in `PORTING-STATUS.md`. Boa cannot
 //! be interrupted from outside, so the script's loops are instrumented to poll the interrupt flag
-//! and count the interrupt budget; deep recursion ends the script with a `RangeError` it cannot
-//! catch; and there is no heap limit.
+//! and count the interrupt budget; and there is no heap limit.
 
 pub mod abort;
 pub mod declarations;

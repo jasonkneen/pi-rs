@@ -1,4 +1,4 @@
-use super::{Error, Op, apply_immutable, diff_revisions};
+use super::{Error, Op, Path, Seg, apply_immutable, assert_safe_path, diff::diff_operations};
 use crate::JsonValue;
 use parking_lot::Mutex;
 use std::sync::{
@@ -45,7 +45,172 @@ enum Edits {
     Recorded {
         ops: Vec<Op>,
         untracked_base: Option<JsonValue>,
+        /// Structural mutators on one array since the last flush, normalized at flush.
+        pieces: Option<Pieces>,
     },
+}
+
+/// A retained run of base elements or inserted values, in draft order.
+enum Piece {
+    Base { start: usize, len: usize },
+    Insert(Vec<JsonValue>),
+}
+impl Piece {
+    fn len(&self) -> usize {
+        match self {
+            Self::Base { len, .. } => *len,
+            Self::Insert(items) => items.len(),
+        }
+    }
+}
+
+/// Upstream's piece array for one draft array: which base elements survive, in
+/// which order, and what was inserted between them. Emission depends only on the
+/// pieces, so intermediate splices that cancel out leave no operations.
+struct Pieces {
+    path: Path,
+    base_len: usize,
+    pieces: Vec<Piece>,
+}
+impl Pieces {
+    fn new(path: &[Seg], base_len: usize) -> Self {
+        Self {
+            path: path.to_vec(),
+            base_len,
+            pieces: if base_len == 0 {
+                Vec::new()
+            } else {
+                vec![Piece::Base {
+                    start: 0,
+                    len: base_len,
+                }]
+            },
+        }
+    }
+    /// Split at a logical index and return the pieces from it onwards.
+    fn split_off(pieces: &mut Vec<Piece>, index: usize) -> Vec<Piece> {
+        let mut at = 0;
+        for position in 0..pieces.len() {
+            let len = pieces[position].len();
+            if index == at {
+                return pieces.split_off(position);
+            }
+            if index < at + len {
+                let offset = index - at;
+                let right = match &mut pieces[position] {
+                    Piece::Base { start, len } => {
+                        let right = Piece::Base {
+                            start: *start + offset,
+                            len: *len - offset,
+                        };
+                        *len = offset;
+                        right
+                    }
+                    Piece::Insert(items) => Piece::Insert(items.split_off(offset)),
+                };
+                let mut tail = pieces.split_off(position + 1);
+                tail.insert(0, right);
+                return tail;
+            }
+            at += len;
+        }
+        Vec::new()
+    }
+    fn push(pieces: &mut Vec<Piece>, piece: Piece) {
+        if piece.len() == 0 {
+            return;
+        }
+        match (pieces.last_mut(), piece) {
+            (Some(Piece::Insert(items)), Piece::Insert(mut more)) => items.append(&mut more),
+            (
+                Some(Piece::Base { start, len }),
+                Piece::Base {
+                    start: next,
+                    len: more,
+                },
+            ) if *start + *len == next => *len += more,
+            (_, piece) => pieces.push(piece),
+        }
+    }
+    fn splice(&mut self, start: usize, remove: usize, items: Vec<JsonValue>) {
+        let mut right = Self::split_off(&mut self.pieces, start);
+        let tail = Self::split_off(&mut right, remove);
+        Self::push(&mut self.pieces, Piece::Insert(items));
+        for piece in tail {
+            Self::push(&mut self.pieces, piece);
+        }
+    }
+    fn permute(&mut self, order: &[usize]) {
+        let mut elements = Vec::with_capacity(order.len());
+        for piece in std::mem::take(&mut self.pieces) {
+            match piece {
+                Piece::Base { start, len } => {
+                    elements.extend((start..start + len).map(|index| Piece::Base {
+                        start: index,
+                        len: 1,
+                    }))
+                }
+                Piece::Insert(items) => {
+                    elements.extend(items.into_iter().map(|item| Piece::Insert(vec![item])))
+                }
+            }
+        }
+        let mut elements: Vec<_> = elements.into_iter().map(Some).collect();
+        for &source in order {
+            let piece = elements[source].take().expect("validated permutation");
+            Self::push(&mut self.pieces, piece);
+        }
+    }
+    /// Upstream `emitArrayOperations` for a structural array: removals from the end
+    /// backwards, then a permutation of the survivors if they moved, then inserts.
+    fn emit(self, ops: &mut Vec<Op>) {
+        let mut retained = vec![false; self.base_len];
+        let mut target = Vec::new();
+        for piece in &self.pieces {
+            if let Piece::Base { start, len } = piece {
+                for (index, kept) in retained.iter_mut().enumerate().skip(*start).take(*len) {
+                    *kept = true;
+                    target.push(index);
+                }
+            }
+        }
+        let mut end = self.base_len;
+        while end > 0 {
+            if retained[end - 1] {
+                end -= 1;
+                continue;
+            }
+            let mut start = end - 1;
+            while start > 0 && !retained[start - 1] {
+                start -= 1;
+            }
+            ops.push(Op::Splice(
+                self.path.clone(),
+                start,
+                end - start,
+                Vec::new(),
+            ));
+            end = start;
+        }
+        if target.windows(2).any(|pair| pair[0] > pair[1]) {
+            let mut rank = vec![0; self.base_len];
+            for (position, index) in (0..self.base_len).filter(|i| retained[*i]).enumerate() {
+                rank[index] = position;
+            }
+            ops.push(Op::Move(
+                self.path.clone(),
+                target.iter().map(|index| rank[*index]).collect(),
+            ));
+        }
+        let mut logical = 0;
+        for piece in self.pieces {
+            let len = piece.len();
+            if let Piece::Insert(items) = piece {
+                ops.push(Op::Splice(self.path.clone(), logical, 0, items));
+            }
+            logical += len;
+        }
+    }
 }
 pub struct Change {
     base: Option<Arc<JsonValue>>,
@@ -156,6 +321,7 @@ impl Change {
     pub fn state(&mut self) -> Result<&mut JsonValue, Error> {
         self.release_if_stale();
         self.check_open()?;
+        self.flush_pieces();
         if let Edits::Recorded { untracked_base, .. } = &mut self.edits
             && untracked_base.is_none()
         {
@@ -169,17 +335,121 @@ impl Change {
         let current = self.state.as_ref().expect("open change owns draft");
         match &self.edits {
             Edits::Diff => {
-                diff_revisions(self.base.as_ref().expect("open change owns base"), current)
+                diff_operations(self.base.as_ref().expect("open change owns base"), current)
             }
             Edits::Recorded {
                 untracked_base: Some(base),
                 ..
-            } => diff_revisions(base, current),
+            } => diff_operations(base, current),
             Edits::Recorded {
                 untracked_base: None,
                 ..
             } => Vec::new(),
         }
+    }
+    /// Emit pending piece-array mutations as normalized operations.
+    fn flush_pieces(&mut self) {
+        if let Edits::Recorded { ops, pieces, .. } = &mut self.edits
+            && let Some(pieces) = pieces.take()
+        {
+            pieces.emit(ops);
+        }
+    }
+    /// Start or continue piece tracking for the array at `path`, recording every
+    /// earlier edit first so operation order follows mutation order.
+    fn structural(&mut self, path: &[Seg], len: usize) -> &mut Pieces {
+        let pending = self.pending_diff();
+        if matches!(self.edits, Edits::Diff) {
+            self.edits = Edits::Recorded {
+                ops: Vec::new(),
+                untracked_base: None,
+                pieces: None,
+            };
+        }
+        let Edits::Recorded {
+            ops,
+            untracked_base,
+            pieces,
+        } = &mut self.edits
+        else {
+            unreachable!("edits are recorded")
+        };
+        ops.extend(pending);
+        *untracked_base = None;
+        if pieces.as_ref().is_some_and(|pieces| pieces.path != path)
+            && let Some(previous) = pieces.take()
+        {
+            previous.emit(ops);
+        }
+        pieces.get_or_insert_with(|| Pieces::new(path, len))
+    }
+    fn draft_array(&mut self, path: &[Seg]) -> Result<usize, Error> {
+        self.release_if_stale();
+        assert_safe_path(path)?;
+        let mut value = self.current()?;
+        for segment in path {
+            value = match (value, segment) {
+                (JsonValue::Object(map), Seg::Key(key)) => map.get(key),
+                (JsonValue::Array(items), Seg::Index(index)) => items.get(*index),
+                _ => None,
+            }
+            .ok_or_else(|| Error::Path(super::path_value(path)))?;
+        }
+        value
+            .as_array()
+            .map(Vec::len)
+            .ok_or_else(|| Error::Path(super::path_value(path)))
+    }
+    fn draft_array_mut(&mut self, path: &[Seg]) -> &mut Vec<JsonValue> {
+        let state = self.state.as_mut().expect("open change owns draft");
+        super::resolve_mut(state, path, false)
+            .ok()
+            .and_then(JsonValue::as_array_mut)
+            .expect("validated draft array")
+    }
+    /// `Array.prototype.splice` on the draft array at `path`, with JavaScript's
+    /// clamping. Like upstream's draft mutators it is normalized at prepare: base
+    /// removals from the end backwards, then inserts at their final indices.
+    pub fn splice(
+        &mut self,
+        path: &[Seg],
+        start: usize,
+        remove: usize,
+        items: Vec<JsonValue>,
+    ) -> Result<Vec<JsonValue>, Error> {
+        let len = self.draft_array(path)?;
+        let start = start.min(len);
+        let remove = remove.min(len - start);
+        if remove == 0 && items.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.structural(path, len)
+            .splice(start, remove, items.clone());
+        Ok(self
+            .draft_array_mut(path)
+            .splice(start..start + remove, items)
+            .collect())
+    }
+    /// Reorder the draft array at `path` so element `i` becomes the old element
+    /// `order[i]` (the `sort`/`reverse` mutators); emitted as an `m` permutation of
+    /// the surviving base elements.
+    pub fn permute(&mut self, path: &[Seg], order: &[usize]) -> Result<(), Error> {
+        let len = self.draft_array(path)?;
+        let mut seen = vec![false; len];
+        if order.len() != len
+            || order
+                .iter()
+                .any(|index| *index >= len || std::mem::replace(&mut seen[*index], true))
+        {
+            return Err(error("m permutation is not a bijection"));
+        }
+        self.structural(path, len).permute(order);
+        let values = self.draft_array_mut(path);
+        let previous = values.clone();
+        for (index, source) in order.iter().enumerate() {
+            values[index] = previous[*source].clone();
+        }
+        Ok(())
     }
     /// Apply and retain an explicit operation stream, including structural edits
     /// whose final value equals the base. Failure changes neither draft nor log.
@@ -200,6 +470,7 @@ impl Change {
         }
         let candidate = apply_immutable(Some(current), ops)?;
         validate(&candidate)?;
+        self.flush_pieces();
         let pending = self.pending_diff();
         let mut recorded = match std::mem::replace(&mut self.edits, Edits::Diff) {
             Edits::Diff => Vec::new(),
@@ -211,6 +482,7 @@ impl Change {
         self.edits = Edits::Recorded {
             ops: recorded,
             untracked_base: None,
+            pieces: None,
         };
         Ok(())
     }
@@ -220,6 +492,7 @@ impl Change {
             return Err(error("Change has already been settled"));
         }
         self.check_open()?;
+        self.flush_pieces();
         let pending = self.pending_diff();
         let replay = !matches!(
             &self.edits,

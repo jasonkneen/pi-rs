@@ -101,7 +101,7 @@ impl NativeSandbox {
 struct NativeRun {
     handle: pi_codemode::CodemodeJsonRunHandle,
     result: Shared<BoxFuture<'static, Result<JsonValue>>>,
-    watch: tokio::task::JoinHandle<()>,
+    watch: pi_chord::rt::JoinHandle<()>,
     controller: pi_codemode::AbortController,
 }
 impl Drop for NativeRun {
@@ -195,7 +195,7 @@ impl Sandbox for NativeSandbox {
         let handle = run.handle();
         let cancel = controller.clone();
         let signal = options.signal;
-        let watch = tokio::spawn(async move {
+        let watch = pi_chord::rt::spawn(async move {
             signal.cancelled().await;
             cancel.abort_with_reason(
                 signal

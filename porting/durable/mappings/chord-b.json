@@ -411,9 +411,9 @@
         },
         {
           "name": "immutable revision diff > combines removals, append, and a shared-subtree survivor edit",
-          "class": "embedded-only",
+          "class": "native",
           "rust": "crates/pi-chord/tests/delta_diff.rs::immutable_revision_diff__combines_removals_append_and_a_shared_subtree_survivor_edit",
-          "note": "upstream operation shape is chosen by JS object identity (stable: c.stable). The Rust diff is value-based and does not port identity-guided alignment, so exact ops differ; the Rust test pins exact replay and removal/append structure only. Lead to decide whether to port Arc-identity alignment"
+          "note": "Exact upstream ops. diff.rs is now a literal port of diff.ts: JS identity (===) is Arc::ptr_eq for containers and value equality for scalars, so the shared `stable` subtree aligns the edited c. Test builds values with shared Arcs as upstream shares references."
         },
         {
           "name": "immutable revision diff > does not retain a 262144-byte removed-neighbor payload",

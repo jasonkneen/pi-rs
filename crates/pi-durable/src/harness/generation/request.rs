@@ -317,7 +317,7 @@ impl PartialWriter {
             Ok(partial) => inner.runtime.commit(
                 move |tx, _| async move {
                     let live = tx.doc(&LIVE_DOC, conversation).await?;
-                    let value = wire::encode(&live.read()?);
+                    let value = live.with_json(JsonValue::clone)?;
                     let mut ops = Vec::new();
                     if value["generation"].is_null() {
                         ops.push(Op::Set(
@@ -341,7 +341,7 @@ impl PartialWriter {
                 &inner.context,
             ),
         };
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             if let Err(error) = operation.await
                 && !inner.runtime.signal().aborted()
             {

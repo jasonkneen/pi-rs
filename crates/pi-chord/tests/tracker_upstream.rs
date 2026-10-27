@@ -60,6 +60,13 @@ fn set_at(root: &mut JsonValue, path: &[Seg], new: JsonValue) {
     };
     set_at(child, rest, new);
 }
+fn field<'a>(value: &'a mut JsonValue, key: &str) -> &'a mut JsonValue {
+    value
+        .as_object_mut()
+        .unwrap()
+        .get_mut(&pi_chord::JsonString::from(key))
+        .unwrap()
+}
 fn err(result: Result<(), Error>) -> String {
     result.unwrap_err().to_string()
 }
@@ -564,9 +571,61 @@ fn diff_of_a_shift_splice_pop_push_sequence_replays_to_the_final_value() {
 }
 
 #[test]
+fn emits_removals_from_the_end_backwards_then_inserts_when_kept_elements_keep_their_order() {
+    let path = [Seg::from("values")];
+    let mut tracker = track(value(r#"{"values":[0,1,2,3,4,5,6,7,8,9]}"#));
+    let mut change = tracker.begin_change();
+    assert_eq!(change.splice(&path, 0, 1, vec![]).unwrap(), [num(0)]); // shift
+    assert_eq!(
+        change.splice(&path, 1, 2, vec![num(20)]).unwrap(),
+        [num(2), num(3)]
+    );
+    assert_eq!(change.splice(&path, 5, 1, vec![]).unwrap(), [num(7)]);
+    assert_eq!(change.splice(&path, 6, 1, vec![]).unwrap(), [num(9)]); // pop
+    assert!(
+        change
+            .splice(&path, 6, 0, vec![num(30)])
+            .unwrap()
+            .is_empty()
+    ); // push
+    assert_eq!(
+        change.current().unwrap(),
+        &value(r#"{"values":[1,20,4,5,6,8,30]}"#)
+    );
+    let prepared = change.prepare().unwrap();
+    assert_eq!(
+        wire(prepared.ops()),
+        value(
+            r#"[["p",["values"],9,1,[]],["p",["values"],7,1,[]],["p",["values"],2,2,[]],["p",["values"],0,1,[]],["p",["values"],1,0,[20]],["p",["values"],6,0,[30]]]"#
+        )
+    );
+    assert_eq!(
+        apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
+        **prepared.value()
+    );
+    tracker.adopt(&prepared).unwrap();
+    assert_eq!(**tracker.value(), value(r#"{"values":[1,20,4,5,6,8,30]}"#));
+}
+
+#[test]
 fn emits_a_permutation_when_kept_elements_change_order() {
-    // Reverse is detected by diff; the parity sort is supplied as an explicit permutation batch
-    // because diff mode only classifies permutations when both ends move.
+    // The draft `reverse`/`sort` mutators: `permute` records the reorder as pieces.
+    for (order, expected) in [
+        ([4, 3, 2, 1, 0], r#"{"values":[4,3,2,1,0]}"#),
+        ([0, 2, 4, 1, 3], r#"{"values":[0,2,4,1,3]}"#),
+    ] {
+        let tracker = track(value(r#"{"values":[0,1,2,3,4]}"#));
+        let mut change = tracker.begin_change();
+        change.permute(&["values".into()], &order).unwrap();
+        let prepared = change.prepare().unwrap();
+        assert!(prepared.ops().iter().any(|op| matches!(op, Op::Move(..))));
+        assert_eq!(
+            apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
+            value(expected)
+        );
+    }
+
+    // Reverse is also detected by diff; explicit permutation batches are retained.
     let mut tracker = track(value(r#"{"values":[0,1,2,3,4]}"#));
     let prepared = settle(&mut tracker, r#"{"values":[4,3,2,1,0]}"#);
     assert!(prepared.ops().iter().any(|op| matches!(op, Op::Move(..))));
@@ -597,10 +656,30 @@ fn keeps_adoption_independent_from_mutable_detached_permutation_metadata() {
 
 #[test]
 fn combines_movement_and_edits_with_permutation_plus_final_paths() {
-    // Recorded as an explicit batch: diff mode cannot see a moved-then-edited element.
-    let mut tracker = track(value(
-        r#"{"values":[{"rank":3,"edited":0},{"rank":1,"edited":0},{"rank":2,"edited":0}]}"#,
-    ));
+    // Sort through the draft mutator, then edit the held element at its final index.
+    let initial =
+        r#"{"values":[{"rank":3,"edited":0},{"rank":1,"edited":0},{"rank":2,"edited":0}]}"#;
+    let mut tracker = track(value(initial));
+    let mut change = tracker.begin_change();
+    change.permute(&["values".into()], &[1, 2, 0]).unwrap();
+    set_at(
+        change.state().unwrap(),
+        &["values".into(), 2.into(), "edited".into()],
+        JsonValue::from(1),
+    );
+    let prepared = change.prepare().unwrap();
+    assert_eq!(
+        wire(&prepared.ops()[..1]),
+        value(r#"[["m",["values"],[1,2,0]]]"#)
+    );
+    assert_eq!(
+        apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
+        **prepared.value()
+    );
+    tracker.adopt(&prepared).unwrap();
+
+    // An explicit batch is retained verbatim.
+    let mut tracker = track(value(initial));
     let mut change = tracker.begin_change();
     let ops = [
         Op::Move(vec!["values".into()], vec![1, 2, 0]),
@@ -625,21 +704,37 @@ fn combines_movement_and_edits_with_permutation_plus_final_paths() {
 
 #[test]
 fn folds_dense_child_and_direct_index_edits_into_one_full_array_operation() {
+    // Edits are made in place on the draft, as upstream's `row.value += 1`.
     let mut tracker = track(value(&format!(
         r#"{{"rows":{}}}"#,
         rows(1000, |i| i as i64)
     )));
-    let prepared = prepare_next(
-        &tracker,
-        &format!(r#"{{"rows":{}}}"#, rows(1000, |i| i as i64 + 100_000)),
-    );
+    let mut change = tracker.begin_change();
+    for row in field(change.state().unwrap(), "rows")
+        .as_array_mut()
+        .unwrap()
+    {
+        let value = field(row, "value");
+        *value = num(value.as_f64().unwrap() as i64 + 1);
+    }
+    let prepared = change.prepare().unwrap();
     assert_eq!(prepared.ops().len(), 1);
     assert!(matches!(prepared.ops()[0], Op::Splice(..)));
+    assert_eq!(
+        apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
+        **prepared.value()
+    );
     tracker.adopt(&prepared).unwrap();
 
     let mut tracker = track(value(&format!(r#"{{"values":{}}}"#, numbers(0..1000))));
-    let next = numbers((0..1000).map(|i| if i < 600 { -i - 1 } else { i }));
-    let prepared = prepare_next(&tracker, &format!(r#"{{"values":{next}}}"#));
+    let mut change = tracker.begin_change();
+    let values = field(change.state().unwrap(), "values")
+        .as_array_mut()
+        .unwrap();
+    for (index, value) in values.iter_mut().take(600).enumerate() {
+        *value = num(-(index as i64) - 1);
+    }
+    let prepared = change.prepare().unwrap();
     assert_eq!(prepared.ops().len(), 1);
     assert!(matches!(prepared.ops()[0], Op::Splice(..)));
     assert_eq!(
@@ -818,10 +913,14 @@ fn normalizes_a_20000_operation_queue_transaction_to_two_operations() {
         r#"{{"values":{}}}"#,
         rows(20000, |i| i as i64)
     )));
-    let prepared = prepare_next(
-        &tracker,
-        &format!(r#"{{"values":{}}}"#, rows(20000, |i| i as i64 + 10000)),
-    );
+    let path = [Seg::from("values")];
+    let mut change = tracker.begin_change();
+    for index in 0..10_000 {
+        change.splice(&path, 0, 1, vec![]).unwrap(); // shift
+        let row = value(&format!(r#"{{"value":{}}}"#, 20_000 + index));
+        change.splice(&path, 19_999, 0, vec![row]).unwrap(); // push
+    }
+    let prepared = change.prepare().unwrap();
     assert_eq!(prepared.ops().len(), 2);
     assert_eq!(
         apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
@@ -1041,9 +1140,9 @@ fn orders_many_reverse_depth_object_edits_through_the_bounded_fallback() {
     let mut change = tracker.begin_change();
     *change.state().unwrap() = chain(true);
     let prepared = change.prepare().unwrap();
-    // Upstream emits 513 ordered leaf edits; the native diff's size heuristic collapses
-    // 513 deep paths larger than the document into one replacement. Replay must still hold.
-    assert!(matches!(prepared.ops(), [Op::Replace(_)]));
+    // One ordered leaf edit per node: tracker emission has no snapshot-size fallback.
+    assert_eq!(prepared.ops().len(), 513);
+    assert!(prepared.ops().iter().all(|op| matches!(op, Op::Set(..))));
     assert_eq!(
         apply_immutable(Some(tracker.value()), prepared.ops()).unwrap(),
         **prepared.value()

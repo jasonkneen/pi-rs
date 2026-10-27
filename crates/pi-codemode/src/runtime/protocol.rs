@@ -56,6 +56,10 @@ pub struct VmStartData {
     /// applied in `seq` order, and `started`/`idle` messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deterministic: Option<VmDeterministic>,
+    /// The timezone of a non-deterministic VM's `Date` (IANA name or POSIX `TZ` string); `None`:
+    /// the VM thread's own. Never sent to a remote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
 }
 
 /// `done`: `ok` with the JSON `value` (absent for `undefined`) and `writes`, a JSON array of

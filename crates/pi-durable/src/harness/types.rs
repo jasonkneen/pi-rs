@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub type UserInput = JsonValue;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelRef {
     pub provider: JsonString,

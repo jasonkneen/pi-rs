@@ -1,7 +1,7 @@
 use super::{forks::prepare_fork_copies, types::*};
 use crate::{
     storage::{StorageFuture, ready},
-    wire, *,
+    *,
 };
 use futures::{
     FutureExt,
@@ -10,7 +10,7 @@ use futures::{
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use pi_chord::delta::{Change, Prepared, Tracker, track};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -70,17 +70,25 @@ impl<T> Clone for DocDraft<T> {
     }
 }
 impl<T> DocDraft<T> {
+    /// Look at the draft's current JSON without decoding it into `T`.
+    pub fn with_json<R>(&self, inspect: impl FnOnce(&JsonValue) -> R) -> Result<R> {
+        let change = self.cell.change.lock();
+        if self.cell.sealed.load(Ordering::Acquire) {
+            return Err(settled());
+        }
+        Ok(inspect(change.current()?))
+    }
     pub fn same_draft(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.cell, &other.cell)
     }
 }
-impl<T: Serialize + DeserializeOwned> DocDraft<T> {
+impl<T: DocumentState> DocDraft<T> {
     pub fn read(&self) -> Result<T> {
         let change = self.cell.change.lock();
         if self.cell.sealed.load(Ordering::Acquire) {
             return Err(settled());
         }
-        wire::decode(change.current()?).map_err(Error::message)
+        T::from_state(change.current()?)
     }
     pub fn update<R>(&self, update: impl FnOnce(&mut T) -> Result<R>) -> Result<R> {
         let mut change = self.cell.change.lock();
@@ -88,9 +96,9 @@ impl<T: Serialize + DeserializeOwned> DocDraft<T> {
             return Err(settled());
         }
         let draft = change.state()?;
-        let mut value = wire::decode(draft).map_err(Error::message)?;
+        let mut value = T::from_state(draft)?;
         let result = update(&mut value)?;
-        let value = pi_chord::json::to_value(&value).map_err(Error::message)?;
+        let value = value.to_state()?;
         JsonObject::try_from_value(value.clone()).map_err(Error::message)?;
         *draft = value;
         Ok(result)
@@ -285,7 +293,7 @@ impl Transaction {
             );
         }
         let tx = self.clone();
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             let result = std::panic::AssertUnwindSafe(async { callback(tx.clone()).await })
                 .catch_unwind()
                 .await

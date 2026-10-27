@@ -207,6 +207,15 @@ impl MemoryStorage {
             commit_line: Arc::default(),
         }
     }
+    /// Whether `close()` ran.
+    pub fn is_closed(&self) -> bool {
+        self.state.lock().closed
+    }
+    /// Reopen after `close()` (or close again), keeping every committed record, as a test
+    /// backend reopens the same store for a new Session.
+    pub fn set_closed(&self, closed: bool) {
+        self.state.lock().closed = closed;
+    }
     pub fn prepare_commit(
         &self,
         writes: &[StorageWrite],

@@ -3,7 +3,7 @@
 mod format;
 mod recovery;
 use crate::{
-    env::{FileSystem, NativeFileSystem},
+    env::FileSystem,
     storage::{
         Adopt, StorageFuture,
         line::{MutationLine, eager},
@@ -84,12 +84,13 @@ impl JsonlStorage {
             Ok(storage)
         })
     }
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_native(
         directory: impl Into<PathBuf>,
         context: &Context,
         options: JsonlStorageOptions,
     ) -> StorageFuture<Self> {
-        let fs = match NativeFileSystem::new(".") {
+        let fs = match crate::env::NativeFileSystem::new(".") {
             Ok(fs) => Arc::new(fs),
             Err(e) => return ready(Err(Error::jsonl_io("path resolution", e))),
         };

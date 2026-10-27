@@ -156,10 +156,13 @@ pub static COMPACTION_TASK: LazyLock<CompactionTask> = LazyLock::new(|| {
                 runtime
                     .commit(
                         move |tx, _| async move {
-                            tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                                live::remove_compaction_status(live, id);
-                                Ok(())
-                            })?;
+                            live::update_fields(
+                                &tx.doc(&LIVE_DOC, conversation).await?,
+                                live::COMPACTION_FIELDS,
+                                |live| {
+                                    live::remove_compaction_status(live, id);
+                                },
+                            )?;
                             Ok(Some(Next::Terminal {
                                 outcome: TaskOutcome::Aborted {
                                     reason: None,
@@ -191,19 +194,22 @@ pub async fn create_compaction(
     options.background = owner.is_none() && input.reason != CompactionReason::Manual;
     let reason = input.reason;
     let id = tx.create_task(&COMPACTION_TASK, input, options).await?;
-    tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-        live::add_compaction_status(
-            live,
-            CompactionStatus {
-                task_id: id.untyped(),
-                reason,
-                blocking: owner.is_some(),
-                attempt: 1,
-                retry: None,
-            },
-        );
-        Ok(())
-    })?;
+    live::update_fields(
+        &tx.doc(&LIVE_DOC, conversation).await?,
+        live::COMPACTION_FIELDS,
+        |live| {
+            live::add_compaction_status(
+                live,
+                CompactionStatus {
+                    task_id: id.untyped(),
+                    reason,
+                    blocking: owner.is_some(),
+                    attempt: 1,
+                    retry: None,
+                },
+            );
+        },
+    )?;
     Ok(id)
 }
 type Running = RunningTask<CompactionInput, CompactionCheckpoint, CompactionResult>;
@@ -434,14 +440,13 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
                     ));
                 }
                 if retry {
-                    live.update(|live| {
+                    live::update_fields(&live, live::COMPACTION_FIELDS, |live| {
                         if let Some(status) = live::compaction_status(live, task_id) {
                             status.retry = Some(RetryStatus {
                                 at: until,
                                 error: error.clone().unwrap_or_default(),
                             });
                         }
-                        Ok(())
                     })?;
                     return Ok(Some(Next::Sleeping {
                         checkpoint: CompactionCheckpoint::Retry { request, until },
@@ -449,9 +454,8 @@ async fn summarize(task: Running, runtime: CompactionRuntime, context: Context) 
                     }));
                 }
                 let text = summary_failure(&message)?;
-                live.update(|live| {
+                live::update_fields(&live, live::COMPACTION_FIELDS, |live| {
                     live::fail_compaction_status(live, task_id, text.clone());
-                    Ok(())
                 })?;
                 Ok(Some(failed(text, "model_error")))
             },
@@ -474,13 +478,16 @@ async fn retry(task: Running, runtime: CompactionRuntime, context: Context) -> R
     runtime
         .commit(
             move |tx, _| async move {
-                tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                    if let Some(status) = live::compaction_status(live, task_id) {
-                        status.attempt = request.attempt;
-                        status.retry = None;
-                    }
-                    Ok(())
-                })?;
+                live::update_fields(
+                    &tx.doc(&LIVE_DOC, conversation).await?,
+                    live::COMPACTION_FIELDS,
+                    |live| {
+                        if let Some(status) = live::compaction_status(live, task_id) {
+                            status.attempt = request.attempt;
+                            status.retry = None;
+                        }
+                    },
+                )?;
                 Ok(Some(Next::Running {
                     checkpoint: CompactionCheckpoint::Summarize(request),
                 }))
@@ -600,10 +607,13 @@ async fn fail_no_model(
     runtime
         .commit(
             move |tx, _| async move {
-                tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                    live::fail_compaction_status(live, id, text.clone());
-                    Ok(())
-                })?;
+                live::update_fields(
+                    &tx.doc(&LIVE_DOC, conversation).await?,
+                    live::COMPACTION_FIELDS,
+                    |live| {
+                        live::fail_compaction_status(live, id, text.clone());
+                    },
+                )?;
                 Ok(Some(failed(text, "no_model")))
             },
             context,
@@ -616,10 +626,13 @@ async fn complete(runtime: &CompactionRuntime, context: &Context) -> Result<()> 
     runtime
         .commit(
             move |tx, _| async move {
-                tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                    live::remove_compaction_status(live, id);
-                    Ok(())
-                })?;
+                live::update_fields(
+                    &tx.doc(&LIVE_DOC, conversation).await?,
+                    live::COMPACTION_FIELDS,
+                    |live| {
+                        live::remove_compaction_status(live, id);
+                    },
+                )?;
                 Ok(Some(Next::Terminal {
                     outcome: TaskOutcome::Completed {
                         result: CompactionResult::default(),
@@ -658,10 +671,9 @@ async fn place_summary(
     first_kept: EntryId,
     summary: JsonString,
 ) -> Result<Next> {
-    live.update(|live| {
+    live::update_fields(live, live::COMPACTION_FIELDS, |live| {
         live::remove_compaction_status(live, runtime.task_id().untyped());
         live.compaction_failure = None;
-        Ok(())
     })?;
     let text = joined(["The conversation history before this point was compacted into the following summary:\n\n<summary>\n".into(), summary, "\n</summary>".into()], "");
     let mut message = wire::object();
@@ -679,7 +691,7 @@ async fn place_summary(
     wire::put(&mut message, "timestamp", &runtime.now()?);
     let mut data = wire::object();
     wire::put(&mut data, "reason", &current.record().info.input.reason);
-    let mut entry = EntryDraft::new("pi.compaction");
+    let mut entry = EntryDraft::new(COMPACTION_ENTRY.kind().clone());
     entry.head = Some(EntryHead::Entry(first_kept));
     entry.model = Some(vec![message]);
     entry.data = Some(data);

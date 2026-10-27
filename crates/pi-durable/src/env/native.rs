@@ -289,6 +289,14 @@ impl FileSystem for NativeFileSystem {
             std::fs::canonicalize(path)
         })
     }
+    fn list_files(
+        &self,
+        path: &Path,
+        options: &ListFilesOptions,
+        context: &Context,
+    ) -> FileFuture<FileListing> {
+        super::list_files::list_files(self.resolve(path), options.clone(), context.clone())
+    }
     fn open_dir_reader(
         &self,
         path: &Path,

@@ -18,6 +18,38 @@ pub enum FileErrorCode {
     NotSupported,
     Unknown,
 }
+impl FileErrorCode {
+    pub const ALL: [Self; 8] = [
+        Self::Aborted,
+        Self::NotFound,
+        Self::PermissionDenied,
+        Self::NotDirectory,
+        Self::IsDirectory,
+        Self::Invalid,
+        Self::NotSupported,
+        Self::Unknown,
+    ];
+    /// The reference's code string (`FileErrorCode` in `env/index.ts`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Aborted => "aborted",
+            Self::NotFound => "not_found",
+            Self::PermissionDenied => "permission_denied",
+            Self::NotDirectory => "not_directory",
+            Self::IsDirectory => "is_directory",
+            Self::Invalid => "invalid",
+            Self::NotSupported => "not_supported",
+            Self::Unknown => "unknown",
+        }
+    }
+    /// The code for a reference code string; anything else is `Unknown`.
+    pub fn from_name(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|code| code.as_str() == name)
+            .unwrap_or(Self::Unknown)
+    }
+}
 #[derive(Debug)]
 struct Failure {
     code: FileErrorCode,
@@ -111,6 +143,37 @@ pub trait BinaryReader: Send + Sync {
     ) -> FileFuture<LineScan>;
     fn close(&self, context: &Context) -> FileFuture<()>;
 }
+/// What `FileSystem::list_files` lists. Bounds are `f64` so that negative and
+/// fractional values are rejected as `invalid` like the reference.
+#[derive(Clone, Debug, Default)]
+pub struct ListFilesOptions {
+    /// Include names starting with `.`; default true. `.git` is never listed.
+    pub hidden: Option<bool>,
+    /// Inside a git work tree skip what git ignores; default true.
+    pub gitignore: Option<bool>,
+    /// Names of entries to skip with everything below them.
+    pub exclude: Vec<OsString>,
+    /// Most entries to list; default 50 000.
+    pub max_entries: Option<f64>,
+    /// Most bytes of the listing, each entry's UTF-8 path plus two; default 4 MiB, at most 15.9 MiB.
+    pub max_bytes: Option<f64>,
+    /// Time after which the listing stops; default 10 000 ms.
+    pub timeout_ms: Option<f64>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileListEntry {
+    /// Relative to the listed directory, with `/` separators on every system.
+    pub path: String,
+    /// A symbolic link is listed as such and not followed.
+    pub kind: FileKind,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileListing {
+    /// Depth first, parents before their entries, siblings in byte order of their names.
+    pub entries: Vec<FileListEntry>,
+    /// A bound in `ListFilesOptions` ended the listing early.
+    pub truncated: bool,
+}
 pub struct DirPage {
     pub entries: Vec<FileInfo>,
     pub done: bool,
@@ -178,7 +241,7 @@ pub type FileOpener =
 pub(crate) fn file_job<T: Send + 'static>(
     future: impl Future<Output = FileResult<T>> + Send + 'static,
 ) -> FileFuture<T> {
-    let task = tokio::spawn(future);
+    let task = pi_chord::rt::spawn(future);
     Box::pin(async move {
         task.await
             .map_err(|error| FileError::new(FileErrorCode::Unknown, error.to_string(), None))?
@@ -272,6 +335,16 @@ pub trait FileSystem: Send + Sync {
                 Err(error) => Err(error),
             }
         })
+    }
+    /// Optional: the files, directories and symbolic links below a directory at
+    /// any depth. Fails with `NotSupported` when the environment cannot list.
+    fn list_files(
+        &self,
+        path: &Path,
+        _options: &ListFilesOptions,
+        _context: &Context,
+    ) -> FileFuture<FileListing> {
+        unsupported(Some(path.into()))
     }
     fn open_dir_reader(&self, path: &Path, _context: &Context) -> FileFuture<Arc<dyn DirReader>> {
         unsupported(Some(path.into()))

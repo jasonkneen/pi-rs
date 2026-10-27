@@ -1,6 +1,22 @@
 //! Backend-independent request runner used by the reference conformance bridge
 //! and native tests of independently generated reference traces.
 
+pub mod assertions;
+pub mod env_conformance;
+pub mod runner;
+pub mod storage_benchmark;
+pub mod types;
+pub use assertions::{ConformanceAssertions, create_expect_assertions};
+pub use env_conformance::create_env_conformance;
+#[cfg(not(target_arch = "wasm32"))]
+pub use env_conformance::native_env_provider;
+pub use runner::{run_env_conformance, run_storage_conformance};
+pub use storage_benchmark::*;
+pub use types::{
+    ConformanceFuture, EnvConformanceAssertions, EnvConformanceCase, EnvConformanceOptions,
+    EnvConformanceProvider, EnvUse, StorageConformanceProvider, StorageUse,
+};
+
 use crate::{
     storage::{Adopt, Storage},
     wire, *,
@@ -193,11 +209,35 @@ impl StorageConformanceCase {
     pub async fn run(&self, storage: Arc<dyn Storage>) -> Result<()> {
         replay_case(storage, &self.trace).await
     }
+    /// Run against a fresh storage supplied by `provider`, which cleans up afterwards.
+    pub fn run_with(&self, provider: &StorageConformanceProvider) -> ConformanceFuture {
+        let trace = self.trace.clone();
+        provider(Box::new(move |storage| {
+            Box::pin(async move { replay_case(storage, &trace).await })
+        }))
+    }
 }
-/// The pinned runner-independent storage contracts, executable with any native backend.
+/// Backends whose error wording differs; each has its own recorded reference traces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageBackend {
+    Memory,
+    Jsonl,
+    Sqlite,
+}
+/// The pinned runner-independent storage contracts, executable with the memory backend.
 pub fn create_storage_conformance() -> Result<Vec<StorageConformanceCase>> {
-    let fixture: JsonValue =
-        serde_json::from_str(include_str!("../../tests/fixtures/storage.json"))?;
+    create_storage_conformance_for(StorageBackend::Memory)
+}
+/// The pinned storage contracts as recorded for `backend`.
+pub fn create_storage_conformance_for(
+    backend: StorageBackend,
+) -> Result<Vec<StorageConformanceCase>> {
+    let source = match backend {
+        StorageBackend::Memory => include_str!("../../tests/fixtures/storage.json"),
+        StorageBackend::Jsonl => include_str!("../../tests/fixtures/storage-jsonl.json"),
+        StorageBackend::Sqlite => include_str!("../../tests/fixtures/storage-sqlite.json"),
+    };
+    let fixture: JsonValue = serde_json::from_str(source)?;
     fixture["cases"]
         .as_array()
         .ok_or_else(|| Error::message("Missing storage conformance cases"))?

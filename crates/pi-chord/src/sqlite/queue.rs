@@ -3,6 +3,16 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use std::{collections::VecDeque, sync::Arc};
 
+/// Run `task` in the background. Workers have no tokio runtime, so wasm32 uses the JavaScript microtask queue.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_task(task: impl std::future::Future<Output = ()> + Send + 'static) {
+    tokio::spawn(task);
+}
+#[cfg(target_arch = "wasm32")]
+fn spawn_task(task: impl std::future::Future<Output = ()> + 'static) {
+    wasm_bindgen_futures::spawn_local(task);
+}
+
 type Job = Box<dyn FnOnce(Arc<SerialQueue>) + Send>;
 #[derive(Default)]
 struct State {
@@ -41,7 +51,7 @@ impl SerialQueue {
         };
         if let Some(job) = next {
             let queue = self.clone();
-            tokio::spawn(async move {
+            spawn_task(async move {
                 job(queue);
             });
         }
@@ -53,7 +63,7 @@ impl SerialQueue {
     {
         let (send, receive) = tokio::sync::oneshot::channel();
         self.enqueue(Box::new(move |queue| {
-            tokio::spawn(async move {
+            spawn_task(async move {
                 let result = std::panic::AssertUnwindSafe(async move { operation().await })
                     .catch_unwind()
                     .await

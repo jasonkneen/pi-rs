@@ -95,4 +95,7 @@ node scripts/run-stock-durable-context.mjs "$reference" --report=/tmp/pi-durable
 node scripts/run-stock-durable-prompt.mjs "$reference" --report=/tmp/pi-durable-stock-prompt-report.json
 node scripts/run-stock-durable-compaction.mjs "$reference" --report=/tmp/pi-durable-stock-compaction-report.json
 node scripts/run-stock-durable-registry.mjs "$reference" --report=/tmp/pi-durable-stock-registry-report.json
+# Embedded packages, jsrt native suites, examples/benches quick mode, wasm32; optional browser and workerd
+# parts are enabled by DURABLE_GATE_BROWSER=1 and DURABLE_GATE_WORKERD=1. One command at a time.
+bash scripts/check-durable-embedded.sh "$reference"
 printf 'Durable port checks passed.\n'

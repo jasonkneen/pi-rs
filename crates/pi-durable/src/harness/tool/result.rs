@@ -251,7 +251,7 @@ pub async fn append_tool_result(
     }
     let mut data = wire::object();
     wire::put(&mut data, "diagnostics", &diagnostics);
-    let mut entry = EntryDraft::new("pi.tool-result");
+    let mut entry = EntryDraft::new(TOOL_RESULT_ENTRY.kind().clone());
     entry.model = Some(vec![message]);
     entry.data = Some(data);
     tx.append_entry(conversation, entry).await

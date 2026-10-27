@@ -1,7 +1,9 @@
 //! Photon image preparation runs natively; no JavaScript or WebAssembly host.
+pub mod cloudflare;
 pub mod exif;
 pub mod native;
 use crate::tools::image_processor::*;
+pub use cloudflare::create_cloudflare_photon_images;
 pub use native::{NativePhotonImages, NodePhotonImagesOptions, create_native_photon_images};
 use photon_rs::{
     PhotonImage,

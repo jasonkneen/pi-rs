@@ -127,7 +127,7 @@
           "name": "delta tracker policy view > preserves native object key order after delete and re-add",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::preserves_native_object_key_order_after_delete_and_re_add",
-          "note": "explicit op batch; diff mode cannot observe pure key reorder (Map equality ignores order)"
+          "note": "upstream assertions hold exactly (state, prepared and adopted key order [second, first]) through recorded d+s ops. Diff mode cannot carry it: upstream also requires a deeply-equal reordered container assignment to normalize to base order (normalizes_deeply_equal_container_assignments_before_direct_candidate_materialization), and natively a delete+re-add and a reordered assignment produce the same draft value, so only recorded edits can distinguish them."
         },
         {
           "name": "delta tracker policy view > orders new integer-like object keys before strings for recipe-visible reads",
@@ -264,14 +264,14 @@
         {
           "name": "delta tracker piece arrays > emits removals from the end backwards, then inserts, when kept elements keep their order",
           "class": "native",
-          "rust": null,
-          "note": "missing: piece-array normalization of recorded mutators (native diff yields a different valid shape); replay of the same edit covered by diff_of_a_shift_splice_pop_push_sequence_replays_to_the_final_value in crates/pi-chord/tests/tracker_upstream.rs::"
+          "rust": "crates/pi-chord/tests/tracker_upstream.rs::emits_removals_from_the_end_backwards_then_inserts_when_kept_elements_keep_their_order",
+          "note": "Exact upstream ops via the native draft mutator Change::splice (shift/splice/pop/push), which records a piece array (src/delta/tracker.rs Pieces) and normalizes at flush: base removals from the end backwards, then inserts at final indices. apply_ops still retains explicit batches verbatim."
         },
         {
           "name": "delta tracker piece arrays > emits a permutation when kept elements change order",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::emits_a_permutation_when_kept_elements_change_order",
-          "note": "reverse via diff; parity sort via explicit Move batch (diff only classifies permutations when both ends move)"
+          "note": "reverse and parity sort via the native Change::permute mutator (piece array -> removals, m, inserts); explicit Move batch still retained verbatim"
         },
         {
           "name": "delta tracker piece arrays > keeps adoption independent from mutable detached permutation metadata",
@@ -307,7 +307,7 @@
           "name": "delta tracker piece arrays > combines movement and edits with permutation plus final paths",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::combines_movement_and_edits_with_permutation_plus_final_paths",
-          "note": "explicit batch; diff mode cannot see a moved-then-edited element (missing: move+edit inference in diff)"
+          "note": "Change::permute([1,2,0]) then an in-place edit of the moved element at its final index; ops[0] == m [1,2,0] exactly. Explicit batch variant kept. Diff mode alone still cannot attribute a moved-then-edited element (edited containers get a new Arc), which is why the mutator exists."
         },
         {
           "name": "delta tracker piece arrays > keeps comparator writes and structurally reentrant appends",
@@ -325,7 +325,7 @@
           "name": "delta tracker piece arrays > folds dense child and direct-index edits into one full-array operation",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::folds_dense_child_and_direct_index_edits_into_one_full_array_operation",
-          "note": "edits chosen not to alias existing row values, else diff matches shifted rows with 2 ops"
+          "note": "upstream data (row.value += 1, values[i] = -i-1 for i<600) edited in place on the draft; identity-guided diff yields one p op each"
         },
         {
           "name": "delta tracker piece arrays > folds only a deeply nested dense array region",
@@ -355,7 +355,7 @@
           "name": "delta tracker piece arrays > normalizes a 20,000-operation queue transaction to two operations",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::normalizes_a_20000_operation_queue_transaction_to_two_operations",
-          "note": ""
+          "note": "10,000 shift/push pairs through Change::splice; pieces normalize to exactly 2 ops"
         },
         {
           "name": "delta tracker piece arrays > handles adversarial fragmentation and resolves held handles without piece scans",
@@ -403,7 +403,7 @@
           "name": "delta tracker object emission scaling > orders many reverse-depth object edits through the bounded fallback",
           "class": "native",
           "rust": "crates/pi-chord/tests/tracker_upstream.rs::orders_many_reverse_depth_object_edits_through_the_bounded_fallback",
-          "note": "DIVERGENCE: native diff collapses the 513 deep edits into one Replace (size heuristic) instead of 513 ordered ops; replay asserted. Chain built structurally (parser nesting cap is 128)"
+          "note": "513 ordered Set ops as upstream: tracker emission now uses diff_operations (no snapshot-size fallback, only the 4096-op overflow), matching upstream tracker. Chain built structurally (parser nesting cap is 128)"
         },
         {
           "name": "delta tracker security and storage-style cloning > defines own properties without invoking inherited setters",

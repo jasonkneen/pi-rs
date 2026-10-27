@@ -4,7 +4,7 @@ use pi_chord::context::with_telemetry;
 use pi_telemetry::{
     SpanError, SpanLink, SpanOptions, SpanOutcome, SpanRef, SpanStatus, TelemetryText,
 };
-use std::time::Instant;
+use web_time::Instant;
 
 pub(super) struct Phase {
     scheduler: TaskScheduler,
@@ -21,8 +21,8 @@ fn carrier(value: &JsonObject) -> Option<pi_telemetry::TelemetryCarrier> {
         .iter()
         .map(|(key, value)| {
             Some((
-                key.to_string_checked().ok()?,
-                value.as_string()?.to_string_checked().ok()?,
+                TelemetryText::from(key),
+                TelemetryText::from(value.as_string()?),
             ))
         })
         .collect()

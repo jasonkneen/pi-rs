@@ -186,14 +186,14 @@ impl ModelCollection for SdkCollection {
         )))
     }
     fn get_model(&self, reference: &ModelRef) -> Result<Option<ResolvedModel>> {
-        let provider = reference
-            .provider
-            .to_string_checked()
-            .map_err(|error| Error::message(error.to_string()))?;
-        let id = reference
-            .model_id
-            .to_string_checked()
-            .map_err(|error| Error::message(error.to_string()))?;
+        // SDK identities are UTF8, so an unpaired surrogate finds no model, as in
+        // the source's `getModel` lookup.
+        let (Ok(provider), Ok(id)) = (
+            reference.provider.to_string_checked(),
+            reference.model_id.to_string_checked(),
+        ) else {
+            return Ok(None);
+        };
         Ok(self.0.get_model(&provider, &id).map(|model| {
             let max_tokens = model.max_tokens as f64;
             ResolvedModel::new(reference.clone(), model.context_window as f64, model)
@@ -210,10 +210,7 @@ impl ModelCollection for SdkCollection {
         let models = self.0.clone();
         Box::pin(async move {
             let model = model.value::<pi_ai::Model>()?;
-            let messages = messages
-                .iter()
-                .map(|message| wire::decode(message).map_err(Error::message))
-                .collect::<Result<Vec<pi_ai::Message>>>()?;
+            let messages = provider_messages(&messages, &model.api)?;
             let mut options = provider_options(&options)?;
             let signal = context
                 .abort_signal()

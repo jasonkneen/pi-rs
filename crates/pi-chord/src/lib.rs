@@ -6,6 +6,7 @@ pub mod context;
 pub mod delta;
 pub mod json;
 pub mod output;
+pub mod rt;
 pub mod sqlite;
 pub mod watch;
 

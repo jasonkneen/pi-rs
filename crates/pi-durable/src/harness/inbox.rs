@@ -223,7 +223,7 @@ pub async fn append_input(
     now: f64,
 ) -> Result<EntryRecord> {
     let mut draft = EntryDraft::new(
-        entry.map_or_else(|| JsonString::from("pi.user"), |entry| entry.kind.clone()),
+        entry.map_or_else(|| USER_ENTRY.kind().clone(), |entry| entry.kind.clone()),
     );
     draft.data = entry.and_then(|entry| entry.data.clone());
     let mut message = wire::object();

@@ -17,7 +17,7 @@ pub(super) async fn read_calls(
     let entry = runtime.entry(assistant, context).await?;
     let message = entry
         .as_ref()
-        .filter(|entry| entry.kind.equals_str("pi.assistant"))
+        .filter(|entry| entry.kind == *ASSISTANT_ENTRY.kind())
         .and_then(|entry| entry.model.as_ref())
         .and_then(|model| model.first());
     let calls = message
@@ -65,7 +65,7 @@ pub(super) async fn tools(
             move |tx, _| async move {
                 let live = tx.doc(&LIVE_DOC, conversation).await?;
                 let task = create_tool_task(&tx, &current, round.assistant, next.clone()).await?;
-                live.update(|live| {
+                live::update_fields(&live, &["tools"], |live| {
                     if let Some(slot) = live.tools.as_mut().and_then(|slots| {
                         slots
                             .iter_mut()
@@ -73,7 +73,6 @@ pub(super) async fn tools(
                     }) {
                         slot.task_id = Some(task.untyped());
                     }
-                    Ok(())
                 })?;
                 round.tools.push(task);
                 Ok(Some(Next::Waiting {
@@ -267,7 +266,7 @@ async fn finish_tool_round(
                 let now = current.now()?;
                 if terminate || handoff.is_some() {
                     if let Some(handoff) = handoff {
-                        let mut entry = EntryDraft::new("pi.reset");
+                        let mut entry = EntryDraft::new(RESET_ENTRY.kind().clone());
                         entry.head = Some(EntryHead::ThisEntry);
                         let mut message = wire::object();
                         wire::put(&mut message, "role", &"user");
@@ -303,14 +302,13 @@ async fn finish_tool_round(
                             start_run(&tx, conversation, &live, result.users).await?;
                         }
                     } else {
-                        live.update(|live| {
+                        live::update_fields(&live, &["tools", "nestedTools", "run"], |live| {
                             live.tools = None;
                             live.nested_tools = None;
                             if let Some(run) = live.run.as_mut().filter(|run| run.task_id == owner)
                             {
                                 run.inputs.extend(result.users);
                             }
-                            Ok(())
                         })?;
                         hand_over(
                             &live,

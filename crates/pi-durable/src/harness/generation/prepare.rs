@@ -164,9 +164,7 @@ where
                     && tx
                         .doc(&LIVE_DOC, conversation)
                         .await?
-                        .read()?
-                        .compactions
-                        .is_none()
+                        .with_json(|raw| raw["compactions"].is_null())?
                 {
                     create_compaction(
                         &tx,

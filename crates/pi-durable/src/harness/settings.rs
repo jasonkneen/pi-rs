@@ -87,7 +87,7 @@ pub fn resolve_settings(input: HarnessSettings) -> Settings {
     let document_retention = input
         .document_retention_ms
         .filter(|value| !value.is_nan() && *value >= 0.0)
-        .unwrap_or(600_000.0);
+        .unwrap_or_else(crate::session::default_document_retention);
     let restart = input
         .restart_limit
         .filter(|value| *value >= 1.0)

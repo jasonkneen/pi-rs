@@ -287,3 +287,30 @@ rl.on("close", () => console.log(JSON.stringify(lines)));
     };
     assert_eq!(status.and_then(|s| s.code()), Some(0));
 }
+
+/// `process.env` is live, as in Node: values become strings, and assigning `TZ` changes the
+/// runtime's timezone (deleting it returns to the host's). Expected values are Node 22's.
+#[tokio::test]
+async fn process_env_tz_sets_the_runtime_timezone() {
+    let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
+    env.insert("TZ".into(), "UTC".into());
+    let rt = JsRuntime::new(RuntimeOptions { env: Some(env), ..Default::default() }).unwrap();
+    let value = rt
+        .eval(
+            r#"(() => {
+        const read = () => [new Date(0).getHours(), new Date(0).getTimezoneOffset()];
+        const utc = read();
+        process.env.TZ = "Asia/Kolkata";
+        const kolkata = read();
+        process.env.TZ = "America/New_York";
+        const july = new Date(Date.UTC(2026, 6, 1)).getTimezoneOffset();
+        process.env.TZ = "";
+        const empty = read();
+        process.env.COUNT = 3;
+        return [utc, kolkata, july, empty, typeof process.env.COUNT, process.env.TZ];
+    })()"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(value, serde_json::json!([[0, 0], [5, -330], 240, [0, 0], "string", ""]));
+}

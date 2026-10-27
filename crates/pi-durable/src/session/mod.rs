@@ -5,6 +5,8 @@ mod forks;
 mod guard;
 mod transaction;
 mod types;
+// `std::time` panics on wasm32-unknown-unknown; web-time is std::time natively.
+use web_time::{SystemTime, UNIX_EPOCH};
 use crate::timers::Timers;
 pub use crate::timers::{DisarmTimer, SetTimer};
 use crate::{
@@ -27,7 +29,6 @@ use std::{
     collections::HashMap,
     future::Future,
     sync::{Arc, Weak},
-    time::{SystemTime, UNIX_EPOCH},
 };
 pub use transaction::{DocDraft, Transaction};
 use transaction::{Loaded, LoadedDocument, TransactionHost};
@@ -81,7 +82,32 @@ pub enum SessionReportKind {
     Timer,
 }
 pub type SessionReport = Arc<dyn Fn(Error, SessionReportKind, Option<Context>) + Send + Sync>;
+static DEFAULT_DOCUMENT_RETENTION_BITS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0x4122_4F80_0000_0000); // 600_000.0
+/// The built-in document retention for sessions that leave it unset: ten minutes.
+pub const BUILT_IN_DOCUMENT_RETENTION_MS: f64 = 600_000.0;
+/// Process-wide default of how long an unobserved loaded document stays in memory, in milliseconds
+/// (`0` drops it right after use, `Infinity` keeps it). A session reads it when it opens with no usable
+/// retention of its own, as upstream's `setDefaultDocumentRetention` does; sessions already open keep theirs.
+/// A value that is not a number of milliseconds, `0` or more, restores the built-in default.
+pub fn set_default_document_retention(ms: f64) {
+    let ms = if ms.is_nan() || ms < 0.0 {
+        BUILT_IN_DOCUMENT_RETENTION_MS
+    } else {
+        ms
+    };
+    DEFAULT_DOCUMENT_RETENTION_BITS.store(ms.to_bits(), std::sync::atomic::Ordering::Release);
+}
+/// The current process-wide document retention default.
+pub fn default_document_retention() -> f64 {
+    f64::from_bits(DEFAULT_DOCUMENT_RETENTION_BITS.load(std::sync::atomic::Ordering::Acquire))
+}
 pub type DocumentRetentionReader = Arc<dyn Fn() -> Result<Option<f64>> + Send + Sync>;
+/// Reads the clock and the document retention together: `(now, retention)`, either `None` when
+/// that read failed or is absent (then `now` falls back to the wall clock and the retention to
+/// `document_retention_ms`). The cache bookkeeping reads both within one synchronous step, as
+/// upstream's does; a host whose readers are callbacks answers both with one call.
+pub type ClockReader = Arc<dyn Fn() -> (Option<f64>, Option<f64>) + Send + Sync>;
 #[derive(Clone)]
 pub struct SessionOptions {
     pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
@@ -93,12 +119,15 @@ pub struct SessionOptions {
     pub read_only: bool,
     pub conversation_created: Option<ConversationHook>,
     pub before_close: Option<BeforeClose>,
+    /// Optional combined reader for the cache bookkeeping (see [`ClockReader`]); without it,
+    /// `now` and the retention reader are called separately.
+    pub clock_reader: Option<ClockReader>,
 }
 impl Default for SessionOptions {
     fn default() -> Self {
         Self {
             now: Arc::new(wall_now),
-            document_retention_ms: 600_000.0,
+            document_retention_ms: default_document_retention(),
             document_retention_reader: None,
             set_timer: None,
             report: Arc::new(|_| {}),
@@ -106,6 +135,7 @@ impl Default for SessionOptions {
             read_only: false,
             conversation_created: None,
             before_close: None,
+            clock_reader: None,
         }
     }
 }
@@ -178,7 +208,7 @@ pub struct CacheSizes {
 impl Session {
     pub fn new(storage: Arc<dyn Storage>, mut options: SessionOptions) -> Self {
         if options.document_retention_ms.is_nan() || options.document_retention_ms < 0.0 {
-            options.document_retention_ms = 600_000.0;
+            options.document_retention_ms = default_document_retention();
         }
         let guard = GuardedStorage::new(storage);
         let timer_report = options.report.clone();
@@ -313,10 +343,32 @@ impl Session {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.inner.options.now)()))
             .unwrap_or_else(|_| wall_now())
     }
+    /// The clock and the retention for one bookkeeping step.
+    fn clock(&self) -> (f64, f64) {
+        let Some(reader) = &self.inner.options.clock_reader else {
+            return (self.now(), self.document_retention());
+        };
+        let (now, retention) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader()))
+                .unwrap_or((None, None));
+        let fallback = self.inner.options.document_retention_ms;
+        (
+            now.unwrap_or_else(wall_now),
+            retention
+                .filter(|value| !value.is_nan() && *value >= 0.0)
+                .unwrap_or(fallback),
+        )
+    }
     /// Poll a service continuation on this Session's FIFO without holding its
     /// mutation line. Transports use this to preserve service-result ordering.
     pub fn spawn(&self, operation: impl Future<Output = ()> + Send + 'static) {
         self.inner.executor.spawn(operation);
+    }
+    /// Resolves once this Session has no ready or running native work, as a JavaScript host's
+    /// microtask queue drains before its next timer. Work waiting on storage I/O or a host
+    /// callback does not hold it back.
+    pub fn quiescent(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.inner.executor.quiescent()
     }
     fn enqueue<T, F, Fut>(&self, callback: F) -> StorageFuture<T>
     where
@@ -340,12 +392,18 @@ impl Session {
         let session = self.clone();
         self.spawn(async move {
             previous.await;
-            let result = std::panic::AssertUnwindSafe(async { callback(session).await })
+            let result = std::panic::AssertUnwindSafe(async { callback(session.clone()).await })
                 .catch_unwind()
                 .await
                 .unwrap_or_else(|p| Err(panic_error(p)));
             let _ = send.send(result);
-            let _ = done.send(());
+            // Upstream's tail settles one reaction after the job's result, so the
+            // caller resumes before the next line job starts. A job admitted while
+            // this one ran may already wait unpolled ahead of the woken caller, so
+            // release it from a fresh job queued behind that caller.
+            session.spawn(async move {
+                let _ = done.send(());
+            });
         });
         Box::pin(async move {
             receive
@@ -1136,10 +1194,27 @@ impl Session {
             sweep_jobs: usize::from(s.sweep_pending),
         }
     }
+    /// Upstream `#touchDocument`: the clock and the retention are read only where upstream reads
+    /// them (a host clock or retention reader may be a callback into the host), and a sweep is
+    /// scheduled only when none is pending or the retention was shortened since.
     fn touch(&self, address: &str) {
-        let now = self.now();
-        let retention = self.document_retention();
+        let since = {
+            let s = self.inner.state.lock();
+            let Some(id) = s.cache.get(address).map(|l| l.lock().record.id()) else {
+                return;
+            };
+            if s.attached.contains_key(&id) {
+                return;
+            }
+            s.idle.get(address).copied()
+        };
+        let (now, retention) = self.clock();
+        if let Some(since) = since
+            && now - since < 1000.0_f64.min(retention / 10.0)
         {
+            return;
+        }
+        let pending = {
             let mut s = self.inner.state.lock();
             let Some(id) = s.cache.get(address).map(|l| l.lock().record.id()) else {
                 return;
@@ -1147,20 +1222,27 @@ impl Session {
             if s.attached.contains_key(&id) {
                 return;
             }
-            if s.idle
-                .get(address)
-                .is_some_and(|last| now - *last < 1000.0_f64.min(retention / 10.0))
-            {
-                return;
-            }
             s.idle.shift_remove(address);
             s.idle.insert(address.into(), now);
+            match (s.timer_at, s.sweep_pending) {
+                (_, true) => Some(None),
+                (Some(at), false) => Some(Some(at)),
+                (None, false) => None,
+            }
+        };
+        let schedule = match pending {
+            None => true,
+            Some(Some(at)) => at > now + retention,
+            Some(None) => false,
+        };
+        if schedule {
+            self.arm_sweep_at(now, retention);
         }
-        self.arm_sweep();
     }
     fn sweep(&self) {
-        let cutoff = self.now() - self.document_retention();
-        let timer = {
+        let (now, retention) = self.clock();
+        let cutoff = now - retention;
+        {
             let mut s = self.inner.state.lock();
             let expired = s
                 .idle
@@ -1172,22 +1254,19 @@ impl Session {
                 s.idle.shift_remove(&address);
                 s.cache.remove(&address);
             }
-            s.sweep_pending = false;
-            s.timer_at = None;
-            s.timer_generation += 1;
-            s.timer.take()
-        };
-        if let Some(timer) = timer {
-            timer();
         }
-        self.arm_sweep();
+        // Upstream `#sweepDocuments` keeps a pending sweep due no later than the new oldest
+        // document's, so commits neither disarm nor re-arm the host timer.
+        self.arm_sweep_at(now, retention);
     }
     fn arm_sweep(&self) {
-        let retention = self.document_retention();
+        let (now, retention) = self.clock();
+        self.arm_sweep_at(now, retention);
+    }
+    fn arm_sweep_at(&self, now: f64, retention: f64) {
         if !retention.is_finite() {
             return;
         }
-        let now = self.now();
         let (generation, delay, old) = {
             let mut s = self.inner.state.lock();
             if s.closing || s.sweep_pending {
@@ -1226,9 +1305,14 @@ impl Session {
                     state.sweep_pending = true;
                 }
                 drop(session.enqueue(move |session| async move {
+                    // The pending sweep stays set until its job runs, as upstream's does.
                     let current = {
-                        let state = session.inner.state.lock();
-                        state.sweep_pending && state.timer_generation == generation
+                        let mut state = session.inner.state.lock();
+                        let current = state.sweep_pending && state.timer_generation == generation;
+                        if current {
+                            state.sweep_pending = false;
+                        }
+                        current
                     };
                     if current {
                         session.sweep();
@@ -1320,7 +1404,7 @@ impl Session {
             }
         }
         let session = self.clone();
-        tokio::spawn(async move {
+        executor::detached(async move {
             if let Some(hook) = &session.inner.options.before_close {
                 let result = std::panic::AssertUnwindSafe(async { hook(session.clone()).await })
                     .catch_unwind()

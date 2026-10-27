@@ -6,6 +6,8 @@ use pi_durable::storage::StoredEntry;
 #[derive(Default)]
 pub(super) struct MemoryBridge {
     stores: Mutex<HashMap<u64, Arc<ObservedStorage>>>,
+    /// `MemoryStorage.prepareCommit()` results, until applied.
+    prepared: Mutex<HashMap<u64, Arc<pi_durable::storage::memory::PreparedMemoryCommit>>>,
     sqlite_stores: Mutex<HashMap<u64, Arc<ObservedStorage>>>,
     pub sqlite_opens: AtomicU64,
     pub sqlite_direct_opens: AtomicU64,
@@ -17,6 +19,8 @@ pub(super) struct MemoryBridge {
 }
 struct ObservedStorage {
     backend: Arc<dyn Storage>,
+    /// The concrete store behind `backend`, for memory stores (close state).
+    memory: Option<Arc<MemoryStorage>>,
     calls: Arc<AtomicU64>,
     commits: Arc<AtomicU64>,
     decorated: Arc<AtomicBool>,
@@ -165,12 +169,62 @@ impl Hub {
                 .store(true, Ordering::Release);
             return Ok(Box::pin(async { Ok(None) }));
         }
+        if method == "memory.apply" {
+            let prepared = self
+                .memory
+                .prepared
+                .lock()
+                .get(&field::<u64>(&request, "prepared")?)
+                .cloned()
+                .ok_or_else(|| Error::message("Unknown prepared memory commit"))?;
+            let seq = prepared.apply()?;
+            return Ok(Box::pin(async move { Ok(Some(encode(&seq))) }));
+        }
+        if method == "memory.prepare" {
+            let id: u64 = field(&request, "memory")?;
+            let memory = self
+                .memory
+                .stores
+                .lock()
+                .get(&id)
+                .and_then(|store| store.memory.clone())
+                .ok_or_else(|| Error::message("Unknown native memory store"))?;
+            let writes: Vec<StorageWrite> = field(&request, "writes")?;
+            let seq: Option<Seq> = field(&request, "seq")?;
+            let prepared = Arc::new(memory.prepare_commit(&writes, seq)?);
+            let handle = self.next.fetch_add(1, Ordering::Relaxed);
+            let value = object([
+                ("prepared", encode(&handle)),
+                ("seq", encode(&prepared.seq())),
+                ("writes", encode(&prepared.writes())),
+            ]);
+            self.memory.prepared.lock().insert(handle, prepared);
+            return Ok(Box::pin(async move { Ok(Some(value)) }));
+        }
+        if method == "memory.closed" || method == "memory.setClosed" {
+            let id: u64 = field(&request, "memory")?;
+            let memory = self
+                .memory
+                .stores
+                .lock()
+                .get(&id)
+                .and_then(|store| store.memory.clone())
+                .ok_or_else(|| Error::message("Unknown native memory store"))?;
+            if method == "memory.setClosed" {
+                memory.set_closed(request["closed"].as_bool() == Some(true));
+                return Ok(Box::pin(async { Ok(None) }));
+            }
+            let closed = memory.is_closed();
+            return Ok(Box::pin(async move { Ok(Some(encode(&closed))) }));
+        }
         if method == "memory.new" {
             let id = self.next.fetch_add(1, Ordering::Relaxed);
+            let memory = Arc::new(MemoryStorage::new());
             self.memory.stores.lock().insert(
                 id,
                 Arc::new(ObservedStorage {
-                    backend: Arc::new(MemoryStorage::new()),
+                    backend: memory.clone(),
+                    memory: Some(memory),
                     calls: self.memory.calls.clone(),
                     commits: self.memory.commits.clone(),
                     decorated: Arc::new(AtomicBool::new(false)),
@@ -205,6 +259,7 @@ impl Hub {
                     id,
                     Arc::new(ObservedStorage {
                         backend: Arc::new(backend),
+                        memory: None,
                         calls: hub.memory.sqlite_calls.clone(),
                         commits: hub.memory.sqlite_commits.clone(),
                         decorated: Arc::new(AtomicBool::new(false)),
@@ -245,5 +300,45 @@ impl Hub {
             }
             result
         }))
+    }
+}
+impl Hub {
+    /// `memory.call` run to completion on the calling thread (the embedded JS thread), as
+    /// upstream's MemoryStorage completes each call when it is made. The adoption is not called
+    /// back: the result frame carries `adopted` (the sequence the store adopted), and the caller
+    /// runs its own `adopt(seq)` before settling, as upstream's commit does.
+    #[allow(dead_code)] // Used by the in-process transport only.
+    pub(crate) fn memory_call_now(self: &Arc<Self>, request: &JsonValue) -> JsonValue {
+        let adopted = Arc::new(Mutex::new(None::<Seq>));
+        let capture = adopted.clone();
+        let result = (|| -> Result<Option<JsonValue>> {
+            let storage = self.memory_storage(field(request, "memory")?)?;
+            let mut operation = pi_durable::testing::storage_request(
+                storage.as_ref(),
+                &field::<String>(request, "operation")?,
+                &field::<Vec<JsonValue>>(request, "args")?,
+                Box::new(move |seq| *capture.lock() = Some(seq)),
+            );
+            let waker = futures::task::noop_waker();
+            let mut cx = std::task::Context::from_waker(&waker);
+            match operation.as_mut().poll(&mut cx) {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => Err(Error::message(
+                    "Native memory storage call did not complete",
+                )),
+            }
+        })();
+        let mut frame = match result {
+            Ok(Some(value)) => object([("value", value)]),
+            Ok(None) => object([("missing", encode(&true))]),
+            Err(error) => object([("error", error_value(&error))]),
+        };
+        if let Some(seq) = *adopted.lock() {
+            frame
+                .as_object_mut()
+                .unwrap()
+                .insert("adopted".into(), encode(&seq));
+        }
+        frame
     }
 }

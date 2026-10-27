@@ -26,7 +26,27 @@ impl Hub {
                 let retention = Arc::downgrade(self);
                 let created = Arc::downgrade(self);
                 let closing = Arc::downgrade(self);
+                let both = Arc::downgrade(self);
+                // A host that answers `session.clock` reads the clock and the retention of one
+                // bookkeeping step with one callback (`{ now, retention }`, null for a failed read).
+                let clock_reader = (request["clock"].as_bool() == Some(true)).then(|| {
+                    Arc::new(move || {
+                        let Some(value) = both
+                            .upgrade()
+                            .and_then(|hub| hub.sync("session.clock", encode(&id)).ok())
+                        else {
+                            return (None, None);
+                        };
+                        let number = |value: &JsonValue| match value.to_utf8().as_deref() {
+                            Some("Infinity") => Some(f64::INFINITY),
+                            Some("NaN") => Some(f64::NAN),
+                            _ => value.as_f64(),
+                        };
+                        (number(&value["now"]), number(&value["retention"]))
+                    }) as pi_durable::session::ClockReader
+                });
                 let options = SessionOptions {
+                    clock_reader,
                     now: Arc::new(move || {
                         clock
                             .upgrade()

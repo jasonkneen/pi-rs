@@ -17,7 +17,7 @@ pub fn optional<T: DeserializeOwned>(
     get(value, key).map(decode).transpose()
 }
 pub fn decode<T: DeserializeOwned>(value: &JsonValue) -> std::result::Result<T, String> {
-    serde_json::from_str(&value.to_string()).map_err(|e| e.to_string())
+    pi_chord::json::from_value(value)
 }
 pub fn tag(value: &JsonValue, key: &str) -> std::result::Result<String, String> {
     get(value, key)

@@ -1,4 +1,8 @@
 //! Native port of pi-durable 1.4.0. Storage is independent of coding-agent sessions.
+//!
+//! On wasm32 tools, images and the native environments (process, filesystem,
+//! watch) are compiled out because they need OS access; the harness, scheduler,
+//! storage (including IndexedDB) and Worker hosting build there.
 
 pub mod codemode;
 pub mod documents;
@@ -6,6 +10,7 @@ pub mod entries;
 pub mod env;
 pub mod errors;
 pub mod harness;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod images;
 pub mod search;
 pub mod session;
@@ -14,14 +19,17 @@ pub mod tasks;
 pub mod testing;
 pub mod timers;
 pub mod tool_search;
+pub use harness::settled::SettledTask;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tools;
 pub mod truncate;
+pub mod worker;
 pub mod types;
 mod wire;
 pub use documents::*;
 pub use entries::*;
 pub use errors::{Error, ErrorKind, Result};
-pub use harness::agent::{AGENT_DOC, Agent, AgentState, configure};
+pub use harness::agent::{AGENT_DOC, Agent, AgentState, AgentView, configure};
 pub use harness::compaction::{
     COMPACTION_TASK, CompactionCheckpoint, CompactionHooks, CompactionInput, CompactionPolicy,
     CompactionResult, SummaryRequest, compaction_task,
@@ -40,6 +48,7 @@ pub use harness::generation::{
     generation_task,
 };
 pub use harness::hooks::{HookKey, HookRunner};
+pub use harness::hook_api::{DocumentReader, HookApi};
 pub use harness::inbox::{INBOX_DOC, InboxItem, InboxState, inbox_doc};
 pub use harness::inspect::{HarnessInspection, Scheduling, TaskInspection, TaskInspectionState};
 pub use harness::live::{
@@ -70,6 +79,10 @@ pub use harness::tool::{
     ToolControl, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHookCall, ToolHooks,
     ToolTask, ToolTaskCheckpoint, ToolTaskInput, ToolTaskResult, tool_task,
 };
+pub use harness::typed::{
+    AfterFailedRun, AgentChange, CompactionPolicyPatch, ModelChange, CompactionSettings, ConversationRetryPolicy,
+    ConversationRetryPolicyPatch, ConversationStreamOptions, NameSelection, ToolSelection,
+};
 pub use harness::types::{
     InputEntry, ModelRef, QueueMode, QueueModes, SettledSubmissionRecord, SubmissionDraft,
     UserInput, WhenBusy,
@@ -87,6 +100,7 @@ pub use session::*;
 pub use storage::{
     JsonlStorage, JsonlStorageOptions, MemoryStorage, SqliteStorage, SqliteStorageOptions, Storage,
 };
+pub use timers::SetTimer;
 pub use tasks::{
     AnyTask, PhaseHandler, RunningTask, Task, TaskDefinition, TaskValue, TypedTaskId, define_task,
 };

@@ -16,15 +16,15 @@ pub trait ProgressClock: Send + Sync {
 pub struct SystemProgressClock;
 impl ProgressClock for SystemProgressClock {
     fn now(&self) -> f64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64()
             * 1000.0
     }
     fn set_timer(&self, callback: Box<dyn FnOnce() + Send>, delay_ms: f64) -> CancelTimer {
-        let task = tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs_f64(
+        let task = crate::rt::spawn(async move {
+            crate::rt::sleep(std::time::Duration::from_secs_f64(
                 delay_ms.max(0.0) / 1000.0,
             ))
             .await;
@@ -187,7 +187,7 @@ impl<E: Clone + From<String> + Send + Sync + 'static> ProgressWithError<E> {
                 let inner = self.inner.clone();
                 let started =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (inner.write)()));
-                tokio::spawn(async move {
+                crate::rt::spawn(async move {
                     let result = match started {
                         Ok(operation) => {
                             std::panic::AssertUnwindSafe(operation).catch_unwind().await

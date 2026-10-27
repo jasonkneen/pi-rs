@@ -100,7 +100,7 @@ impl GuardedStorage {
         }
         let this = self.clone();
         let (send, receive) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
+        pi_chord::rt::spawn(async move {
             let result =
                 std::panic::AssertUnwindSafe(async { operation(this.backend.clone()).await })
                     .catch_unwind()

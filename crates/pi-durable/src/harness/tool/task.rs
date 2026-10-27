@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     harness::{
         hooks::HookKey,
-        live::{self, LIVE_DOC, NestedToolSlot, SlotProgress, SlotStatus, ToolSlotMut},
+        live::{self, LIVE_DOC, NestedToolSlot, SlotProgress, SlotStatus},
         usage::{UsageBucket, record_usage},
     },
     storage::StorageFuture,
@@ -126,7 +126,7 @@ async fn read_call(
             let entry = runtime.entry(*assistant, context).await?;
             let call = entry
                 .as_ref()
-                .filter(|entry| entry.kind.equals_str("pi.assistant"))
+                .filter(|entry| entry.kind == *ASSISTANT_ENTRY.kind())
                 .and_then(|entry| entry.model.as_ref())
                 .and_then(|messages| messages.first())
                 .filter(|message| message["role"].string_equals("assistant"))
@@ -299,15 +299,26 @@ async fn call(task: Running, runtime: ToolRuntime, context: Context) -> Result<(
     runtime
         .commit(
             move |tx, _| async move {
-                tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                    if let Some(mut slot) = live::tool_slot(live, id) {
-                        slot.progress().status = SlotStatus::Running;
-                        if let (ToolSlotMut::Nested(slot), Some(args)) = (slot, nested_args) {
-                            slot.arguments = args.into_value();
+                let live = tx.doc(&LIVE_DOC, conversation).await?;
+                let ops = live.with_json(|raw| {
+                    let mut ops = Vec::new();
+                    if let Some(at) = live::locate_slot(raw, id) {
+                        live::set_slot_field(
+                            raw,
+                            at,
+                            "status",
+                            wire::encode(&SlotStatus::Running),
+                            &mut ops,
+                        );
+                        if let (Some(args), "nestedTools") = (nested_args, at.field) {
+                            live::set_slot_field(raw, at, "arguments", args.into_value(), &mut ops);
                         }
                     }
-                    Ok(())
+                    ops
                 })?;
+                if !ops.is_empty() {
+                    live.apply_ops(&ops)?;
+                }
                 Ok(Some(Next::Running {
                     checkpoint: ToolTaskCheckpoint::Execute {
                         arguments: checkpoint_args,
@@ -340,12 +351,15 @@ async fn recover(task: Running, runtime: ToolRuntime, context: Context) -> Resul
         runtime
             .commit(
                 move |tx, _| async move {
-                    tx.doc(&LIVE_DOC, conversation).await?.update(|live| {
-                        if let Some(mut slot) = live::tool_slot(live, id) {
-                            live::clear_progress(slot.progress());
-                        }
-                        Ok(())
+                    let live = tx.doc(&LIVE_DOC, conversation).await?;
+                    let ops = live.with_json(|raw| {
+                        live::locate_slot(raw, id)
+                            .map(|at| live::clear_progress_ops(raw, at))
+                            .unwrap_or_default()
                     })?;
+                    if !ops.is_empty() {
+                        live.apply_ops(&ops)?;
+                    }
                     Ok(None)
                 },
                 &context,
@@ -436,7 +450,7 @@ async fn run(
     let mut duration = None;
     let execution = std::panic::AssertUnwindSafe(async {
         api.env = runtime.env(&context).await?;
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let result =
             std::panic::AssertUnwindSafe(async { tool.execute(args, api, context.clone()).await })
                 .catch_unwind()
@@ -671,9 +685,13 @@ async fn settle(
         .commit(
             move |tx, _| async move {
                 let live = tx.doc(&LIVE_DOC, conversation).await?;
-                let mut state = live.read()?;
-                let mut slot = live::tool_slot(&mut state, id);
-                let result = build(slot.as_mut().map(ToolSlotMut::progress).map(|slot| &*slot));
+                let progress = live.with_json(|raw| {
+                    live::locate_slot(raw, id)
+                        .map(|at| live::slot_progress(raw, at))
+                        .transpose()
+                })?;
+                let progress = progress.map_err(Error::message)?;
+                let result = build(progress.as_ref());
                 let receipt = if let ToolTaskInput::Nested { parent, key, .. } = input {
                     let nested = nested_result(id, &result, duration)?;
                     if let Some(usage) = &nested.usage {
@@ -705,16 +723,23 @@ async fn settle(
                             state.result = Some(nested.clone());
                             Ok(())
                         })?;
-                    live.update(|live| {
-                        if let Some(ToolSlotMut::Nested(slot)) = live::tool_slot(live, id) {
-                            live::finish_slot(&mut slot.progress);
-                            slot.summary = Some(summary_of(
-                                &nested,
-                                &result.output.clone().unwrap_or_default(),
-                            ));
+                    let summary = wire::encode(&summary_of(
+                        &nested,
+                        &result.output.clone().unwrap_or_default(),
+                    ));
+                    let ops = live.with_json(|raw| {
+                        let mut ops = Vec::new();
+                        if let Some(at) =
+                            live::locate_slot(raw, id).filter(|at| at.field == "nestedTools")
+                        {
+                            ops.extend(live::finish_slot_ops(raw, at));
+                            live::set_slot_field(raw, at, "summary", summary, &mut ops);
                         }
-                        Ok(())
+                        ops
                     })?;
+                    if !ops.is_empty() {
+                        live.apply_ops(&ops)?;
+                    }
                     ToolTaskResult::Nested
                 } else {
                     let entry = append_tool_result(
@@ -726,13 +751,25 @@ async fn settle(
                         duration,
                     )
                     .await?;
-                    live.update(|live| {
-                        if let Some(ToolSlotMut::Model(slot)) = live::tool_slot(live, id) {
-                            live::finish_slot(&mut slot.progress);
-                            slot.entry = Some(entry.id);
+                    let ops = live.with_json(|raw| {
+                        let mut ops = Vec::new();
+                        if let Some(at) =
+                            live::locate_slot(raw, id).filter(|at| at.field == "tools")
+                        {
+                            ops.extend(live::finish_slot_ops(raw, at));
+                            live::set_slot_field(
+                                raw,
+                                at,
+                                "entry",
+                                wire::encode(&entry.id),
+                                &mut ops,
+                            );
                         }
-                        Ok(())
+                        ops
                     })?;
+                    if !ops.is_empty() {
+                        live.apply_ops(&ops)?;
+                    }
                     ToolTaskResult::Model {
                         entry_id: entry.id,
                         control: if matches!(ending, Ending::Completed) {
@@ -743,9 +780,8 @@ async fn settle(
                     }
                 };
                 if made_nested {
-                    live.update(|live| {
+                    live::update_fields(&live, &["nestedTools"], |live| {
                         live::remove_nested_slots(live, id);
-                        Ok(())
                     })?;
                 }
                 let outcome = match ending {
@@ -811,9 +847,10 @@ pub(crate) async fn start_nested_call(
         let mut options = TaskOptions::new(TaskOwnership::Task(parent)); options.abandon_on_restart = abandon;
         let created = tx.create_task(&TOOL_TASK,input,options).await?;
         state.update(|state| { state.task_id = Some(created); Ok(()) })?;
-        tx.doc(&LIVE_DOC,conversation).await?.update(|live| {
-            live.nested_tools.get_or_insert_default().push(NestedToolSlot {progress:SlotProgress::new(call.id,name),parent_call_id,parent_task_id:parent,task_id:created.untyped(),arguments,summary:None}); Ok(())
-        })?;
+        let live = tx.doc(&LIVE_DOC,conversation).await?;
+        let slot = NestedToolSlot {progress:SlotProgress::new(call.id,name),parent_call_id,parent_task_id:parent,task_id:created.untyped(),arguments,summary:None};
+        let op = live.with_json(|raw| live::push_nested_slot_op(raw, &slot))?;
+        live.apply_ops(&[op])?;
         *capture.lock() = Some(created); Ok(None)
     },context).await?;
     if replayed.load(std::sync::atomic::Ordering::Acquire) {

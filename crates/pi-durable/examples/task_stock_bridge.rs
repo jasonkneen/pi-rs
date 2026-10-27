@@ -170,8 +170,11 @@ enum Pending {
     Async(tokio::sync::oneshot::Sender<Result<Option<JsonValue>>>),
     Sync(std::sync::mpsc::Sender<Result<Option<JsonValue>>>),
 }
-struct Hub {
-    output: Mutex<std::io::Stdout>,
+/// Where the Hub writes its frames (one strict-JSON text per frame): stdout for the stock
+/// process, an in-process queue for the embedded runtime (`pi-durable-jsrt`).
+pub(crate) type Output = Box<dyn FnMut(&str) + Send>;
+pub(crate) struct Hub {
+    output: Mutex<Output>,
     next: AtomicU64,
     pending: Mutex<HashMap<u64, Pending>>,
     host_pending: Mutex<HashSet<u64>>,
@@ -199,7 +202,8 @@ struct Hub {
     bound: bound_conversation_bridge::BoundBridge,
     codemode: codemode_vm_bridge::CodemodeBridge,
     host_timers: Mutex<HashMap<u64, DisarmTimer>>,
-    host_timer_callbacks: Mutex<HashMap<u64, pi_durable::timers::TimerCallback>>,
+    /// Host timer callbacks with the Harness that armed them.
+    host_timer_callbacks: Mutex<HashMap<u64, (u64, pi_durable::timers::TimerCallback)>>,
     transactions: Mutex<HashMap<u64, Transaction>>,
     contexts: Mutex<HashMap<u64, AbortController>>,
     phases: AtomicU64,
@@ -222,17 +226,187 @@ struct Hub {
     submissions: submission_bridge::SubmissionBridge,
     inspections: AtomicU64,
     ranges: Mutex<HashMap<u64, Arc<pi_durable::harness::context::ContextRange>>>,
+    context_refs: Mutex<context_bridge::ContextRefs>,
+    /// The host-ack gate for native steps; see [`Hub::step_gate`].
+    turns: Mutex<HostTurns>,
+    turned: tokio::sync::Notify,
+}
+/// Frames written to the host and how many it has acknowledged after running their continuations.
+/// `open` holds the tasks whose phase turn the host is pumping synchronously: their next step runs
+/// as upstream's microtasks after a phase would. A host that never sends `host.ack` (the embedded
+/// runtime) is not gated.
+#[derive(Default)]
+struct HostTurns {
+    enabled: bool,
+    emitted: u64,
+    acked: u64,
+    /// Open phase turns by runtime handle, with the runtime's task and nesting depth.
+    open: HashMap<u64, (TaskId, u64)>,
+    next_ticket: u64,
+    /// Tickets of parked steps, released oldest first.
+    parked: std::collections::BTreeSet<u64>,
+}
+enum Turn {
+    Open(u64, TaskId),
+    Close(u64),
+}
+impl HostTurns {
+    /// Only a plain acknowledgement (after a microtask drain) enables the gate: a host that
+    /// sends just the phase-turn brackets has not promised to acknowledge, and gating it would
+    /// park every step until a phase turn happened to open its task.
+    fn ack(&mut self, count: u64, turn: Option<Turn>, plain: bool) {
+        self.enabled |= plain;
+        self.acked = self.acked.max(count);
+        match turn {
+            Some(Turn::Open(runtime, task)) => self.open.entry(runtime).or_insert((task, 0)).1 += 1,
+            Some(Turn::Close(runtime)) => {
+                if let Some((_, depth)) = self.open.get_mut(&runtime) {
+                    *depth -= 1;
+                    if *depth == 0 {
+                        self.open.remove(&runtime);
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+    /// A ticket and the frames written so far for a step that must wait, or `None` when the gate
+    /// is off.
+    fn park(&mut self) -> Option<(u64, u64)> {
+        if !self.enabled {
+            return None;
+        }
+        let ticket = self.next_ticket;
+        self.next_ticket += 1;
+        self.parked.insert(ticket);
+        Some((ticket, self.emitted))
+    }
+    /// Release a parked step when it may start: acknowledged and no older step still parked, or
+    /// its own task's phase turn is open, or the host is gone.
+    fn release(&mut self, ticket: u64, target: u64, task: TaskId, closed: bool) -> bool {
+        let oldest = self.parked.first() == Some(&ticket);
+        let turning = self.open.values().any(|(open, _)| *open == task);
+        if closed || turning || (oldest && self.passes(target, task)) {
+            self.parked.remove(&ticket);
+            return true;
+        }
+        false
+    }
+    /// Whether a step of `task` captured at `target` frames written may start.
+    fn passes(&self, target: u64, task: TaskId) -> bool {
+        !self.enabled || self.acked >= target || self.open.values().any(|(open, _)| *open == task)
+    }
+}
+#[cfg(test)]
+mod host_turns_tests {
+    use super::*;
+    fn task(id: i64) -> TaskId {
+        TaskId::from_raw(id)
+    }
+    #[test]
+    fn steps_wait_only_once_the_host_has_promised_acknowledgements() {
+        let mut turns = HostTurns {
+            emitted: 3,
+            ..Default::default()
+        };
+        // Phase-turn brackets alone do not enable the gate.
+        turns.ack(0, Some(Turn::Open(9, task(1))), false);
+        turns.ack(0, Some(Turn::Close(9)), false);
+        assert!(turns.passes(3, task(2)));
+        // A plain acknowledgement does; then a step waits for every frame before it.
+        turns.ack(1, None, true);
+        assert!(!turns.passes(3, task(2)));
+        // An open phase turn admits only its own task.
+        turns.ack(1, Some(Turn::Open(9, task(1))), false);
+        assert!(turns.passes(3, task(1)) && !turns.passes(3, task(2)));
+        turns.ack(1, Some(Turn::Close(9)), false);
+        assert!(!turns.passes(3, task(1)));
+        turns.ack(3, None, true);
+        assert!(turns.passes(3, task(2)));
+    }
+    #[test]
+    fn parked_steps_are_released_in_the_order_they_parked() {
+        let mut turns = HostTurns::default();
+        assert_eq!(turns.park(), None, "off until a plain acknowledgement");
+        turns.ack(0, None, true);
+        turns.emitted = 2;
+        let (first, at) = turns.park().unwrap();
+        let (second, _) = turns.park().unwrap();
+        turns.ack(2, None, true);
+        // Both may pass, but the younger waits for the older.
+        assert!(!turns.release(second, at, task(2), false));
+        assert!(turns.release(first, at, task(1), false));
+        assert!(turns.release(second, at, task(2), false));
+    }
 }
 impl Hub {
     fn emit(&self, value: JsonValue) {
+        let line = value.to_string();
         let mut output = self.output.lock();
-        writeln!(output, "{value}").unwrap();
-        output.flush().unwrap();
+        (*output)(&line);
+        self.turns.lock().emitted += 1;
         drop(output);
         self.changed.notify_waiters();
     }
     fn call(&self, method: &str, args: JsonValue) -> StorageFuture<Option<JsonValue>> {
         self.call_context(method, args, &Context::default())
+    }
+    /// Upstream queues a step only after the continuations of a caller it answered have run.
+    /// Across the process boundary, a step waits until the host has acknowledged every frame
+    /// written before it, or while a synchronous host request is open.
+    fn step_gate(self: &Arc<Self>) -> pi_durable::harness::scheduler::StepGate {
+        let hub = Arc::downgrade(self);
+        Arc::new(move |task| {
+            let hub = hub.clone();
+            // The ticket keeps parked steps in the order they asked: one acknowledgement
+            // releases them all, and siblings must still start as upstream queued them.
+            let ticket = hub.upgrade().and_then(|hub| hub.turns.lock().park());
+            Box::pin(async move {
+                let (Some((ticket, target)), Some(hub)) = (ticket, hub.upgrade()) else {
+                    return;
+                };
+                let started = std::time::Instant::now();
+                let mut reported = false;
+                loop {
+                    let turned = hub.turned.notified();
+                    tokio::pin!(turned);
+                    turned.as_mut().enable();
+                    let closed = hub.input_closed.load(Ordering::Acquire);
+                    if hub.turns.lock().release(ticket, target, task, closed) {
+                        hub.turned.notify_waiters();
+                        return;
+                    }
+                    if reported {
+                        turned.await;
+                    } else if tokio::time::timeout(std::time::Duration::from_secs(1), turned)
+                        .await
+                        .is_err()
+                    {
+                        // A host that stops acknowledging parks every step; say so.
+                        reported = true;
+                        let turns = hub.turns.lock();
+                        eprintln!(
+                            "pi-durable: step of task {task} has waited {:?} for a host ack ({} of {target} frames acknowledged)",
+                            started.elapsed(),
+                            turns.acked
+                        );
+                    }
+                }
+            })
+        })
+    }
+    fn host_ack(&self, value: &JsonValue) {
+        let count = value["count"].as_u64().unwrap_or(0);
+        let turn = match (value["open"].as_bool(), value["runtime"].as_u64()) {
+            (Some(true), Some(runtime)) => self
+                .runtime(value)
+                .ok()
+                .map(|r| Turn::Open(runtime, r.task_id().untyped())),
+            (Some(false), Some(runtime)) => Some(Turn::Close(runtime)),
+            _ => None,
+        };
+        self.turns.lock().ack(count, turn, value["open"].is_null());
+        self.turned.notify_waiters();
     }
     fn call_context(
         &self,
@@ -510,7 +684,9 @@ impl Hub {
         let host = self.clone();
         Arc::new(move |callback, delay, background| {
             let timer = host.next.fetch_add(1, Ordering::Relaxed);
-            host.host_timer_callbacks.lock().insert(timer, callback);
+            host.host_timer_callbacks
+                .lock()
+                .insert(timer, (harness, callback));
             let attempt = host
                 .sync(
                     "setTimer",
@@ -556,6 +732,26 @@ impl Hub {
                     as pi_durable::ConversationInit
             }),
         })
+    }
+    fn harness_session(&self, harness: u64) -> Option<Session> {
+        if let Some(session) = self.sessions.lock().get(&harness).cloned() {
+            return Some(session);
+        }
+        self.schedulers
+            .lock()
+            .get(&harness)
+            .map(TaskScheduler::session)
+    }
+    /// Wait until `session` has no ready or running native work, as upstream's microtasks finish
+    /// before a host timer runs. Bounded: a job that cannot finish without the host would
+    /// otherwise hold the reply; reaching the bound is logged, since it should not happen.
+    async fn settle(&self, session: Session, method: &str) {
+        if tokio::time::timeout(std::time::Duration::from_millis(500), session.quiescent())
+            .await
+            .is_err()
+        {
+            eprintln!("pi-durable stock bridge: {method} reply did not settle within 500ms");
+        }
     }
     fn scheduler(&self, request: &JsonValue) -> Result<TaskScheduler> {
         self.schedulers
@@ -819,6 +1015,7 @@ impl Hub {
                         host.created(harness, tx, record)
                     }));
                 }
+                options.step_gate = Some(self.step_gate());
                 let host = self.clone();
                 options.on_report = Some(Arc::new(move |error, info| {
                     host.emit(object([
@@ -1002,7 +1199,14 @@ impl Hub {
             "waitForIdle" => {
                 let scheduler = self.scheduler(&request)?;
                 scheduler.resume()?;
-                mapped(scheduler.wait_for_idle(field(&request, "conversation")?, &context))
+                let operation = scheduler.wait_for_idle(field(&request, "conversation")?, &context);
+                let hub = self.clone();
+                Box::pin(async move {
+                    operation.await?;
+                    // Idleness settles (retention timers armed) in the same turn as upstream.
+                    hub.settle(scheduler.session(), "waitForIdle").await;
+                    Ok(Some(encode(&())))
+                })
             }
             "appendEntry" => {
                 let tx = self.transaction(&request)?;
@@ -1092,11 +1296,28 @@ impl Hub {
             }
             "runtimeContext" => {
                 self.context_reads.fetch_add(1, Ordering::Relaxed);
-                mapped(self.runtime(&request)?.context(
+                let read = self.runtime(&request)?.context(
                     field(&request, "conversation")?,
                     field(&request, "at")?,
                     &context,
-                ))
+                );
+                // `aliased`: keep message identity across `messages` and `contributions`; `refs`:
+                // send values the host already holds as references.
+                if request["refs"].as_bool() == Some(true) {
+                    let hub = self.clone();
+                    let namespace = request["harness"].as_u64().unwrap_or_default();
+                    Box::pin(async move {
+                        Ok(Some(context_bridge::encode_view_refs(
+                            &read.await?,
+                            namespace,
+                            &hub.context_refs,
+                        )))
+                    })
+                } else if request["aliased"].as_bool() == Some(true) {
+                    Box::pin(async move { Ok(Some(context_bridge::encode_view(&read.await?))) })
+                } else {
+                    mapped(read)
+                }
             }
             "conversationContext" => {
                 self.context_reads.fetch_add(1, Ordering::Relaxed);
@@ -1107,13 +1328,35 @@ impl Hub {
                     .get(&(harness, field(&request, "conversation")?))
                     .cloned()
                     .ok_or_else(|| Error::message("Unknown conversation handle"))?;
-                mapped(conversation.context(field(&request, "at")?, &context))
+                let read = conversation.context(field(&request, "at")?, &context);
+                if request["refs"].as_bool() == Some(true) {
+                    let hub = self.clone();
+                    let namespace = request["harness"].as_u64().unwrap_or_default();
+                    Box::pin(async move {
+                        Ok(Some(context_bridge::encode_view_refs(
+                            &read.await?,
+                            namespace,
+                            &hub.context_refs,
+                        )))
+                    })
+                } else if request["aliased"].as_bool() == Some(true) {
+                    Box::pin(async move { Ok(Some(context_bridge::encode_view(&read.await?))) })
+                } else {
+                    mapped(read)
+                }
             }
             "phase.enter" => {
                 let active = !self.runtime(&request)?.signal().aborted();
                 Box::pin(async move { Ok(Some(encode(&active))) })
             }
             "host.turn" => Box::pin(async { Ok(None) }),
+            // A host forgets the context values it kept for a Harness (see `ContextRefs`).
+            "contextRefs.forget" => {
+                self.context_refs
+                    .lock()
+                    .forget(field(&request, "namespace")?);
+                Box::pin(async { Ok(None) })
+            }
             "change.turn" => {
                 let request: u64 = field(&request, "request")?;
                 Box::pin(async move {
@@ -1159,13 +1402,22 @@ impl Hub {
                     // Cleanup may have queued wake delivery behind this turn.
                     // Drain that cooperative queue without joining storage or a
                     // crashed invocation whose backend can intentionally hang.
-                    let (send, receive) = tokio::sync::oneshot::channel();
-                    owner.spawn(async move {
-                        let _ = send.send(());
-                    });
-                    receive
-                        .await
-                        .map_err(|error| Error::message(error.to_string()))?;
+                    // Settling the invocation (outcome commit, waiter wakes) may take several
+                    // cooperative hops; keep draining while they still produce frames, so a waiter
+                    // the host is about to observe is answered before the host's next timer.
+                    for _ in 0..32 {
+                        let before = self.turns.lock().emitted;
+                        let (send, receive) = tokio::sync::oneshot::channel();
+                        owner.spawn(async move {
+                            let _ = send.send(());
+                        });
+                        receive
+                            .await
+                            .map_err(|error| Error::message(error.to_string()))?;
+                        if self.turns.lock().emitted == before {
+                            break;
+                        }
+                    }
                     Ok(None)
                 })
             }
@@ -1174,8 +1426,13 @@ impl Hub {
                 let timer = field(&request, "timer")?;
                 Box::pin(async move {
                     let callback = host.host_timer_callbacks.lock().remove(&timer);
-                    if let Some(callback) = callback {
+                    if let Some((harness, callback)) = callback {
                         callback();
+                        // A host timer callback runs to completion, its microtasks included, before
+                        // the host's next check (re-arming timers the callback disarmed).
+                        if let Some(session) = host.harness_session(harness) {
+                            host.settle(session, "hostTimerFire").await;
+                        }
                     }
                     Ok(None)
                 })
@@ -1668,8 +1925,31 @@ async fn main() {
         );
         return;
     }
-    let hub = Arc::new(Hub {
-        output: Mutex::new(std::io::stdout()),
+    let hub = new_hub(Box::new(|line: &str| {
+        let mut output = std::io::stdout().lock();
+        writeln!(output, "{line}").unwrap();
+        output.flush().unwrap();
+    }));
+    // Offer the host-ack step gate; a host that never acknowledges is not gated.
+    hub.emit(object([("type", encode(&"host.acks"))]));
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let (send, lane) = spawn_lane(&hub, &runtime);
+        for line in std::io::stdin().lock().lines() {
+            let value: JsonValue = serde_json::from_str(&line.unwrap()).unwrap();
+            receive(&hub, &runtime, &send, value);
+        }
+        close_input(&hub);
+        drop(send);
+        lane.join().unwrap();
+    })
+    .await
+    .unwrap();
+}
+/// A Hub writing its frames to `output`.
+pub(crate) fn new_hub(output: Output) -> Arc<Hub> {
+    Arc::new(Hub {
+        output: Mutex::new(output),
         next: AtomicU64::new(1_000_000),
         pending: Mutex::new(HashMap::new()),
         host_pending: Mutex::new(HashSet::new()),
@@ -1709,6 +1989,9 @@ async fn main() {
         harness_opens: AtomicU64::new(0),
         hook_calls: AtomicU64::new(0),
         ranges: Mutex::new(HashMap::new()),
+        context_refs: Mutex::new(context_bridge::ContextRefs::default()),
+        turns: Mutex::default(),
+        turned: tokio::sync::Notify::new(),
         prompt: prompt_bridge::PromptBridge::default(),
         registry: registry_bridge::RegistryBridge::default(),
         graph: graph_bridge::GraphBridge::default(),
@@ -1718,154 +2001,164 @@ async fn main() {
         documents: document_bridge::DocumentBridge::default(),
         submissions: submission_bridge::SubmissionBridge::default(),
         inspections: AtomicU64::new(0),
-    });
-    let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
-        let (send, receive) = std::sync::mpsc::channel::<Work>();
-        let admission = hub.clone();
-        let handle = runtime.clone();
-        let lane = std::thread::spawn(move || {
-            let _entered = handle.enter();
-            for work in receive {
-                match work {
-                    Work::Request(value, context) => {
-                        begin_request(admission.clone(), &handle, value, context)
-                    }
-                    Work::Reply(value) => admission.response(value),
-                    Work::Adopt(id, seq) => {
-                        let adopt = admission.adoptions.lock().remove(&id);
-                        if let Some(adopt) = adopt {
-                            adopt(seq);
-                        }
-                    }
-                    Work::Release(range) => {
-                        admission.ranges.lock().remove(&range);
-                    }
-                }
-            }
-        });
-        for line in std::io::stdin().lock().lines() {
-            let value: JsonValue = serde_json::from_str(&line.unwrap()).unwrap();
-            match value["type"].to_utf8().as_deref() {
-                Some("codemode.vmEvent") => {
-                    hub.codemode_event(&value).unwrap();
-                    continue;
-                }
-                Some("models.event") => {
-                    hub.model_event(&value).unwrap();
-                    continue;
-                }
-                Some("callback.result") => {
-                    let id = field::<u64>(&value, "id").unwrap();
-                    let synchronous = matches!(hub.pending.lock().get(&id), Some(Pending::Sync(_)));
-                    if synchronous {
-                        hub.response(value);
-                    } else {
-                        send.send(Work::Reply(value)).unwrap();
-                    }
-                    continue;
-                }
-                Some("context.release") => {
-                    send.send(Work::Release(field(&value, "range").unwrap()))
-                        .unwrap();
-                    continue;
-                }
-                Some("storage.adopt") => {
-                    send.send(Work::Adopt(
-                        field(&value, "id").unwrap(),
-                        field(&value, "seq").unwrap(),
-                    ))
-                    .unwrap();
-                    continue;
-                }
-                Some("abort") => {
-                    if let Some(controller) = hub
-                        .contexts
-                        .lock()
-                        .get(&field::<u64>(&value, "id").unwrap())
-                    {
-                        controller.abort_with_reason(SignalReason::Error(AbortError::new(
-                            value["message"].to_utf8().unwrap(),
-                        )));
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-            let id = field::<u64>(&value, "id").unwrap();
-            let context = hub.context(id);
-            if let Some(message) = value["abortInitially"].to_utf8() {
-                hub.contexts
-                    .lock()
-                    .get(&id)
-                    .unwrap()
-                    .abort_with_reason(SignalReason::Error(AbortError::new(message)));
-            }
-            if value["method"].to_utf8().as_deref() == Some("close")
-                && value["admit"].as_bool() == Some(true)
-                && value["reentrant"].as_bool() == Some(true)
-            {
-                let (hub, runtime) = (hub.clone(), runtime.clone());
-                runtime
-                    .clone()
-                    .spawn_blocking(move || begin_request(hub, &runtime, value, context));
-                continue;
-            }
-            // Detaching a document watch reads the host clock synchronously.
-            // Keep stdin available to receive that callback's reply.
-            if matches!(
-                value["method"].to_utf8().as_deref(),
-                Some("graph.stop" | "graph.cancel" | "storage.adopt")
-            ) {
-                let (hub, runtime) = (hub.clone(), runtime.clone());
-                runtime
-                    .clone()
-                    .spawn_blocking(move || begin_request(hub, &runtime, value, context));
-                continue;
-            }
-            // Registry operations are independent of the Session admission
-            // line and may be called by a synchronous host callback on it.
-            if value["method"].to_utf8().is_some_and(|method| {
-                method.starts_with("registry.")
-                    || method == "runtimeRegistry"
-                    || method == "runtimeTimer"
-                    || method == "hostTimerFire"
-                    || method == "runtimeDisarmTimer"
-                    || method == "runtimeSettings"
-                    || method == "runtimeNow"
-                    || method == "runtimeReport"
-                    || (method.starts_with("graph.")
-                        && method != "graph.watch"
-                        && method != "graph.turn")
-            }) {
-                begin_request(hub.clone(), &runtime, value, context);
-            } else {
-                send.send(Work::Request(value, context)).unwrap();
-            }
-        }
-        // Unblock callbacks before joining admission when the host disappears.
-        {
-            let mut pending = hub.pending.lock();
-            hub.input_closed.store(true, Ordering::Release);
-            for (_, waiter) in pending.drain() {
-                let error = Err(Error::message("Test transport is closed"));
-                match waiter {
-                    Pending::Sync(send) => {
-                        let _ = send.send(error);
-                    }
-                    Pending::Async(send) => {
-                        let _ = send.send(error);
-                    }
-                }
-            }
-        }
-        drop(send);
-        lane.join().unwrap();
     })
-    .await
-    .unwrap();
 }
-enum Work {
+/// Start the admission lane: requests that must keep wire order, replies and adoptions.
+pub(crate) fn spawn_lane(
+    hub: &Arc<Hub>,
+    runtime: &tokio::runtime::Handle,
+) -> (std::sync::mpsc::Sender<Work>, std::thread::JoinHandle<()>) {
+    let (send, receive) = std::sync::mpsc::channel::<Work>();
+    let admission = hub.clone();
+    let handle = runtime.clone();
+    let lane = std::thread::spawn(move || {
+        let _entered = handle.enter();
+        for work in receive {
+            match work {
+                Work::Request(value, context) => {
+                    begin_request(admission.clone(), &handle, value, context)
+                }
+                Work::Reply(value) => admission.response(value),
+                Work::Adopt(id, seq) => {
+                    let adopt = admission.adoptions.lock().remove(&id);
+                    if let Some(adopt) = adopt {
+                        adopt(seq);
+                    }
+                }
+                Work::Release(range) => {
+                    admission.ranges.lock().remove(&range);
+                }
+            }
+        }
+    });
+    (send, lane)
+}
+/// Route one frame from the host (a request, a callback reply, or a control frame).
+pub(crate) fn receive(
+    hub: &Arc<Hub>,
+    runtime: &tokio::runtime::Handle,
+    send: &std::sync::mpsc::Sender<Work>,
+    value: JsonValue,
+) {
+    match value["type"].to_utf8().as_deref() {
+        Some("host.ack") => {
+            hub.host_ack(&value);
+            return;
+        }
+        Some("codemode.vmEvent") => {
+            hub.codemode_event(&value).unwrap();
+            return;
+        }
+        Some("models.event") => {
+            hub.model_event(&value).unwrap();
+            return;
+        }
+        Some("callback.result") => {
+            let id = field::<u64>(&value, "id").unwrap();
+            let synchronous = matches!(hub.pending.lock().get(&id), Some(Pending::Sync(_)));
+            if synchronous {
+                hub.response(value);
+            } else {
+                send.send(Work::Reply(value)).unwrap();
+            }
+            return;
+        }
+        Some("context.release") => {
+            send.send(Work::Release(field(&value, "range").unwrap()))
+                .unwrap();
+            return;
+        }
+        Some("storage.adopt") => {
+            send.send(Work::Adopt(
+                field(&value, "id").unwrap(),
+                field(&value, "seq").unwrap(),
+            ))
+            .unwrap();
+            return;
+        }
+        Some("abort") => {
+            if let Some(controller) = hub
+                .contexts
+                .lock()
+                .get(&field::<u64>(&value, "id").unwrap())
+            {
+                controller.abort_with_reason(SignalReason::Error(AbortError::new(
+                    value["message"].to_utf8().unwrap(),
+                )));
+            }
+            return;
+        }
+        _ => {}
+    }
+    let id = field::<u64>(&value, "id").unwrap();
+    let context = hub.context(id);
+    if let Some(message) = value["abortInitially"].to_utf8() {
+        hub.contexts
+            .lock()
+            .get(&id)
+            .unwrap()
+            .abort_with_reason(SignalReason::Error(AbortError::new(message)));
+    }
+    if value["method"].to_utf8().as_deref() == Some("close")
+        && value["admit"].as_bool() == Some(true)
+        && value["reentrant"].as_bool() == Some(true)
+    {
+        let (hub, runtime) = (hub.clone(), runtime.clone());
+        runtime
+            .clone()
+            .spawn_blocking(move || begin_request(hub, &runtime, value, context));
+        return;
+    }
+    // Detaching a document watch reads the host clock synchronously.
+    // Keep stdin available to receive that callback's reply.
+    if matches!(
+        value["method"].to_utf8().as_deref(),
+        Some("graph.stop" | "graph.cancel" | "storage.adopt")
+    ) {
+        let (hub, runtime) = (hub.clone(), runtime.clone());
+        runtime
+            .clone()
+            .spawn_blocking(move || begin_request(hub, &runtime, value, context));
+        return;
+    }
+    // Registry operations are independent of the Session admission
+    // line and may be called by a synchronous host callback on it.
+    if value["method"].to_utf8().is_some_and(|method| {
+        method.starts_with("registry.")
+            || method == "runtimeRegistry"
+            || method == "runtimeTimer"
+            || method == "hostTimerFire"
+            || method == "runtimeDisarmTimer"
+            || method == "runtimeSettings"
+            || method == "runtimeNow"
+            || method == "runtimeReport"
+            || (method.starts_with("graph.") && method != "graph.watch" && method != "graph.turn")
+    }) {
+        begin_request(hub.clone(), runtime, value, context);
+    } else {
+        send.send(Work::Request(value, context)).unwrap();
+    }
+}
+/// The host is gone: fail every pending callback and refuse new ones.
+pub(crate) fn close_input(hub: &Hub) {
+    {
+        let mut pending = hub.pending.lock();
+        hub.input_closed.store(true, Ordering::Release);
+        hub.turned.notify_waiters();
+        for (_, waiter) in pending.drain() {
+            let error = Err(Error::message("Test transport is closed"));
+            match waiter {
+                Pending::Sync(send) => {
+                    let _ = send.send(error);
+                }
+                Pending::Async(send) => {
+                    let _ = send.send(error);
+                }
+            }
+        }
+    }
+}
+pub(crate) enum Work {
     Request(JsonValue, Context),
     Reply(JsonValue),
     Adopt(u64, Seq),

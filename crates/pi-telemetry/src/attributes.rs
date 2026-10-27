@@ -22,8 +22,94 @@ pub enum AttributeValue {
 /// Attributes in insertion order, like a JavaScript object.
 pub type SpanAttributes = IndexMap<String, AttributeValue>;
 
-/// Opaque, JSON-serializable adapter-owned propagation data.
-pub type TelemetryCarrier = IndexMap<String, String>;
+/// Opaque, JSON-serializable adapter-owned propagation data (`Record<string, string>`).
+///
+/// Keys and values are JavaScript strings and may hold unpaired UTF-16 surrogates, which
+/// serialize as `\uXXXX` escapes. A serde map keyed by such strings cannot be written by
+/// `serde_json`, so the carrier serializes through strict JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TelemetryCarrier(IndexMap<TelemetryText, TelemetryText>);
+
+impl TelemetryCarrier {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// The value of a UTF-8 key.
+    pub fn get_str(&self, key: &str) -> Option<&TelemetryText> {
+        self.0.get(&TelemetryText::from(key))
+    }
+}
+impl std::ops::Index<&str> for TelemetryCarrier {
+    type Output = TelemetryText;
+    fn index(&self, key: &str) -> &TelemetryText {
+        self.get_str(key).expect("telemetry carrier key")
+    }
+}
+impl std::ops::Deref for TelemetryCarrier {
+    type Target = IndexMap<TelemetryText, TelemetryText>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TelemetryCarrier {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl<K: Into<TelemetryText>, V: Into<TelemetryText>> FromIterator<(K, V)> for TelemetryCarrier {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(entries: I) -> Self {
+        Self(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+}
+impl IntoIterator for TelemetryCarrier {
+    type Item = (TelemetryText, TelemetryText);
+    type IntoIter = indexmap::map::IntoIter<TelemetryText, TelemetryText>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+impl<'a> IntoIterator for &'a TelemetryCarrier {
+    type Item = (&'a TelemetryText, &'a TelemetryText);
+    type IntoIter = indexmap::map::Iter<'a, TelemetryText, TelemetryText>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+impl Serialize for TelemetryCarrier {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use pi_json::strict::{Map, Value};
+        let map: Map = self
+            .0
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.as_json_string().clone(),
+                    Value::String(value.as_json_string().clone()),
+                )
+            })
+            .collect();
+        Value::Object(map.into()).serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for TelemetryCarrier {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use pi_json::strict::Value;
+        let Value::Object(map) = Value::deserialize(deserializer)? else {
+            return Err(D::Error::custom("telemetry carrier must be a JSON object"));
+        };
+        map.iter()
+            .map(|(key, value)| match value {
+                Value::String(value) => Ok((TelemetryText::from(key), TelemetryText::from(value))),
+                _ => Err(D::Error::custom("telemetry carrier values must be strings")),
+            })
+            .collect()
+    }
+}
 
 impl AttributeValue {
     /// `JSON.stringify` of the value.

@@ -257,7 +257,7 @@ async fn cancellation_preserves_render_error_and_does_not_reject_successful_rend
 }
 
 #[tokio::test]
-async fn instructions_are_untagged_and_section_tags_preserve_utf16_units() {
+async fn instructions_are_tagged_like_any_section_and_section_tags_preserve_utf16_units() {
     let key = JsonString::from_utf16(vec![0xd800]);
     let text = JsonString::from_utf16(vec![0xdfff]);
     let sections = vec![
@@ -273,7 +273,10 @@ async fn instructions_are_untagged_and_section_tags_preserve_utf16_units() {
     )
     .await
     .unwrap();
-    assert!(desired[&JsonString::from("instructions")].equals_str("You are helpful."));
+    assert!(
+        desired[&JsonString::from("instructions")]
+            .equals_str("<instructions>\nYou are helpful.\n</instructions>")
+    );
     assert_eq!(
         desired[&key].units(),
         &[60, 0xd800, 62, 10, 0xdfff, 10, 60, 47, 0xd800, 62]

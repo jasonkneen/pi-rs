@@ -115,7 +115,14 @@ fn sdk_model(model: AnyModel) -> CatalogModel {
 }
 impl CodemodeModels for SdkCodemodeModels {
     fn models(&self, kind: ModelType, provider: Option<JsonString>) -> Result<Vec<CatalogModel>> {
-        let provider = provider.as_ref().map(sdk_text).transpose()?;
+        // SDK providers are UTF8, so an unpaired surrogate filters every model out.
+        let Ok(provider) = provider
+            .as_ref()
+            .map(JsonString::to_string_checked)
+            .transpose()
+        else {
+            return Ok(Vec::new());
+        };
         Ok(self
             .0
             .get_models_of_type(kind, provider.as_deref())
@@ -148,13 +155,16 @@ impl CodemodeModels for SdkCodemodeModels {
         })
     }
     fn model(&self, kind: ModelType, reference: &ModelRef) -> Result<Option<CatalogModel>> {
+        // As in `getModelOfType`, an identity no SDK model can have finds nothing.
+        let (Ok(provider), Ok(id)) = (
+            reference.provider.to_string_checked(),
+            reference.model_id.to_string_checked(),
+        ) else {
+            return Ok(None);
+        };
         Ok(self
             .0
-            .get_model_of_type(
-                kind,
-                &sdk_text(&reference.provider)?,
-                &sdk_text(&reference.model_id)?,
-            )
+            .get_model_of_type(kind, &provider, &id)
             .map(sdk_model))
     }
     fn request(

@@ -731,11 +731,16 @@ async fn watch_ends_ends_listener_error_on_a_throw_reports_it_and_delivers_nothi
 }
 
 #[tokio::test]
-async fn watch_references_retains_neither_its_source_nor_its_listener_once_ended_while_still_referenced()
+async fn watch_references_retains_neither_its_source_its_listener_nor_its_signal_once_ended_while_still_referenced()
  {
-    // The acquisition signal is not observable from outside: AbortSignal exposes no weak handle.
     type End = fn(&Watch) -> WatchEnd;
-    async fn acquire(end: Option<End>) -> (Watch, std::sync::Weak<()>, std::sync::Weak<()>) {
+    struct Acquired {
+        watch: Watch,
+        source: std::sync::Weak<()>,
+        listener: std::sync::Weak<()>,
+        signal: WeakAbortSignal,
+    }
+    async fn acquire(end: Option<End>) -> Acquired {
         let source = Arc::new(());
         let listener_token = Arc::new(());
         let (source_weak, listener_weak) =
@@ -754,7 +759,9 @@ async fn watch_references_retains_neither_its_source_nor_its_listener_once_ended
             })),
         );
         let controller = AbortController::new();
-        watch.observe_cancellation(controller.signal()).unwrap();
+        let signal = controller.signal();
+        let signal_weak = signal.downgrade();
+        watch.observe_cancellation(signal).unwrap();
         watch
             .start(move |_| {
                 let _ = &listener_token;
@@ -767,13 +774,19 @@ async fn watch_references_retains_neither_its_source_nor_its_listener_once_ended
             end(&watch);
         }
         flush().await;
-        (watch, source_weak, listener_weak)
+        Acquired {
+            watch,
+            source: source_weak,
+            listener: listener_weak,
+            signal: signal_weak,
+        }
     }
     // Control: an open watch keeps its source, so the releases below are real.
-    let (open, source, listener) = acquire(None).await;
-    assert!(source.upgrade().is_some());
-    assert!(listener.upgrade().is_some());
-    open.stop();
+    let open = acquire(None).await;
+    assert!(open.source.upgrade().is_some());
+    assert!(open.listener.upgrade().is_some());
+    assert!(open.signal.upgrade().is_some());
+    open.watch.stop();
 
     let ends: [End; 4] = [
         |watch| watch.stop(),
@@ -785,10 +798,12 @@ async fn watch_references_retains_neither_its_source_nor_its_listener_once_ended
         },
     ];
     for end in ends {
-        let (watch, source, listener) = acquire(Some(end)).await;
-        assert!(watch.end_reason().is_some());
-        assert!(source.upgrade().is_none());
-        assert!(listener.upgrade().is_none());
+        let ended = acquire(Some(end)).await;
+        flush().await;
+        assert!(ended.watch.end_reason().is_some());
+        assert!(ended.source.upgrade().is_none());
+        assert!(ended.listener.upgrade().is_none());
+        assert!(ended.signal.upgrade().is_none());
     }
 }
 

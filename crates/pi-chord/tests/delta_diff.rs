@@ -1,7 +1,8 @@
 //! Ports of packages/chord/test/delta-diff.test.ts, named after the upstream cases.
 #![allow(non_snake_case)]
 use pi_chord::delta::*;
-use pi_chord::json::{Value, to_value};
+use pi_chord::json::{Map, Value, to_value};
+use std::sync::Arc;
 macro_rules! json { ($($tokens:tt)+) => { Value::from(serde_json::json!($($tokens)+)) }; }
 
 fn ops(value: &Value) -> Vec<Op> {
@@ -11,6 +12,20 @@ fn expect_diff(before: &Value, after: &Value, expected: Value) {
     let operations = diff_revisions(before, after);
     assert_eq!(to_value(&operations).unwrap(), expected);
     assert_eq!(apply_immutable(Some(before), &operations).unwrap(), *after);
+}
+/// Arrays and objects that share child containers, as upstream shares JS references.
+fn array(values: &[&Value]) -> Value {
+    Value::Array(Arc::new(
+        values.iter().map(|value| (*value).clone()).collect(),
+    ))
+}
+fn record(pairs: &[(&str, &Value)]) -> Value {
+    Value::Object(Arc::new(
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).clone()))
+            .collect::<Map>(),
+    ))
 }
 fn rows(count: usize) -> Vec<serde_json::Value> {
     (0..count)
@@ -85,8 +100,8 @@ fn immutable_revision_diff__collapses_a_same_length_queue_update_to_two_splices(
 fn immutable_revision_diff__emits_a_permutation_for_a_pure_reorder() {
     let [a, b, c] = [json!({"id":"a"}), json!({"id":"b"}), json!({"id":"c"})];
     expect_diff(
-        &json!({"values":[a, b, c]}),
-        &json!({"values":[c, a, b]}),
+        &record(&[("values", &array(&[&a, &b, &c]))]),
+        &record(&[("values", &array(&[&c, &a, &b]))]),
         json!([["m", ["values"], [2, 0, 1]]]),
     );
 }
@@ -255,19 +270,25 @@ fn immutable_revision_diff__does_not_treat_coincidental_id_or_key_fields_as_stru
 
 #[test]
 fn immutable_revision_diff__combines_removals_append_and_a_shared_subtree_survivor_edit() {
-    // Upstream pins an operation shape that depends on JavaScript object identity
-    // (`stable: c.stable` marks the survivor). The native diff is value based, so only
-    // the exact-replay contract and the removal/append structure are asserted.
-    let mk = |id: &str| serde_json::json!({"id":id,"stable":{},"detail":{"text":id}});
+    // `stable: c.stable` shares the survivor's subtree by identity (`Arc`), which aligns
+    // the edited `c` with its original rather than splicing it.
+    let mk = |id: &str| json!({"id":id,"stable":{},"detail":{"text":id}});
     let (a, b, c, d) = (mk("a"), mk("b"), mk("c"), mk("d"));
-    let changed_c = serde_json::json!({"id":"c","stable":c["stable"],"detail":{"text":"changed"}});
+    let changed_c = record(&[
+        ("id", &json!("c")),
+        ("stable", &c["stable"]),
+        ("detail", &json!({"text":"changed"})),
+    ]);
     let appended = mk("e");
-    let before = json!({"values":[a, b, c, d]});
-    let after = json!({"values":[a, changed_c, d, appended]});
-    let operations = diff_revisions(&before, &after);
-    assert_eq!(apply_immutable(Some(&before), &operations).unwrap(), after);
-    assert!(!matches!(operations[0], Op::Replace(_)));
-    assert!(matches!(operations.last(), Some(Op::Splice(_, 3, 0, items)) if items.len() == 1));
+    expect_diff(
+        &record(&[("values", &array(&[&a, &b, &c, &d]))]),
+        &record(&[("values", &array(&[&a, &changed_c, &d, &appended]))]),
+        json!([
+            ["p", ["values"], 1, 1, []],
+            ["a", ["values", 1, "detail", "text"], "hanged"],
+            ["p", ["values"], 3, 0, [{"id":"e","stable":{},"detail":{"text":"e"}}]]
+        ]),
+    );
 }
 
 #[test]
@@ -383,17 +404,16 @@ fn immutable_revision_diff__splices_an_ambiguous_equal_count_moved_and_edited_ga
 
 #[test]
 fn immutable_revision_diff__keeps_a_large_rotation_payload_free() {
-    let values = rows(10_000);
+    let values: Vec<Value> = rows(10_000).into_iter().map(Value::from).collect();
     let mut rotated = values[1_000..].to_vec();
     rotated.extend_from_slice(&values[..1_000]);
-    let operations = diff_revisions(&json!({"values":values}), &json!({"values":rotated}));
+    let before = record(&[("values", &Value::Array(Arc::new(values)))]);
+    let after = record(&[("values", &Value::Array(Arc::new(rotated)))]);
+    let operations = diff_revisions(&before, &after);
     assert_eq!(operations.len(), 1);
     assert!(matches!(operations[0], Op::Move(..)));
     assert!(to_value(&operations).unwrap().to_string().len() < 60_000);
-    assert_eq!(
-        apply_immutable(Some(&json!({"values":values})), &operations).unwrap(),
-        json!({"values":rotated})
-    );
+    assert_eq!(apply_immutable(Some(&before), &operations).unwrap(), after);
 }
 
 #[test]

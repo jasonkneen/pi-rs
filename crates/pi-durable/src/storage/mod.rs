@@ -1,10 +1,12 @@
 use crate::{Context, Result, types::*};
 use std::{future::Future, pin::Pin};
+pub mod indexeddb;
 pub mod jsonl;
 pub(crate) mod line;
 pub mod memory;
 pub mod scan;
 pub mod sqlite;
+pub use indexeddb::{IndexedDbStorage, MemoryIdbFactory};
 pub use jsonl::{JsonlStorage, JsonlStorageOptions};
 pub use memory::{MemoryStorage, PreparedMemoryCommit};
 pub use sqlite::{SqliteStorage, SqliteStorageOptions};

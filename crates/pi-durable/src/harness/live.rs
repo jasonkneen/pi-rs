@@ -1,7 +1,7 @@
 //! Shared live conversation presentation and ownership of each run's inputs.
 use super::usage::{UsageBucket, record_usage};
 use crate::{wire, *};
-use pi_chord::delta::Op;
+use pi_chord::delta::{Op, Seg};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,29 +208,36 @@ pub struct LiveState {
 impl DocumentState for LiveState {}
 pub static LIVE_DOC: std::sync::LazyLock<LatestConversationDocToken<LiveState>> =
     std::sync::LazyLock::new(|| {
-        define_doc(DocDefinition::new(
-            "pi.live",
-            1,
-            LatestConversationScope {
-                fork: LatestFork::Initial,
-            },
-            || Ok(LiveState::default()),
-            |state: &LiveState, _, _| {
-                state.generation.is_none()
-                    && !state
-                        .tools
-                        .iter()
-                        .flatten()
-                        .any(|slot| slot.progress.status == SlotStatus::Running)
-                    && !state
-                        .nested_tools
-                        .iter()
-                        .flatten()
-                        .any(|slot| slot.progress.status == SlotStatus::Running)
-            },
-        ))
+        define_doc(
+            DocDefinition::new(
+                "pi.live",
+                1,
+                LatestConversationScope {
+                    fork: LatestFork::Initial,
+                },
+                || Ok(LiveState::default()),
+                |_, _, _| unreachable!("the raw checkpoint decides"),
+            )
+            .raw_checkpoint(|raw, _, _| {
+                // Same rule as the typed state: checkpoint once no generation or tool is in flight. Reading the stored
+                // JSON keeps a commit from decoding every slot of the live document.
+                let raw = raw.value();
+                let running = |slots: &JsonValue| {
+                    slots.as_array().is_some_and(|slots| {
+                        slots
+                            .iter()
+                            .any(|slot| slot["status"].string_equals("running"))
+                    })
+                };
+                raw["generation"].is_null()
+                    && !running(&raw["tools"])
+                    && !running(&raw["nestedTools"])
+            }),
+        )
         .expect("valid built-in live definition")
     });
+/// The fields of the live document that hold compaction progress.
+pub const COMPACTION_FIELDS: &[&str] = &["compactions", "compactionFailure"];
 pub fn live_doc() -> LatestConversationDocToken<LiveState> {
     LIVE_DOC.clone()
 }
@@ -240,22 +247,29 @@ pub fn end_run(
     task: TaskId,
     settlement: SubmissionSettlement,
 ) -> Result<()> {
-    let state = live.read()?;
+    let (run, present) = live.with_json(|raw| -> Result<_> {
+        let run = if raw["run"].is_null() {
+            None
+        } else {
+            Some(wire::decode::<LiveRun>(&raw["run"]).map_err(Error::message)?)
+        };
+        let present = |key: &str| !raw[key].is_null();
+        Ok((run, ["generation", "tools", "nestedTools"].map(present)))
+    })??;
     let mut ops = Vec::new();
-    if let Some(run) = state.run.filter(|run| run.task_id == task) {
+    if let Some(run) = run.filter(|run| run.task_id == task) {
         for id in run.inputs {
             tx.settle_submission(id, settlement.clone())?;
         }
         ops.push(Op::Delete(vec!["run".into()]));
     }
-    if state.generation.is_some() {
-        ops.push(Op::Delete(vec!["generation".into()]));
-    }
-    if state.tools.is_some() {
-        ops.push(Op::Delete(vec!["tools".into()]));
-    }
-    if state.nested_tools.is_some() {
-        ops.push(Op::Delete(vec!["nestedTools".into()]));
+    for (key, present) in ["generation", "tools", "nestedTools"]
+        .into_iter()
+        .zip(present)
+    {
+        if present {
+            ops.push(Op::Delete(vec![key.into()]));
+        }
     }
     live.apply_ops(&ops)
 }
@@ -346,9 +360,7 @@ pub async fn convert_partial(
     conversation: ConversationId,
 ) -> Result<()> {
     let Some(partial) = live
-        .read()?
-        .generation
-        .and_then(|generation| generation.message)
+        .with_json(|raw| JsonObject::try_from_value(raw["generation"]["message"].clone()).ok())?
     else {
         return Ok(());
     };
@@ -368,7 +380,7 @@ pub async fn convert_partial(
         &usage,
     )
     .await?;
-    let mut entry = EntryDraft::new("pi.assistant");
+    let mut entry = EntryDraft::new(ASSISTANT_ENTRY.kind().clone());
     entry.model = Some(vec![message]);
     tx.append_entry(conversation, entry).await?;
     Ok(())
@@ -387,12 +399,11 @@ pub async fn settle_scheduler_outcome(
     }
     let live = tx.doc(&live_doc(), record.info.conversation_id).await?;
     if kind.equals_str("pi.tool") {
-        return live.update(|state| {
+        return update_fields(&live, &["tools", "nestedTools"], |state| {
             if let Some(mut slot) = tool_slot(state, record.id()) {
                 finish_slot(slot.progress());
             }
             remove_nested_slots(state, record.id());
-            Ok(())
         });
     }
     if kind.equals_str("pi.compaction") {
@@ -401,16 +412,13 @@ pub async fn settle_scheduler_outcome(
             TaskOutcome::Orphaned { reason } => reason,
             _ => return Ok(()),
         };
-        return live.update(|state| {
+        return update_fields(&live, COMPACTION_FIELDS, |state| {
             fail_compaction_status(state, record.id(), error);
-            Ok(())
         });
     }
-    if !live
-        .read()?
-        .run
-        .is_some_and(|run| run.task_id == record.id())
-    {
+    let running =
+        live.with_json(|raw| raw["run"]["taskId"].as_f64() == Some(record.id().get() as f64))?;
+    if !running {
         return Ok(());
     }
     convert_partial(&tx, &live, record.info.conversation_id).await?;
@@ -426,4 +434,152 @@ pub async fn settle_scheduler_outcome(
         _ => return Ok(()),
     };
     end_run(&tx, &live, record.id(), settlement)
+}
+
+/// Where a tool slot sits in the stored live document.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotLocation {
+    pub field: &'static str,
+    pub index: usize,
+}
+/// Find the slot of `task` in the stored JSON: model slots by scan, nested slots (sorted by task) by search.
+pub fn locate_slot(raw: &JsonValue, task: TaskId) -> Option<SlotLocation> {
+    let id = task.get() as f64;
+    let key = |slot: &JsonValue| slot["taskId"].as_f64().unwrap_or(f64::NAN);
+    if let Some(index) = raw["tools"]
+        .as_array()
+        .and_then(|slots| slots.iter().position(|slot| key(slot) == id))
+    {
+        return Some(SlotLocation {
+            field: "tools",
+            index,
+        });
+    }
+    let nested = raw["nestedTools"].as_array()?;
+    let index = nested
+        .binary_search_by(|slot| {
+            key(slot)
+                .partial_cmp(&id)
+                .unwrap_or(std::cmp::Ordering::Less)
+        })
+        .ok()
+        .or_else(|| nested.iter().position(|slot| key(slot) == id))?;
+    Some(SlotLocation {
+        field: "nestedTools",
+        index,
+    })
+}
+pub fn slot_json(raw: &JsonValue, at: SlotLocation) -> &JsonValue {
+    &raw[at.field][at.index]
+}
+/// The progress part of a stored slot.
+pub fn slot_progress(
+    raw: &JsonValue,
+    at: SlotLocation,
+) -> std::result::Result<SlotProgress, String> {
+    SlotProgress::from_json(slot_json(raw, at))
+}
+pub fn slot_path(at: SlotLocation, key: &str) -> Vec<Seg> {
+    vec![Seg::from(at.field), Seg::Index(at.index), Seg::from(key)]
+}
+/// Set one field of a stored slot unless it already holds that value.
+pub fn set_slot_field(
+    raw: &JsonValue,
+    at: SlotLocation,
+    key: &str,
+    value: JsonValue,
+    ops: &mut Vec<Op>,
+) {
+    let current = &slot_json(raw, at)[key];
+    let present = slot_json(raw, at)
+        .as_object()
+        .is_some_and(|slot| slot.contains_key(&JsonString::from(key)));
+    if !present || *current != value {
+        ops.push(Op::Set(slot_path(at, key), value));
+    }
+}
+/// Operations that mark a stored slot done and drop its streaming fields, like `finish_slot`.
+pub fn finish_slot_ops(raw: &JsonValue, at: SlotLocation) -> Vec<Op> {
+    let mut ops = Vec::new();
+    set_slot_field(raw, at, "status", wire::encode(&SlotStatus::Done), &mut ops);
+    ops.extend(clear_progress_ops(raw, at));
+    ops
+}
+/// Operations that remove the streaming fields of a stored slot, like `clear_progress`.
+pub fn clear_progress_ops(raw: &JsonValue, at: SlotLocation) -> Vec<Op> {
+    let slot = slot_json(raw, at).as_object();
+    [
+        "output",
+        "droppedBytes",
+        "droppedLines",
+        "details",
+        "diagnostics",
+    ]
+    .into_iter()
+    .filter(|key| slot.is_some_and(|slot| slot.contains_key(&JsonString::from(*key))))
+    .map(|key| Op::Delete(slot_path(at, key)))
+    .collect()
+}
+/// The operation that appends a nested slot, creating the list when absent.
+pub fn push_nested_slot_op(raw: &JsonValue, slot: &NestedToolSlot) -> Op {
+    let encoded = wire::encode(slot);
+    match raw["nestedTools"].as_array() {
+        Some(slots) => Op::Splice(
+            vec![Seg::from("nestedTools")],
+            slots.len(),
+            0,
+            vec![encoded],
+        ),
+        None => Op::Set(
+            vec![Seg::from("nestedTools")],
+            JsonValue::Array(vec![encoded].into()),
+        ),
+    }
+}
+
+/// Apply a typed update that only touches the named top-level fields of the live document. Only those fields are
+/// decoded, and only the ones that changed are written back, as fine-grained operations; the other fields (above
+/// all the nested tool slots, which can be many and large) are never decoded or encoded.
+pub fn update_fields(
+    live: &DocDraft<LiveState>,
+    fields: &[&'static str],
+    update: impl FnOnce(&mut LiveState),
+) -> Result<()> {
+    let (mut partial, before) = live.with_json(|raw| {
+        let mut subset = wire::object();
+        let mut before = Vec::new();
+        for field in fields {
+            let value = raw
+                .as_object()
+                .and_then(|object| object.get(&JsonString::from(*field)));
+            before.push(value.cloned());
+            if let Some(value) = value {
+                subset
+                    .as_object_mut()
+                    .expect("object")
+                    .insert((*field).into(), value.clone());
+            }
+        }
+        wire::decode::<LiveState>(&subset)
+            .map(|partial| (partial, before))
+            .map_err(Error::message)
+    })??;
+    update(&mut partial);
+    let after = wire::encode(&partial);
+    let mut ops = Vec::new();
+    for (field, before) in fields.iter().zip(&before) {
+        let path = [Seg::from(*field)];
+        match (before, wire::get(&after, field)) {
+            (None, None) => {}
+            (Some(_), None) => ops.push(Op::Delete(path.to_vec())),
+            (before, Some(after)) => {
+                ops.extend(super::json::assign_json_ops(before.as_ref(), after, &path))
+            }
+        }
+    }
+    if ops.is_empty() {
+        Ok(())
+    } else {
+        live.apply_ops(&ops)
+    }
 }

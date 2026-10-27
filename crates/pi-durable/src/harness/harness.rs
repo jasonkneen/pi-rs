@@ -13,6 +13,7 @@ use super::{
     registry::{RegisteredTool, Registry},
     scheduler::{AbortResult, SchedulerOptions, TaskReport, TaskScheduler, Wake},
     settings::{HarnessSettings, SettingsReader, resolve_settings},
+    settled::SettledTask,
     submissions::{Submission, Submissions, SubmissionsOptions},
     types::{QueueModes, SubmissionDraft},
     usage::{USAGE_DOC, UsageState, add_usage_state},
@@ -72,11 +73,15 @@ pub struct HarnessOptions {
     pub now: Option<HostClock>,
     pub set_timer: Option<SetTimer>,
     pub on_wake: Option<Arc<dyn Fn(Wake) -> Result<()> + Send + Sync>>,
+    /// See [`SchedulerOptions::step_gate`](super::scheduler::SchedulerOptions::step_gate).
+    pub step_gate: Option<super::scheduler::StepGate>,
     pub on_report: Option<HarnessReport>,
     pub telemetry: ContextRef,
     pub read_only: bool,
     /// The Session default, also used by source-conformance hosts that run
-    /// with immediate document eviction. An explicit setting overrides it.
+    /// with immediate document eviction. An explicit setting overrides it. NaN, the default,
+    /// means the process-wide default (`set_default_document_retention`) as it is when the
+    /// Harness opens; an explicit value of 0 or more fixes it.
     pub default_document_retention_ms: f64,
     pub document_retention_reader: Option<DocumentRetentionReader>,
 }
@@ -93,10 +98,11 @@ impl HarnessOptions {
             now: None,
             set_timer: None,
             on_wake: None,
+            step_gate: None,
             on_report: None,
             telemetry: pi_telemetry::noop_telemetry_context(),
             read_only: false,
-            default_document_retention_ms: 600_000.0,
+            default_document_retention_ms: f64::NAN,
             document_retention_reader: None,
         }
     }
@@ -193,8 +199,8 @@ where
     ])
 }
 fn wall_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as f64
 }
@@ -335,7 +341,11 @@ impl Harness {
             Arc::new(move |error, info| clock_report(error, info, None)),
         );
         let settings = options.settings.clone();
-        let fallback_retention = options.default_document_retention_ms;
+        let explicit_retention = (!options.default_document_retention_ms.is_nan()
+            && options.default_document_retention_ms >= 0.0)
+            .then_some(options.default_document_retention_ms);
+        let fallback_retention =
+            explicit_retention.unwrap_or_else(crate::session::default_document_retention);
         let resolved: SettingsReader = Arc::new(move || {
             let input = settings()?;
             let retention = input
@@ -380,6 +390,7 @@ impl Harness {
                 }),
                 conversation: Some(conversation),
                 on_wake: options.on_wake,
+                step_gate: options.step_gate,
                 telemetry: options.telemetry.clone(),
                 on_report: Arc::new(move |error, info, context| {
                     scheduler_report(error, info, context)
@@ -398,7 +409,7 @@ impl Harness {
                 now: now.clone(),
                 set_timer: options.set_timer,
                 read_only: options.read_only,
-                document_retention_ms: options.default_document_retention_ms,
+                document_retention_ms: fallback_retention,
                 document_retention_reader: options
                     .document_retention_reader
                     .or_else(|| Some(Arc::new(move || Ok(retention()?.document_retention_ms)))),
@@ -614,11 +625,13 @@ impl Harness {
         }
         self.inner.scheduler.retry(id, context)
     }
-    pub fn wait_for_task(&self, id: TaskId, context: &Context) -> StorageFuture<TaskRecord> {
+    /// Wait until the task is terminal; the receipt carries its outcome.
+    pub fn wait_for_task(&self, id: TaskId, context: &Context) -> StorageFuture<SettledTask> {
         if let Err(error) = self.inner.scheduler.resume() {
             return ready(Err(error));
         }
-        self.inner.scheduler.wait_for_task(id, context)
+        let waited = self.inner.scheduler.wait_for_task(id, context);
+        Box::pin(async move { SettledTask::try_from(waited.await?) })
     }
     pub fn wait_for_idle(&self, context: &Context) -> StorageFuture<()> {
         if let Err(error) = self.inner.scheduler.resume() {
@@ -737,7 +750,7 @@ impl Conversation {
         compact_conversation(&self.host.inner.scheduler, self.id, instructions, context)
     }
     pub fn reset(&self, handoff: Option<JsonString>, context: &Context) -> StorageFuture<()> {
-        let mut entry = EntryDraft::new("pi.reset");
+        let mut entry = EntryDraft::new(RESET_ENTRY.kind().clone());
         entry.head = Some(EntryHead::ThisEntry);
         if let Some(text) = handoff {
             let mut message = wire::object();

@@ -144,7 +144,7 @@ async fn check_js_models_telemetry(root_parent: bool) {
     let request = move |parent: pi_telemetry::ContextRef| async move {
         let context = Context {
             system_prompt: None,
-            messages: vec![Message::User(UserMessage { content: UserContent::Text("hi".into()), timestamp: 0 })],
+            messages: vec![Message::User(UserMessage { content: UserContent::Text("hi".into()), timestamp: 0, ..Default::default() })],
             tools: None,
         };
         let options = StreamOptions { telemetry: Some(parent), ..Default::default() };

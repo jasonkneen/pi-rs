@@ -62,7 +62,7 @@ pub fn utf8_byte_length(text: &JsonString) -> usize {
         .sum()
 }
 pub fn character_end(bytes: &[u8], index: usize) -> usize {
-    let mut end = index.min(bytes.len());
+    let mut end = index;
     while end > 0 && bytes.get(end).is_some_and(|b| b & 0xc0 == 0x80) {
         end -= 1;
     }

@@ -4,8 +4,10 @@ use indexmap::IndexMap;
 use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 
 pub mod cloudflare;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod queue;
+#[cfg(not(target_arch = "wasm32"))]
 pub use native::{NativeSqliteDatabase, NativeSqliteDatabaseOptions, open_native_sqlite_database};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +79,7 @@ impl std::error::Error for SqliteError {
         }
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl From<rusqlite::Error> for SqliteError {
     fn from(value: rusqlite::Error) -> Self {
         Self::new(value.to_string())

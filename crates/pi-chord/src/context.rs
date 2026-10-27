@@ -10,7 +10,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     sync::{
-        Arc, LazyLock,
+        Arc, LazyLock, Weak,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -116,6 +116,25 @@ impl AbortSignal {
             Some(reason) => Err(reason.waiter_error()),
             None => Ok(()),
         }
+    }
+    /// A `WeakRef` to this signal: it upgrades while any clone of it is still held.
+    pub fn downgrade(&self) -> WeakAbortSignal {
+        WeakAbortSignal {
+            sources: Arc::downgrade(&self.sources),
+        }
+    }
+}
+
+/// Observes whether a signal is still retained without retaining it.
+#[derive(Clone)]
+pub struct WeakAbortSignal {
+    sources: Weak<[Arc<Source>]>,
+}
+impl WeakAbortSignal {
+    pub fn upgrade(&self) -> Option<AbortSignal> {
+        self.sources
+            .upgrade()
+            .map(|sources| AbortSignal { sources })
     }
 }
 impl fmt::Debug for AbortSignal {
@@ -311,7 +330,7 @@ pub enum AwaitError {
     #[error(transparent)]
     Aborted(#[from] AbortError),
     #[error(transparent)]
-    Task(#[from] tokio::task::JoinError),
+    Task(#[from] crate::rt::JoinError),
 }
 
 /// Run an operation independently and cancel only this waiter. Dropping the
@@ -321,7 +340,7 @@ where
     F: Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    let handle = tokio::spawn(operation);
+    let handle = crate::rt::spawn(operation);
     let Some(signal) = &context.signal else {
         return Ok(handle.await?);
     };

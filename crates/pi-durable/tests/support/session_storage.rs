@@ -47,6 +47,8 @@ pub struct ControlledStorage {
     pub mints: AtomicUsize,
     pub entry_rows: Arc<AtomicUsize>,
     pub range_gate: Mutex<Option<Arc<Gate>>>,
+    /// Runs synchronously inside the next head-marker lookup, while its caller is polled.
+    pub head_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 macro_rules! forward {
     ($method:ident($($arg:ident:$ty:ty),*) -> $out:ty) => {
@@ -121,7 +123,17 @@ impl Storage for ControlledStorage {
     forward!(scan_conversations(query:&ConversationQuery,limit:usize,cursor:Option<&Cursor>)->Page<ConversationRecord>);
     forward!(entry(id:EntryId)->Option<StoredEntry>);
     forward!(entry_in(conversation:ConversationId,id:EntryId)->Option<StoredEntry>);
-    forward!(find_latest_head_marker(conversation:ConversationId,at:Option<EntryId>)->Option<EntryRecord>);
+    fn find_latest_head_marker(
+        &self,
+        conversation: ConversationId,
+        at: Option<EntryId>,
+        ctx: &Context,
+    ) -> StorageFuture<Option<EntryRecord>> {
+        if let Some(hook) = self.head_hook.lock().take() {
+            hook();
+        }
+        self.memory.find_latest_head_marker(conversation, at, ctx)
+    }
     fn scan_entries(
         &self,
         query: &EntryQuery,

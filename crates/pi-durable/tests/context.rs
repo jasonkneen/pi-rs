@@ -67,6 +67,65 @@ async fn a_context_read_queued_before_close_finishes_its_captured_transcript() {
     }
 }
 
+// Upstream resumes a `readOnLine` caller before the next line job starts (the
+// line's tail settles one reaction later), so a context read issues its range
+// scan before later admitted work, including close, reaches Storage. A job
+// admitted while the bounds capture runs must not overtake that continuation.
+#[tokio::test]
+async fn a_line_job_admitted_during_bounds_capture_starts_after_the_read_continues() {
+    let (storage, session, conversation) = setup().await;
+    append(&session, conversation, user("before")).await;
+    let rows_at_commit = Arc::new(parking_lot::Mutex::new(None));
+    let later = Arc::new(parking_lot::Mutex::new(None));
+    *storage.head_hook.lock() = Some(Box::new({
+        let (session, storage, rows_at_commit, later) = (
+            session.clone(),
+            storage.clone(),
+            rows_at_commit.clone(),
+            later.clone(),
+        );
+        move || {
+            *later.lock() = Some(session.commit(
+                move |_| async move {
+                    *rows_at_commit.lock() = Some(storage.entry_rows.load(Ordering::SeqCst));
+                    Ok(())
+                },
+                &Context::default(),
+            ));
+        }
+    }));
+    // Queue the read behind a held commit so its continuation is already waiting
+    // on the bounds result when the bounds capture runs.
+    let gate = Arc::new(support::Gate::default());
+    *storage.commit_gate.lock() = Some(gate.clone());
+    let held = session.commit(
+        move |tx| async move {
+            tx.append_entry(conversation, EntryDraft::new("note"))
+                .await?;
+            Ok(())
+        },
+        &Context::default(),
+    );
+    gate.entered().await;
+    let read = read_context(
+        &session,
+        storage.clone(),
+        conversation,
+        &Context::default(),
+        None,
+    );
+    tokio::task::yield_now().await;
+    let rows_before = storage.entry_rows.load(Ordering::SeqCst);
+    gate.release();
+    held.await.unwrap();
+    let view = read.await.unwrap();
+    let later = later.lock().take().expect("hook admitted a later commit");
+    later.await.unwrap();
+    assert_eq!(view.entries.len(), 2);
+    // Bounds capture reads one row; the range scan reads both transcript rows.
+    assert_eq!(*rows_at_commit.lock(), Some(rows_before + 3));
+}
+
 #[tokio::test]
 async fn native_session_captures_an_immutable_range_before_later_resets_and_edits() {
     let (storage, session, conversation) = setup().await;

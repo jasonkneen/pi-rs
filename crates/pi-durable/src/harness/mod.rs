@@ -10,6 +10,7 @@ pub mod events;
 #[path = "harness.rs"]
 mod facade;
 pub mod generation;
+pub mod hook_api;
 pub mod hooks;
 pub use facade::{
     Conversation, ConversationCreateOptions, ConversationCreated, ConversationEntryQuery,
@@ -29,12 +30,14 @@ pub mod reader;
 pub mod registry;
 pub mod runtime;
 pub mod scheduler;
+pub mod settled;
 pub mod settings;
 pub mod state;
 pub mod submissions;
 pub mod task_graph;
 pub mod telemetry;
 pub mod tool;
+pub mod typed;
 pub mod types;
 pub mod usage;
 pub mod view;
