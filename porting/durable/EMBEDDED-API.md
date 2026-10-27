@@ -16,7 +16,7 @@ Build with your own target dir: `CARGO_TARGET_DIR=<worktree>/target-<you> cargo 
 | `src/dispatch/chord.rs` | Chord methods; seeded by A with `output.*` (owned by B from now on) |
 | `src/dispatch/vitest.rs` | `vitest.mock` (installed only with `HostOptions::vitest`) |
 | `build.rs` | embeds every `js/**/*.js` (no table to edit) |
-| `js/bridge.js` | `pi-durable:bridge`: `call`, `callAsync`, `ref`, `method`, all upstream error classes |
+| `js/bridge.js` | `pi-durable:bridge`: `call`, `callAsync`, `ref`, `method`, all TS reference error classes |
 | `js/vitest.js` | the `vitest` shim |
 | `js/chord/output.js` | `@earendil-works/chord/output` (seeded by A, owned by B) |
 | `examples/embedded_stock.rs` | the runner |
@@ -42,10 +42,10 @@ under the specifier `host::specifier_for(path)` gives:
 | `chord/<p>.js`, `chord/<p>/index.js` | `@earendil-works/chord/<p>` |
 | `chord/package.json.js` | `@earendil-works/chord/package.json` |
 | `internal/<p>.js` | `pi-durable:internal/<p>` (glue-private) |
-| `internal/src/<pkg>/<p>.js` | `pi-durable:internal/src/<pkg>/<p>`: the runner serves it for upstream `packages/<pkg>/src/<p>.ts` when that file is **not** an export entry (e.g. `internal/src/durable/session/session.js` for `test/setup-document-retention.ts`'s `../src/session/session.ts`) |
+| `internal/src/<pkg>/<p>.js` | `pi-durable:internal/src/<pkg>/<p>`: the runner serves it for TS reference `packages/<pkg>/src/<p>.ts` when that file is **not** an export entry (e.g. `internal/src/durable/session/session.js` for `test/setup-document-retention.ts`'s `../src/session/session.ts`) |
 
-Do not put modules at non-upstream public subpaths (e.g. `js/harness.js` would become
-`@earendil-works/pi-durable/harness`, which upstream does not export); use `internal/` for shared
+Do not put modules at non-TS reference public subpaths (e.g. `js/harness.js` would become
+`@earendil-works/pi-durable/harness`, which TS reference does not export); use `internal/` for shared
 glue such as D's harness module.
 
 Glue imports the host through the bridge and re-exports the error classes from it, so every
@@ -166,7 +166,7 @@ HostError::from_js(ctx, &thrown) / HostError::from_boa(ctx, js_error) / e.to_js(
 ```
 
 - `HostError::Typed` is rebuilt in JS by `__piDurable.makeError` (bridge.js) as an instance of the
-  upstream class; `HostError::Thrown` (a JS callback's exception) rethrows **the same object**.
+  TS reference class; `HostError::Thrown` (a JS callback's exception) rethrows **the same object**.
 - Props the constructor does not consume are assigned onto the instance.
 
 | `ErrorClass` | JS result (exported from) | props used |
@@ -185,9 +185,9 @@ HostError::from_js(ctx, &thrown) / HostError::from_boa(ctx, js_error) / e.to_js(
 | `ChordError` | `@earendil-works/chord` | `code`, `reason`, `details`, cause; message **without** the `code/reason: ` prefix |
 | `PathError` | `@earendil-works/chord/delta` | `path` |
 | `UnsafePathError` | `@earendil-works/chord/delta` | `segment` |
-| `WatchError` | `Error` with `name = "WatchError"` (no upstream class) | message, cause |
+| `WatchError` | `Error` with `name = "WatchError"` (no TS reference class) | message, cause |
 
-All classes live in `js/bridge.js` (bodies copied from upstream) and are exported there; the public
+All classes live in `js/bridge.js` (bodies copied from TS reference) and are exported there; the public
 modules re-export them. `bridge.errorClassNames` must equal `ErrorClass::ALL` (tested). The
 mapping from `pi_durable::Error` / `pi_chord` errors to `HostError` belongs in each chunk's
 dispatch module (A does not depend on `pi-durable`).
@@ -273,7 +273,7 @@ Exports: `describe`/`suite`, `it`/`test` (each with `.skip`, `.only`, `.todo`, `
   that file). A `default` member becomes the default export. Mocks registered but never applied
   (non-top-level `vi.mock`) are reported as `unappliedMocks` and fail the run.
   Verified on the pinned `packages/durable/test/env-node-spill.test.ts`: its `node:fs` mock is
-  applied before its other imports load (`tests/substrate.rs::upstream_env_node_spill_mock_is_applied`).
+  applied before its other imports load (`tests/substrate.rs::TS reference_env_node_spill_mock_is_applied`).
 - Runner entry points (not vitest API): `__runner.run({ file })` → report object;
   `__runner.mocks()` → `{ appliedMocks, unappliedMocks }`; `__applyMocks(baseUrl)`.
 
@@ -294,7 +294,7 @@ CARGO_TARGET_DIR=… cargo run -p pi-durable-jsrt --example embedded_stock -- <p
 - Fresh `JsRuntime` per mode: `cwd` = the package dir, `timer_control` + `expose_gc`, process env
   with `PI_DURABLE_DOCUMENT_RETENTION_MS` removed (default mode) or set. Durable files run both
   modes (unset, `0`) like `npm test`; chord files run once; `--retention=<ms>` runs one mode.
-- Routing (no upstream implementation ever runs):
+- Routing (no TS reference implementation ever runs):
   - each `exports` subpath of `packages/{durable,chord}/package.json` maps to its embedded module;
     a missing one is a virtual module that throws `not embedded: <spec> …`;
   - every `packages/<pkg>/src/**/*.ts` file is aliased by absolute path to: its export's embedded
@@ -349,7 +349,7 @@ CARGO_TARGET_DIR=… cargo run -p pi-durable-jsrt --example embedded_stock -- <p
 ## 10. Verified state (chunk A)
 
 - `cargo test -p pi-durable-jsrt --test substrate`: 9 passed (values, strict, handles, every
-  error class, re-entrancy, module table, vitest shim self-test, `vi.mock` hoisting, upstream
+  error class, re-entrancy, module table, vitest shim self-test, `vi.mock` hoisting, TS reference
   env-node-spill mock).
 - Runner on `packages/chord/test/output.test.ts`: 21/21 passed, 0 uncaught, 55182 native calls.
 - `cargo test -p pi-jsrt --test node_sqlite` (3), `--test test_controls` (4); full `cargo test -p pi-jsrt` green.
@@ -385,11 +385,11 @@ same Rust. Do not re-host its methods in another dispatch group.
   `watchEvents`, `conversationViews`, `transport`, `runtime`, `invokeCodemodeGlobal`, the Session
   binding it installs into `session.js`, and every host callback), `pi-durable:internal/registry`
   (`createRegistry`, `resolveAgent`, `resolveSettings`, `agentHooks`, `sectionExtension`,
-  `toolExtension`, `hydrateAgent`, `snapshot`), upstream-path modules under
+  `toolExtension`, `hydrateAgent`, `snapshot`), TS reference-path modules under
   `internal/src/durable/harness/*` (agent, compaction, context, define, events, generation, harness,
   inbox, live, native-task, prompt, provider, registry, telemetry, tool, usage, view) and
   `internal/src/durable/timers.js` (`nativeTimer`, `hostTimers`).
-- Semantics kept from upstream: built-in generation/tool/compaction tasks always run natively (JS
+- Semantics kept from TS reference: built-in generation/tool/compaction tasks always run natively (JS
   shells keep name/version/initial/migrate/phase names); without `HarnessOptions.setTimer`, timers
   are armed with JS `setTimeout` (so fake timers see them); without `HarnessOptions.now` the native
   clock is used while `Date.now` is the builtin and `Date.now` is called through when it has been
