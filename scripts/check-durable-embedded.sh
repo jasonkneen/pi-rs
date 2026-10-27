@@ -20,7 +20,9 @@ trap 'rm -rf "$work"' EXIT
 echo "== embedded: lint and native suites"
 cargo fmt -p pi-durable-jsrt --check
 cargo clippy --locked -p pi-durable-jsrt -p pi-jsrt --all-targets -- -D warnings
-cargo test --locked -p pi-durable-jsrt -p pi-jsrt
+[ -d crates/pi-durable-jsrt/tests/indexeddb/node_modules/fake-indexeddb ] ||
+  (cd crates/pi-durable-jsrt/tests/indexeddb && npm ci --silent)
+PI_DURABLE_REQUIRE_INDEXEDDB=1 cargo test --locked -p pi-durable-jsrt -p pi-jsrt
 if [ -f crates/pi-coding-agent/tests/extensions_durable.rs ]; then
   cargo test --locked -p pi-coding-agent --test extensions_durable
 fi

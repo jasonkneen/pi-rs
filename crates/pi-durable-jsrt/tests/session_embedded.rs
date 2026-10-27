@@ -462,11 +462,16 @@ async fn timed_out_test_commits_stop_before_the_next_test() {
 #[tokio::test(flavor = "multi_thread")]
 async fn indexeddb_storage_runs_over_a_js_indexeddb() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/indexeddb");
-    assert!(
-        dir.join("node_modules/fake-indexeddb").is_dir(),
-        "run `npm ci` in {} (fake-indexeddb, upstream's pinned test dependency)",
-        dir.display()
-    );
+    if !dir.join("node_modules/fake-indexeddb").is_dir() {
+        // The gate installs it; a plain `cargo test` skips rather than fails.
+        assert!(
+            std::env::var_os("PI_DURABLE_REQUIRE_INDEXEDDB").is_none(),
+            "run `npm ci` in {} (fake-indexeddb, the TS reference's pinned test dependency)",
+            dir.display()
+        );
+        eprintln!("skipped: run `npm ci` in {} to enable this test", dir.display());
+        return;
+    }
     let rt = JsRuntime::new(RuntimeOptions {
         timer_control: true,
         cwd: Some(dir.clone()),

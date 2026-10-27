@@ -98,9 +98,9 @@ Both gate scripts are slow; run them on a quiet machine.
   provider; CORS/fetch behavior for real providers is unverified there.
 - **Typed Journal cost.** Code mode's typed `pi.codemode.journal` document has a representation
   cost versus the reference's untyped journal; not yet measured against a target budget.
-- **Load sensitivity.** At load ≥200 concurrent cases, "forgets ended subagent chains" can exceed
+- **Load sensitivity.** At a machine load average of 200 or more, "forgets ended subagent chains" can exceed
   its 5-second deadline (2/40 in one batch, with the host-ack step gate described below in
-  place); the embedded 20,000-deep retention case times out at load ≥200 with or without the
+  place); the embedded 20,000-deep retention case times out at that load with or without the
   gate.
 - **Chord exports outside the durable subset are not embedded.** 19 exports in
   `@earendil-works/chord` root (host/contract/link/facet/replicated-state APIs), 5 in
@@ -166,6 +166,3 @@ bash scripts/check-durable-embedded.sh ../pi-mono
 python3 scripts/merge-durable-mappings.py --write
 python3 scripts/durable-inventory.py ../pi-mono --check
 ```
-
-Reuse compiled dependencies in this worktree with
-`CARGO_TARGET_DIR=/Users/jkneen/Documents/GitHub/pi-rs/target`.
