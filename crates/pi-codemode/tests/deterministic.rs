@@ -20,9 +20,9 @@ const BUDGET: u64 = 50_000;
 const STARTED_AT: f64 = 1_768_471_200_000.0;
 
 /// The first `Math.random()` with seed 1.
-const PINNED_FIRST_RANDOM: f64 = 0.18967728553554145;
+const PINNED_FIRST_RANDOM: f64 = 0.34227450605335275;
 /// The first two `Math.random()` values with seed 0.
-const PINNED_SEED_ZERO: [f64; 2] = [0.3588899754427616, 0.6752904796446454];
+const PINNED_SEED_ZERO: [f64; 2] = [0.6711372530266764, 0.7258461452833667];
 
 /// A remote that round-trips through JSON; `delay_first` holds the reply to result 1 back, so later
 /// results reach the VM before it.
@@ -244,12 +244,14 @@ async fn reports_the_fingerprint_before_any_call_and_the_calls_issued_after_each
     assert_eq!(calls, vec![json!([1, "tool", "echo", 1]), json!([2, "tool", "echo", 2]), json!([3, "tool", "echo", 3])]);
     let fingerprint = recorded.fingerprint.lock().clone().unwrap();
     let parts: Vec<&str> = fingerprint.split(", ").collect();
-    assert_eq!(parts.len(), 6, "{fingerprint}");
-    assert!(parts[0].starts_with("boa "), "{fingerprint}");
+    assert_eq!(parts.len(), 8, "{fingerprint}");
+    assert!(parts[0].starts_with("djs "), "{fingerprint}");
     assert!(parts[1].starts_with("prelude ") && parts[1].len() == "prelude ".len() + 8, "{fingerprint}");
     assert!(parts[2].starts_with("deterministic "), "{fingerprint}");
     assert!(parts[3].starts_with("stack "), "{fingerprint}");
     assert_eq!(parts[4], "heap 67108864");
+    assert_eq!(parts[6], "fuel per poll 10000");
+    assert_eq!(parts[7], "invocation fuel 100000000");
     match backend {
         Backend::Remote => assert_eq!(parts[5], format!("budget {BUDGET}")),
         Backend::Thread => assert_eq!(parts[5], "budget none"),

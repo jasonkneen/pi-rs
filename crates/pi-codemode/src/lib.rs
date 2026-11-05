@@ -5,9 +5,9 @@
 //! do. Port of `@earendil-works/pi-codemode`.
 //!
 //! Scripts use `tools`, `ALL_TOOLS`, `text`, `image`, `exit`, `store`, and `load`, and may start
-//! with a `// @options:` line (see [`parse_codemode_source`]). The VM is [Boa](https://boajs.dev),
-//! the engine behind `pi-jsrt`, run directly on a dedicated thread per execution with nothing but
-//! ECMAScript built-ins, `performance.now()`, and the codemode prelude.
+//! with a `// @options:` line (see [`parse_codemode_source`]). The VM is djs, embedded through
+//! `djs-core` and `djs-prelude`, run directly on a dedicated thread per execution with
+//! nothing but ECMAScript built-ins, `performance.now()`, and the codemode prelude.
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,15 +33,14 @@
 //! # Ok(()) }
 //! ```
 //!
-//! Differences from the TS package (QuickJS in wasm) are listed in `PORTING-STATUS.md`. Boa cannot
-//! be interrupted from outside, so the script's loops are instrumented to poll the interrupt flag
-//! and count the interrupt budget; deep recursion ends the script with a `RangeError` it cannot
-//! catch; and there is no heap limit.
+//! Differences from the TS package (QuickJS in wasm) are listed in `PORTING-STATUS.md`. The
+//! script's loops are instrumented to count the interrupt budget the same way on every run.
 
 pub mod abort;
 pub mod declarations;
 pub mod identifier;
 pub mod js;
+pub mod json_run;
 pub mod runtime;
 pub mod source;
 pub mod types;
@@ -51,7 +50,12 @@ pub use declarations::{
     DEFAULT_INPUT_SCHEMA_MAX_CHARS, RenderDeclarationsOptions, render_declarations, render_tool_output_type,
     render_tool_sample, render_tool_signature, schema_to_type,
 };
+pub use declarations::json::{
+    JsonToolDeclaration, render_json_declarations, render_json_tool_output_type, render_json_tool_sample,
+    render_json_tool_signature, schema_to_json_type, to_json_codemode_identifier,
+};
 pub use identifier::to_codemode_identifier;
+pub use json_run::*;
 pub use runtime::execution::{
     CodemodeSandbox, CodemodeSandboxBase, CodemodeSandboxBaseOptions, CodemodeSandboxError, DEFAULT_TIMEOUT_MS, VmChannel,
     VmEvents, VmLauncher,
@@ -67,13 +71,14 @@ pub use runtime::remote::{
 pub use runtime::vm::{DEFAULT_LOOP_ITERATION_LIMIT, DEFAULT_RECURSION_LIMIT, VmLimits};
 pub use source::{
     CODEMODE_OPTIONS_PREFIX, CODEMODE_SOURCE_GRAMMAR, CodemodeSourceError, CodemodeSourceOptions, ParsedCodemodeSource,
-    parse_codemode_source,
+    parse_codemode_source, parse_codemode_source_utf16, ParsedCodemodeSourceUtf16, CodemodeSourceErrorUtf16,
 };
 pub use types::*;
 
 /// The sandboxes and types that need no particular host (`@earendil-works/pi-codemode/portable`).
 /// In Rust every entry point is portable; this module only mirrors the TS entry.
 pub mod portable {
+    pub use crate::json_run::*;
     pub use crate::runtime::execution::{CodemodeSandbox, CodemodeSandboxBase};
     pub use crate::runtime::prelude_source::{MAX_OUTPUT_CHARS, MAX_OUTPUT_ITEMS, MAX_STORE_TOTAL_CHARS, MAX_STORE_VALUE_CHARS};
     pub use crate::runtime::protocol::{HostToWorkerMessage, VmStartData, WorkerToHostMessage};
